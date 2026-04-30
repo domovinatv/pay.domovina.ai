@@ -5,6 +5,8 @@ import 'package:qr_flutter/qr_flutter.dart';
 import '../models/eip681_payload.dart';
 import '../models/epc_payload.dart';
 import '../models/hub3_payload.dart';
+import 'gnosis_history_page.dart';
+import 'hpb_history_page.dart';
 
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
@@ -14,12 +16,19 @@ class HomePage extends StatefulWidget {
 }
 
 class _HomePageState extends State<HomePage> {
+  static final _addressRegex = RegExp(r'^0x[0-9a-fA-F]{40}$');
+
+  static const _epcColor = Color(0xFF1565C0);      // SEPA banking blue
+  static const _hub3Color = Color(0xFFC62828);     // Croatian red
+  static const _walletColor = Color(0xFF6A1B9A);   // Web3 purple
+
   final _name = TextEditingController(text: 'ITalk d.o.o.');
   final _address = TextEditingController(text: 'IX. Južna obala 20');
   final _city = TextEditingController(text: 'Zagreb');
   final _amount = TextEditingController(text: '1.01');
-  final _description = TextEditingController(
-      text: 'gnosis:0xb2AF1Dc5A6290C3B9c69C486014203C823bD7A9c');
+
+  final _gnosisAddress = TextEditingController(
+      text: '0xb2AF1Dc5A6290C3B9c69C486014203C823bD7A9c');
 
   final _hrIban = TextEditingController(text: 'HR6023900011500157044');
   final _model = TextEditingController(text: 'HR00');
@@ -28,8 +37,6 @@ class _HomePageState extends State<HomePage> {
   final _eeIban = TextEditingController(text: 'EE707777000162921128');
   final _bic = TextEditingController(text: 'LHVBEE22');
   final _epcPurpose = TextEditingController(text: 'OTHR');
-  final _epcRemittance = TextEditingController(
-      text: 'gnosis:0xb2AF1Dc5A6290C3B9c69C486014203C823bD7A9c');
 
   final _walletChainId = TextEditingController(text: '100');
   final _walletTokenContract = TextEditingController(
@@ -37,11 +44,15 @@ class _HomePageState extends State<HomePage> {
   final _walletTokenDecimals = TextEditingController(text: '18');
 
   List<TextEditingController> get _allControllers => [
-        _name, _address, _city, _amount, _description,
+        _name, _address, _city, _amount, _gnosisAddress,
         _hrIban, _model, _reference,
-        _eeIban, _bic, _epcPurpose, _epcRemittance,
+        _eeIban, _bic, _epcPurpose,
         _walletChainId, _walletTokenContract, _walletTokenDecimals,
       ];
+
+  String get _gnosisAddr => _gnosisAddress.text.trim();
+  bool get _isValidGnosisAddress => _addressRegex.hasMatch(_gnosisAddr);
+  String get _gnosisRemittance => 'gnosis:$_gnosisAddr';
 
   @override
   void initState() {
@@ -68,7 +79,7 @@ class _HomePageState extends State<HomePage> {
         iban: _eeIban.text.trim(),
         amount: _amountValue > 0 ? _amountValue : null,
         purposeCode: _epcPurpose.text.trim(),
-        remittanceInfo: _epcRemittance.text.trim(),
+        remittanceInfo: _gnosisRemittance,
       ).build();
 
   String get _hub3Data => Hub3Payload(
@@ -79,18 +90,11 @@ class _HomePageState extends State<HomePage> {
         iban: _hrIban.text.trim(),
         model: _model.text.trim(),
         reference: _reference.text.trim(),
-        description: _description.text.trim(),
+        description: _gnosisRemittance,
       ).build();
 
-  /// Strip optional chain prefix like "gnosis:" from remittance to get raw 0x address.
-  String get _walletRecipient {
-    final r = _epcRemittance.text.trim();
-    final colon = r.indexOf(':');
-    return colon >= 0 ? r.substring(colon + 1).trim() : r;
-  }
-
   String get _walletData => EipPayload(
-        recipient: _walletRecipient,
+        recipient: _gnosisAddr,
         chainId: int.tryParse(_walletChainId.text.trim()) ?? 100,
         amount: _amountValue > 0 ? _amountValue : null,
         tokenContract: _walletTokenContract.text.trim(),
@@ -99,43 +103,74 @@ class _HomePageState extends State<HomePage> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('pay.domovina.ai — SEPA / HUB3 generator'),
+    return DefaultTabController(
+      length: 3,
+      child: Scaffold(
+        appBar: AppBar(
+          title: const Text('pay.domovina.ai'),
+          bottom: const TabBar(
+            tabs: [
+              Tab(icon: Icon(Icons.qr_code_2), text: 'Generator barkoda'),
+              Tab(icon: Icon(Icons.account_balance_wallet), text: 'Gnosis EURe'),
+              Tab(icon: Icon(Icons.account_balance), text: 'HPB IBAN'),
+            ],
+          ),
+        ),
+        body: TabBarView(
+          children: [
+            _buildGeneratorTab(),
+            _isValidGnosisAddress
+                ? GnosisHistoryPage(
+                    key: ValueKey(
+                        '${_gnosisAddr}_${_walletTokenContract.text.trim()}'),
+                    address: _gnosisAddr,
+                    tokenContract: _walletTokenContract.text.trim(),
+                    decimals:
+                        int.tryParse(_walletTokenDecimals.text.trim()) ?? 18,
+                    symbol: 'EURe',
+                  )
+                : _invalidAddressPlaceholder(),
+            HpbHistoryPage(iban: _hrIban.text.trim()),
+          ],
+        ),
       ),
-      body: LayoutBuilder(
-        builder: (context, constraints) {
-          final wide = constraints.maxWidth >= 900;
-          final form = _buildForm();
-          final preview = LayoutBuilder(
-            builder: (_, c) => _buildPreview(c),
-          );
-          return wide
-              ? Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    SizedBox(
-                      width: 420,
-                      child: SingleChildScrollView(
-                        padding: const EdgeInsets.all(16),
-                        child: form,
-                      ),
+    );
+  }
+
+  Widget _buildGeneratorTab() {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final wide = constraints.maxWidth >= 900;
+        final form = _buildForm();
+        final preview = LayoutBuilder(
+          builder: (_, c) => _buildPreview(c),
+        );
+        return wide
+            ? Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  SizedBox(
+                    width: 420,
+                    child: SingleChildScrollView(
+                      padding: const EdgeInsets.all(16),
+                      child: form,
                     ),
-                    const VerticalDivider(width: 1),
-                    Expanded(
-                      child: SingleChildScrollView(
-                        padding: const EdgeInsets.all(16),
-                        child: preview,
-                      ),
+                  ),
+                  const VerticalDivider(width: 1),
+                  Expanded(
+                    child: SingleChildScrollView(
+                      padding: const EdgeInsets.all(16),
+                      child: preview,
                     ),
-                  ],
-                )
-              : SingleChildScrollView(
-                  padding: const EdgeInsets.all(16),
-                  child: Column(children: [form, const SizedBox(height: 24), preview]),
-                );
-        },
-      ),
+                  ),
+                ],
+              )
+            : SingleChildScrollView(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                    children: [form, const SizedBox(height: 24), preview]),
+              );
+      },
     );
   }
 
@@ -148,20 +183,31 @@ class _HomePageState extends State<HomePage> {
         _field(_address, 'Adresa'),
         _field(_city, 'Grad'),
         _field(_amount, 'Iznos (EUR)'),
-        const SizedBox(height: 16),
-        _section('HUB3 (Hrvatska — PDF417)'),
-        _field(_hrIban, 'HR IBAN'),
-        _field(_model, 'Model'),
-        _field(_reference, 'Poziv na broj'),
-        _field(_description, 'Opis plaćanja'),
-        const SizedBox(height: 16),
-        _section('EPC QR (SEPA / Monerium)'),
+        _field(
+          _gnosisAddress,
+          'Gnosis adresa primatelja (0x…)',
+          helper: _isValidGnosisAddress
+              ? 'Remittance / opis: $_gnosisRemittance'
+              : 'Mora biti validna 0x adresa (40 hex znakova)',
+          errorText: _isValidGnosisAddress
+              ? null
+              : 'Nevažeća adresa',
+        ),
+        const SizedBox(height: 20),
+        _section('1. EPC QR (SEPA / Monerium)',
+            color: _epcColor, icon: Icons.qr_code_2),
         _field(_eeIban, 'IBAN (EUR)'),
         _field(_bic, 'BIC'),
         _field(_epcPurpose, 'Purpose code (4 znaka, npr. OTHR / DONA / SALA)'),
-        _field(_epcRemittance, 'Remittance info (npr. gnosis:0x…)'),
-        const SizedBox(height: 16),
-        _section('Wallet QR (EIP-681 — MetaMask itd.)'),
+        const SizedBox(height: 20),
+        _section('2. HUB3 (Hrvatska — PDF417)',
+            color: _hub3Color, icon: Icons.view_week),
+        _field(_hrIban, 'HR IBAN'),
+        _field(_model, 'Model'),
+        _field(_reference, 'Poziv na broj'),
+        const SizedBox(height: 20),
+        _section('3. Wallet QR (EIP-681 — MetaMask)',
+            color: _walletColor, icon: Icons.account_balance_wallet),
         _field(_walletChainId, 'Chain ID (100 = Gnosis, 1 = Mainnet)'),
         _field(_walletTokenContract,
             'Token contract (prazno = native; default EURe Gnosis)'),
@@ -170,13 +216,66 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
-  Widget _section(String title) => Padding(
-        padding: const EdgeInsets.only(bottom: 8, top: 4),
-        child: Text(title,
-            style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+  Widget _invalidAddressPlaceholder() {
+    return Center(
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 420),
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.warning_amber_rounded,
+                  size: 48, color: Colors.amber[700]),
+              const SizedBox(height: 16),
+              const Text(
+                'Unesi validnu Gnosis adresu',
+                style:
+                    TextStyle(fontSize: 18, fontWeight: FontWeight.w600),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'Pregled on-chain transakcija zahtijeva ispravnu 0x adresu '
+                '(40 hex znakova). Otvori tab "Generator barkoda" i ispravi '
+                'polje "Gnosis adresa primatelja".',
+                textAlign: TextAlign.center,
+                style: TextStyle(color: Colors.grey[700], height: 1.5),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _section(String title, {Color? color, IconData? icon}) => Padding(
+        padding: const EdgeInsets.only(bottom: 10, top: 4),
+        child: Row(
+          children: [
+            if (icon != null) ...[
+              Icon(icon, size: 20, color: color),
+              const SizedBox(width: 8),
+            ],
+            Text(
+              title,
+              style: TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.w700,
+                color: color,
+                letterSpacing: 0.2,
+              ),
+            ),
+          ],
+        ),
       );
 
-  Widget _field(TextEditingController c, String label) => Padding(
+  Widget _field(
+    TextEditingController c,
+    String label, {
+    String? helper,
+    String? errorText,
+  }) =>
+      Padding(
         padding: const EdgeInsets.only(bottom: 8),
         child: TextField(
           controller: c,
@@ -184,6 +283,9 @@ class _HomePageState extends State<HomePage> {
             labelText: label,
             border: const OutlineInputBorder(),
             isDense: true,
+            helperText: helper,
+            helperMaxLines: 2,
+            errorText: errorText,
           ),
         ),
       );
@@ -227,22 +329,21 @@ class _HomePageState extends State<HomePage> {
 
   Widget _buildPreview(BoxConstraints constraints) {
     final epcCard = _previewCard(
+      index: 1,
       title: 'EPC QR (SEPA Credit Transfer)',
       subtitle: 'Skeniraj u Revolut / banci za SEPA plaćanje',
+      accent: _epcColor,
+      icon: Icons.qr_code_2,
       barcode: Center(child: _qrPreview(_epcData)),
       rawData: _epcData,
     );
 
-    final walletCard = _previewCard(
-      title: 'Wallet QR (EIP-681)',
-      subtitle: 'Skeniraj u MetaMask / Rainbow / Coinbase Wallet',
-      barcode: Center(child: _qrPreview(_walletData)),
-      rawData: _walletData,
-    );
-
     final hub3Card = _previewCard(
+      index: 2,
       title: 'HUB3 (PDF417)',
       subtitle: 'Skeniraj u hrvatskoj mobilnoj bankarskoj aplikaciji',
+      accent: _hub3Color,
+      icon: Icons.view_week,
       barcode: Center(
         child: SizedBox(
           height: 110,
@@ -261,6 +362,16 @@ class _HomePageState extends State<HomePage> {
       rawData: _hub3Data,
     );
 
+    final walletCard = _previewCard(
+      index: 3,
+      title: 'Wallet QR (EIP-681)',
+      subtitle: 'Skeniraj u MetaMask / Rainbow / Coinbase Wallet',
+      accent: _walletColor,
+      icon: Icons.account_balance_wallet,
+      barcode: Center(child: _qrPreview(_walletData)),
+      rawData: _walletData,
+    );
+
     final wide = constraints.maxWidth >= 700;
     return wide
         ? Flex(
@@ -269,9 +380,9 @@ class _HomePageState extends State<HomePage> {
             children: [
               Expanded(child: epcCard),
               const SizedBox(width: 16),
-              Expanded(child: walletCard),
-              const SizedBox(width: 16),
               Expanded(child: hub3Card),
+              const SizedBox(width: 16),
+              Expanded(child: walletCard),
             ],
           )
         : Flex(
@@ -280,51 +391,102 @@ class _HomePageState extends State<HomePage> {
             children: [
               epcCard,
               const SizedBox(height: 24),
-              walletCard,
-              const SizedBox(height: 24),
               hub3Card,
+              const SizedBox(height: 24),
+              walletCard,
             ],
           );
   }
 
   Widget _previewCard({
+    required int index,
     required String title,
     required String subtitle,
+    required Color accent,
+    required IconData icon,
     required Widget barcode,
     required String rawData,
   }) {
     return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Text(title,
-                style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w600)),
-            const SizedBox(height: 4),
-            Text(subtitle, style: TextStyle(color: Colors.grey[700])),
-            const SizedBox(height: 16),
-            Container(
-              padding: const EdgeInsets.all(16),
-              color: Colors.white,
-              child: barcode,
+      clipBehavior: Clip.antiAlias,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(14),
+        side: BorderSide(color: accent.withValues(alpha: 0.25), width: 1),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Container(height: 4, color: accent),
+          Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Row(
+                  children: [
+                    Container(
+                      width: 32,
+                      height: 32,
+                      decoration: BoxDecoration(
+                        color: accent.withValues(alpha: 0.12),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      alignment: Alignment.center,
+                      child: Text(
+                        '$index',
+                        style: TextStyle(
+                            color: accent,
+                            fontWeight: FontWeight.w700,
+                            fontSize: 16),
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Icon(icon, color: accent, size: 22),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        title,
+                        style: TextStyle(
+                          fontSize: 17,
+                          fontWeight: FontWeight.w700,
+                          color: accent,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 6),
+                Text(subtitle, style: TextStyle(color: Colors.grey[700])),
+                const SizedBox(height: 16),
+                Container(
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: Colors.grey[200]!),
+                  ),
+                  child: barcode,
+                ),
+                const SizedBox(height: 12),
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: accent.withValues(alpha: 0.05),
+                    borderRadius: BorderRadius.circular(6),
+                    border: Border.all(
+                        color: accent.withValues(alpha: 0.15)),
+                  ),
+                  child: SelectableText(
+                    rawData,
+                    style: const TextStyle(
+                        fontFamily: 'Menlo', fontSize: 12, height: 1.4),
+                  ),
+                ),
+              ],
             ),
-            const SizedBox(height: 12),
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: Colors.grey[100],
-                borderRadius: BorderRadius.circular(6),
-              ),
-              child: SelectableText(
-                rawData,
-                style: const TextStyle(
-                    fontFamily: 'Menlo', fontSize: 12, height: 1.4),
-              ),
-            ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }
