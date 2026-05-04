@@ -1,6 +1,9 @@
 # Claude Code local state
 .claude/
 
+# Wrangler local state (Cloudflare Worker dev)
+.wrangler/
+
 # Miscellaneous
 *.class
 *.log
