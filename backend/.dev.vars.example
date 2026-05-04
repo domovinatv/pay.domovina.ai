@@ -1,0 +1,19 @@
+# Copy to .dev.vars for local `wrangler dev`. Do NOT commit .dev.vars.
+
+ADMIN_TOKEN=pick-a-long-random-string
+
+# Enable Banking (primary provider)
+ENABLE_BANKING_APPLICATION_ID=00000000-0000-0000-0000-000000000000
+# PEM PKCS8 — preserve newlines. For local dev, easiest is:
+#   wrangler dev --var ENABLE_BANKING_PRIVATE_KEY="$(cat private.pem)"
+ENABLE_BANKING_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----\n"
+
+# GoCardless (only if BANKING_PROVIDER=gocardless)
+GOCARDLESS_SECRET_ID=
+GOCARDLESS_SECRET_KEY=
+
+# Monerium (Private app — get from https://monerium.app/developers/apps)
+MONERIUM_CLIENT_ID=
+MONERIUM_CLIENT_SECRET=
+MONERIUM_WEBHOOK_SECRET=
+MONERIUM_PROFILE_ID=

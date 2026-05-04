@@ -1,0 +1,46 @@
+name = "pay-domovina-backend"
+main = "src/index.ts"
+compatibility_date = "2025-01-01"
+compatibility_flags = ["nodejs_compat"]
+
+[triggers]
+crons = ["0 */6 * * *"]
+
+# D1 — create with: wrangler d1 create pay_domovina
+[[d1_databases]]
+binding = "DB"
+database_name = "pay_domovina"
+database_id = "REPLACE_WITH_D1_ID"
+migrations_dir = "migrations"
+
+# KV — create with: wrangler kv namespace create TOKEN_CACHE
+[[kv_namespaces]]
+binding = "TOKEN_CACHE"
+id = "REPLACE_WITH_KV_ID"
+
+[vars]
+# Choose: "enable_banking" (default) or "gocardless"
+BANKING_PROVIDER = "enable_banking"
+ALLOWED_ORIGINS = "*"
+
+# Enable Banking
+ENABLE_BANKING_BASE_URL = "https://api.enablebanking.com"
+ENABLE_BANKING_REDIRECT_URL = "https://pay-domovina-backend.example.workers.dev/api/hpb/callback"
+
+# GoCardless (kept for fallback if/when signups reopen)
+GOCARDLESS_BASE_URL = "https://bankaccountdata.gocardless.com/api/v2"
+GOCARDLESS_REDIRECT_URL = "https://pay-domovina-backend.example.workers.dev/api/hpb/callback"
+
+# Monerium — production. Flip to https://api.monerium.dev for sandbox testing.
+MONERIUM_BASE_URL = "https://api.monerium.app"
+MONERIUM_PROFILE_ID = ""
+
+# Secrets — set via `wrangler secret put`:
+#   ADMIN_TOKEN                     # any long random string for /admin/* auth
+#   ENABLE_BANKING_APPLICATION_ID   # UUID from EnableBanking dashboard
+#   ENABLE_BANKING_PRIVATE_KEY      # full PEM PKCS8 (preserve newlines)
+#   GOCARDLESS_SECRET_ID            # only needed if BANKING_PROVIDER=gocardless
+#   GOCARDLESS_SECRET_KEY
+#   MONERIUM_CLIENT_ID              # from monerium.app/developers/apps
+#   MONERIUM_CLIENT_SECRET
+#   MONERIUM_WEBHOOK_SECRET         # HMAC secret you set in Monerium webhook config

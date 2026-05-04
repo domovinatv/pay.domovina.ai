@@ -1,0 +1,22 @@
+{
+  "name": "pay-domovina-backend",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "db:migrate:local": "wrangler d1 migrations apply pay_domovina --local",
+    "db:migrate:prod": "wrangler d1 migrations apply pay_domovina --remote",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "hono": "^4.6.14",
+    "jose": "^5.9.6"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20250101.0",
+    "typescript": "^5.7.2",
+    "wrangler": "^3.99.0"
+  }
+}
