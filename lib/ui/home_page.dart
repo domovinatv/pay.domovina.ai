@@ -1,5 +1,12 @@
+import 'dart:convert';
+import 'dart:typed_data';
+import 'dart:ui' as ui;
+
+import 'package:barcode/barcode.dart' as bc;
 import 'package:barcode_widget/barcode_widget.dart';
+import 'package:file_saver/file_saver.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 
 import '../models/eip681_payload.dart';
@@ -28,7 +35,11 @@ class _HomePageState extends State<HomePage> {
   final _amount = TextEditingController(text: '1.01');
 
   final _gnosisAddress = TextEditingController(
-      text: '0xb2AF1Dc5A6290C3B9c69C486014203C823bD7A9c');
+      text: '0x6693a7D19486Dc45e9F90Fd2D515d972bBA2d65e');
+
+  final _epcCaptureKey = GlobalKey();
+  final _hub3CaptureKey = GlobalKey();
+  final _walletCaptureKey = GlobalKey();
 
   final _hrIban = TextEditingController(text: 'HR6023900011500157044');
   final _model = TextEditingController(text: 'HR00');
@@ -290,8 +301,9 @@ class _HomePageState extends State<HomePage> {
         ),
       );
 
-  Widget _qrPreview(String data) {
+  Widget _qrPreview(String data, GlobalKey captureKey) {
     return RepaintBoundary(
+      key: captureKey,
       child: Container(
         color: Colors.white,
         padding: const EdgeInsets.all(24),
@@ -327,29 +339,17 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
-  Widget _buildPreview(BoxConstraints constraints) {
-    final epcCard = _previewCard(
-      index: 1,
-      title: 'EPC QR (SEPA Credit Transfer)',
-      subtitle: 'Skeniraj u Revolut / banci za SEPA plaćanje',
-      accent: _epcColor,
-      icon: Icons.qr_code_2,
-      barcode: Center(child: _qrPreview(_epcData)),
-      rawData: _epcData,
-    );
-
-    final hub3Card = _previewCard(
-      index: 2,
-      title: 'HUB3 (PDF417)',
-      subtitle: 'Skeniraj u hrvatskoj mobilnoj bankarskoj aplikaciji',
-      accent: _hub3Color,
-      icon: Icons.view_week,
-      barcode: Center(
+  Widget _pdf417Preview(String data, GlobalKey captureKey) {
+    return RepaintBoundary(
+      key: captureKey,
+      child: Container(
+        color: Colors.white,
+        padding: const EdgeInsets.all(16),
         child: SizedBox(
           height: 110,
           width: 420,
           child: BarcodeWidget(
-            data: _hub3Data,
+            data: data,
             barcode: Barcode.pdf417(
               moduleHeight: 2,
               preferredRatio: 3,
@@ -359,7 +359,95 @@ class _HomePageState extends State<HomePage> {
           ),
         ),
       ),
+    );
+  }
+
+  String _qrSvg(String data) =>
+      bc.Barcode.qrCode(errorCorrectLevel: bc.BarcodeQRCorrectionLevel.medium)
+          .toSvg(data, width: 1024, height: 1024);
+
+  String _pdf417Svg(String data) => bc.Barcode.pdf417(
+        moduleHeight: 2,
+        preferredRatio: 3,
+      ).toSvg(data, width: 1680, height: 440);
+
+  Future<Uint8List> _capturePng(GlobalKey key,
+      {double pixelRatio = 6}) async {
+    final ctx = key.currentContext;
+    if (ctx == null) {
+      throw StateError('Barcode nije renderiran');
+    }
+    final boundary = ctx.findRenderObject() as RenderRepaintBoundary;
+    final image = await boundary.toImage(pixelRatio: pixelRatio);
+    final byteData =
+        await image.toByteData(format: ui.ImageByteFormat.png);
+    if (byteData == null) {
+      throw StateError('PNG enkodiranje nije uspjelo');
+    }
+    return byteData.buffer.asUint8List();
+  }
+
+  Future<void> _saveSvg(String filename, String svg) async {
+    await FileSaver.instance.saveFile(
+      name: filename,
+      bytes: Uint8List.fromList(utf8.encode(svg)),
+      ext: 'svg',
+      mimeType: MimeType.other,
+    );
+  }
+
+  Future<void> _savePng(String filename, Uint8List bytes) async {
+    await FileSaver.instance.saveFile(
+      name: filename,
+      bytes: bytes,
+      ext: 'png',
+      mimeType: MimeType.png,
+    );
+  }
+
+  Future<void> _handleDownload({
+    required Future<void> Function() action,
+    required String successMessage,
+  }) async {
+    try {
+      await action();
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(successMessage)),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Greška pri spremanju: $e')),
+      );
+    }
+  }
+
+  Widget _buildPreview(BoxConstraints constraints) {
+    final epcCard = _previewCard(
+      index: 1,
+      title: 'EPC QR (SEPA Credit Transfer)',
+      subtitle: 'Skeniraj u Revolut / banci za SEPA plaćanje',
+      accent: _epcColor,
+      icon: Icons.qr_code_2,
+      barcode: Center(child: _qrPreview(_epcData, _epcCaptureKey)),
+      rawData: _epcData,
+      baseFilename: 'epc-qr',
+      captureKey: _epcCaptureKey,
+      svgBuilder: () => _qrSvg(_epcData),
+    );
+
+    final hub3Card = _previewCard(
+      index: 2,
+      title: 'HUB3 (PDF417)',
+      subtitle: 'Skeniraj u hrvatskoj mobilnoj bankarskoj aplikaciji',
+      accent: _hub3Color,
+      icon: Icons.view_week,
+      barcode: Center(child: _pdf417Preview(_hub3Data, _hub3CaptureKey)),
       rawData: _hub3Data,
+      baseFilename: 'hub3-pdf417',
+      captureKey: _hub3CaptureKey,
+      svgBuilder: () => _pdf417Svg(_hub3Data),
     );
 
     final walletCard = _previewCard(
@@ -368,8 +456,11 @@ class _HomePageState extends State<HomePage> {
       subtitle: 'Skeniraj u MetaMask / Rainbow / Coinbase Wallet',
       accent: _walletColor,
       icon: Icons.account_balance_wallet,
-      barcode: Center(child: _qrPreview(_walletData)),
+      barcode: Center(child: _qrPreview(_walletData, _walletCaptureKey)),
       rawData: _walletData,
+      baseFilename: 'wallet-qr',
+      captureKey: _walletCaptureKey,
+      svgBuilder: () => _qrSvg(_walletData),
     );
 
     final wide = constraints.maxWidth >= 700;
@@ -406,6 +497,9 @@ class _HomePageState extends State<HomePage> {
     required IconData icon,
     required Widget barcode,
     required String rawData,
+    required String baseFilename,
+    required GlobalKey captureKey,
+    required String Function() svgBuilder,
   }) {
     return Card(
       clipBehavior: Clip.antiAlias,
@@ -466,6 +560,46 @@ class _HomePageState extends State<HomePage> {
                     border: Border.all(color: Colors.grey[200]!),
                   ),
                   child: barcode,
+                ),
+                const SizedBox(height: 12),
+                Row(
+                  children: [
+                    Expanded(
+                      child: OutlinedButton.icon(
+                        onPressed: () => _handleDownload(
+                          action: () =>
+                              _saveSvg(baseFilename, svgBuilder()),
+                          successMessage: '$baseFilename.svg spremljen',
+                        ),
+                        icon: const Icon(Icons.download, size: 18),
+                        label: const Text('SVG'),
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: accent,
+                          side: BorderSide(
+                              color: accent.withValues(alpha: 0.5)),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: OutlinedButton.icon(
+                        onPressed: () => _handleDownload(
+                          action: () async {
+                            final png = await _capturePng(captureKey);
+                            await _savePng(baseFilename, png);
+                          },
+                          successMessage: '$baseFilename.png spremljen',
+                        ),
+                        icon: const Icon(Icons.image, size: 18),
+                        label: const Text('PNG (HD)'),
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: accent,
+                          side: BorderSide(
+                              color: accent.withValues(alpha: 0.5)),
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
                 const SizedBox(height: 12),
                 Container(
