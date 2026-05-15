@@ -1,8 +1,11 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import '../main.dart' show DomovinaBrand;
 import '../models/token_transaction.dart';
 import '../services/blockscout_service.dart';
 
@@ -25,8 +28,14 @@ class GnosisHistoryPage extends StatefulWidget {
 }
 
 class _GnosisHistoryPageState extends State<GnosisHistoryPage> {
+  static const _autoRefreshInterval = Duration(seconds: 60);
+
   final _service = BlockscoutService();
   late Future<_HistoryData> _future;
+  Timer? _autoRefreshTimer;
+  Timer? _countdownTimer;
+  DateTime _nextRefreshAt = DateTime.now().add(_autoRefreshInterval);
+  Duration _untilNext = _autoRefreshInterval;
 
   static final _amountFmt = NumberFormat.currency(
       locale: 'hr_HR', symbol: '€', decimalDigits: 2);
@@ -36,12 +45,30 @@ class _GnosisHistoryPageState extends State<GnosisHistoryPage> {
   void initState() {
     super.initState();
     _future = _load();
+    _startAutoRefresh();
   }
 
   @override
   void dispose() {
+    _autoRefreshTimer?.cancel();
+    _countdownTimer?.cancel();
     _service.close();
     super.dispose();
+  }
+
+  void _startAutoRefresh() {
+    _autoRefreshTimer?.cancel();
+    _countdownTimer?.cancel();
+    _nextRefreshAt = DateTime.now().add(_autoRefreshInterval);
+    _untilNext = _autoRefreshInterval;
+    _autoRefreshTimer = Timer.periodic(_autoRefreshInterval, (_) => _refresh());
+    _countdownTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (!mounted) return;
+      final remaining = _nextRefreshAt.difference(DateTime.now());
+      setState(() {
+        _untilNext = remaining.isNegative ? Duration.zero : remaining;
+      });
+    });
   }
 
   Future<_HistoryData> _load() async {
@@ -61,7 +88,14 @@ class _GnosisHistoryPageState extends State<GnosisHistoryPage> {
   }
 
   void _refresh() {
-    setState(() => _future = _load());
+    setState(() {
+      _future = _load();
+      _nextRefreshAt = DateTime.now().add(_autoRefreshInterval);
+      _untilNext = _autoRefreshInterval;
+    });
+    _autoRefreshTimer?.cancel();
+    _autoRefreshTimer =
+        Timer.periodic(_autoRefreshInterval, (_) => _refresh());
   }
 
   double _toDouble(BigInt raw) {
@@ -105,7 +139,7 @@ class _GnosisHistoryPageState extends State<GnosisHistoryPage> {
           future: _future,
           builder: (context, snap) {
             if (snap.connectionState != ConnectionState.done) {
-              return const Center(child: CircularProgressIndicator());
+              return _loadingView();
             }
             if (snap.hasError) {
               return _errorView(snap.error.toString());
@@ -123,6 +157,152 @@ class _GnosisHistoryPageState extends State<GnosisHistoryPage> {
           },
         ),
       ),
+    );
+  }
+
+  Widget _loadingView() {
+    return ListView(
+      padding: const EdgeInsets.all(24),
+      children: [
+        const SizedBox(height: 24),
+        const Center(
+          child: SizedBox(
+            width: 36,
+            height: 36,
+            child: CircularProgressIndicator(
+              strokeWidth: 3,
+              color: DomovinaBrand.navy,
+            ),
+          ),
+        ),
+        const SizedBox(height: 24),
+        const Center(
+          child: Text(
+            'Čitamo on-chain podatke direktno s Gnosis blockchaina…',
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              fontSize: 17,
+              fontWeight: FontWeight.w700,
+              color: DomovinaBrand.navy,
+            ),
+          ),
+        ),
+        const SizedBox(height: 8),
+        Center(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 560),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 8),
+              child: Text(
+                'Nema centralne baze — svaka transakcija je javno zapisan blockchain transfer ERC-20 EURe tokena koje je Monerium "mintao" (izdao) na temelju realnog EUR depozita na LHV banci u Estoniji.',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  fontSize: 13,
+                  color: DomovinaBrand.muted,
+                  height: 1.5,
+                ),
+              ),
+            ),
+          ),
+        ),
+        const SizedBox(height: 16),
+        Center(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 560),
+            child: Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: DomovinaBrand.surface,
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: DomovinaBrand.border),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  _infoRow(
+                    Icons.public,
+                    'Mreža',
+                    'Gnosis Chain (chain ID 100) — javni decentralizirani blockchain, EVM kompatibilan',
+                  ),
+                  const SizedBox(height: 10),
+                  _infoRow(
+                    Icons.token,
+                    'Token',
+                    '${widget.symbol} ERC-20 (${_shortAddr(widget.tokenContract)}) — Monerium-izdani stablecoin, 1 EURe = 1 EUR pokriven realnim depozitom kod LHV Pank',
+                  ),
+                  const SizedBox(height: 10),
+                  _infoRow(
+                    Icons.account_balance_wallet,
+                    'Adresa',
+                    '${_shortAddr(widget.address)} — Gnosis Safe / EOA wallet primatelja',
+                  ),
+                  const SizedBox(height: 10),
+                  _infoRow(
+                    Icons.dns,
+                    'Izvor',
+                    'Blockscout RPC + indekser (gnosis.blockscout.com) — javni eksplorer Gnosis Chaina, čita direktno s blockchain nodea bez autentifikacije',
+                  ),
+                  const SizedBox(height: 10),
+                  _infoRow(
+                    Icons.format_list_numbered,
+                    'Što dohvaćamo',
+                    'sve Transfer event-e EURe smart contracta u kojima je adresa pošiljatelj ili primatelj (uplate + isplate) + trenutni on-chain token balance',
+                  ),
+                  const SizedBox(height: 10),
+                  _infoRow(
+                    Icons.verified,
+                    'Provjerljivo',
+                    'svaki hash transakcije se može neovisno provjeriti na bilo kojem Gnosis blockchain eksploreru — klik na transakciju otvara Blockscout link',
+                  ),
+                  const SizedBox(height: 10),
+                  _infoRow(
+                    Icons.timer,
+                    'Trajanje fetcha',
+                    'obično 2–5 sekundi, ovisno o broju transakcija',
+                  ),
+                  const SizedBox(height: 10),
+                  _infoRow(
+                    Icons.autorenew,
+                    'Auto-osvježavanje',
+                    'svakih 60 sekundi automatski (countdown pored refresh dugmeta) + ručni refresh u svakom trenutku',
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _infoRow(IconData icon, String label, String value) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Icon(icon, size: 16, color: DomovinaBrand.navy),
+        const SizedBox(width: 10),
+        SizedBox(
+          width: 110,
+          child: Text(
+            label,
+            style: const TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w700,
+              color: DomovinaBrand.navy,
+            ),
+          ),
+        ),
+        Expanded(
+          child: Text(
+            value,
+            style: const TextStyle(
+              fontSize: 13,
+              color: DomovinaBrand.muted,
+              height: 1.4,
+            ),
+          ),
+        ),
+      ],
     );
   }
 
@@ -169,8 +349,28 @@ class _GnosisHistoryPageState extends State<GnosisHistoryPage> {
                 const Text('Trenutno stanje',
                     style: TextStyle(fontSize: 16, fontWeight: FontWeight.w500)),
                 const Spacer(),
+                Tooltip(
+                  message:
+                      'Auto-osvježavanje svakih 60s — sljedeće za ${_untilNext.inSeconds}s',
+                  child: Row(
+                    children: [
+                      const Icon(Icons.autorenew,
+                          size: 14, color: DomovinaBrand.muted),
+                      const SizedBox(width: 4),
+                      Text(
+                        '${_untilNext.inSeconds}s',
+                        style: const TextStyle(
+                          fontSize: 12,
+                          color: DomovinaBrand.muted,
+                          fontFeatures: [FontFeature.tabularFigures()],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 4),
                 IconButton(
-                  tooltip: 'Osvježi',
+                  tooltip: 'Osvježi sad',
                   icon: const Icon(Icons.refresh),
                   onPressed: _refresh,
                 ),
@@ -183,8 +383,37 @@ class _GnosisHistoryPageState extends State<GnosisHistoryPage> {
                   fontSize: 36, fontWeight: FontWeight.w700),
             ),
             const SizedBox(height: 4),
-            Text('${widget.symbol} • Gnosis Chain',
+            Text('${widget.symbol} • Gnosis Chain (on-chain)',
                 style: TextStyle(color: Colors.grey[600])),
+            const SizedBox(height: 12),
+            Container(
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: DomovinaBrand.surface,
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: DomovinaBrand.border),
+              ),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Icon(Icons.info_outline,
+                      size: 16, color: DomovinaBrand.navy),
+                  const SizedBox(width: 8),
+                  const Expanded(
+                    child: Text(
+                      'Podaci su čitani direktno s Gnosis blockchaina (Blockscout RPC). '
+                      'EURe su Monerium ERC-20 tokeni mintani 1:1 prema EUR depozitu kod LHV Pank — '
+                      'svaka transakcija je javno provjerljiva. Auto-osvježavanje svakih 60s.',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: DomovinaBrand.muted,
+                        height: 1.45,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
             const Divider(height: 32),
             Row(
               children: [
