@@ -9,6 +9,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 
+import '../main.dart' show DomovinaBrand;
 import '../models/eip681_payload.dart';
 import '../models/epc_payload.dart';
 import '../models/hub3_payload.dart';
@@ -25,9 +26,9 @@ class HomePage extends StatefulWidget {
 class _HomePageState extends State<HomePage> {
   static final _addressRegex = RegExp(r'^0x[0-9a-fA-F]{40}$');
 
-  static const _epcColor = Color(0xFF1565C0);      // SEPA banking blue
-  static const _hub3Color = Color(0xFFC62828);     // Croatian red
-  static const _walletColor = Color(0xFF6A1B9A);   // Web3 purple
+  static const _epcColor = DomovinaBrand.navy;     // SEPA — primary brand
+  static const _hub3Color = DomovinaBrand.red;     // Hrvatska — Croatian red
+  static const _walletColor = DomovinaBrand.muted; // Web3 — secondary slate
 
   final _name = TextEditingController(text: 'ITalk d.o.o.');
   final _address = TextEditingController(text: 'IX. Južna obala 20');
@@ -118,13 +119,60 @@ class _HomePageState extends State<HomePage> {
       length: 3,
       child: Scaffold(
         appBar: AppBar(
-          title: const Text('pay.domovina.ai'),
-          bottom: const TabBar(
-            tabs: [
-              Tab(icon: Icon(Icons.qr_code_2), text: 'Generator barkoda'),
-              Tab(icon: Icon(Icons.account_balance_wallet), text: 'Gnosis EURe'),
-              Tab(icon: Icon(Icons.account_balance), text: 'HPB IBAN'),
-            ],
+          title: RichText(
+            text: const TextSpan(
+              style: TextStyle(
+                color: DomovinaBrand.white,
+                fontSize: 18,
+                fontWeight: FontWeight.w800,
+                letterSpacing: 2,
+              ),
+              children: [
+                TextSpan(text: 'pay.'),
+                TextSpan(text: 'DOMOVINA'),
+                TextSpan(
+                  text: '.ai',
+                  style: TextStyle(color: DomovinaBrand.red),
+                ),
+              ],
+            ),
+          ),
+          bottom: PreferredSize(
+            preferredSize: const Size.fromHeight(52),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const TabBar(
+                  tabs: [
+                    Tab(
+                        icon: Icon(Icons.qr_code_2),
+                        text: 'Generator barkoda'),
+                    Tab(
+                        icon: Icon(Icons.account_balance_wallet),
+                        text: 'Gnosis EURe'),
+                    Tab(
+                        icon: Icon(Icons.account_balance),
+                        text: 'HPB IBAN'),
+                  ],
+                ),
+                Row(
+                  children: const [
+                    Expanded(
+                        child: ColoredBox(
+                            color: DomovinaBrand.red,
+                            child: SizedBox(height: 3))),
+                    Expanded(
+                        child: ColoredBox(
+                            color: DomovinaBrand.white,
+                            child: SizedBox(height: 3))),
+                    Expanded(
+                        child: ColoredBox(
+                            color: DomovinaBrand.navy,
+                            child: SizedBox(height: 3))),
+                  ],
+                ),
+              ],
+            ),
           ),
         ),
         body: TabBarView(
