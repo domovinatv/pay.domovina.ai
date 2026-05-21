@@ -1,0 +1,20 @@
+{
+  "version": "1.0",
+  "chainId": "100",
+  "createdAt": 1779365042951,
+  "meta": {
+    "name": "MPT — Fund forwarder EOA with 1.0 xDAI",
+    "description": "Native xDAI transfer of 1.0 from MPT main-rail Safe 0x449aBCEf4e29a7Dd8d98dB451AF2c463561BAf2e to backend forwarder EOA 0xd61289c5035c6e5eaD6F100b6A8F90ac4ee054CB. Refuel for Roles.execTransactionWithRole gas.",
+    "txBuilderVersion": "1.16.5",
+    "createdFromSafeAddress": "0x449aBCEf4e29a7Dd8d98dB451AF2c463561BAf2e"
+  },
+  "transactions": [
+    {
+      "to": "0xd61289c5035c6e5eaD6F100b6A8F90ac4ee054CB",
+      "value": "1000000000000000000",
+      "data": "0x",
+      "contractMethod": null,
+      "contractInputsValues": null
+    }
+  ]
+}
