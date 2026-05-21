@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:math';
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 
@@ -35,8 +36,31 @@ class _HomePageState extends State<HomePage> {
   final _city = TextEditingController(text: 'Zagreb');
   final _amount = TextEditingController(text: '1.01');
 
+  // Default = MPT main-rail Safe. With MPT routing model, the EPC remittance
+  // carries `mpt:<address>?sid=<id>`; Monerium mints to the Safe regardless,
+  // then the backend forwards EURe to <address> via Zodiac Roles Modifier.
+  // Defaulting the address to the Safe itself means "park EURe in Safe and
+  // stop" — backend short-circuits with self_target_noop. User overrides
+  // this field per QR for actual onward routing. Old direct-recipient default
+  // 0x6693a7D19486Dc45e9F90Fd2D515d972bBA2d65e is no longer Monerium's
+  // canonical destination after 2026-05-21 Safe default-wallet switch.
   final _gnosisAddress = TextEditingController(
-      text: '0x6693a7D19486Dc45e9F90Fd2D515d972bBA2d65e');
+      text: '0x449aBCEf4e29a7Dd8d98dB451AF2c463561BAf2e');
+
+  /// Session id appended to the SEPA remittance as `?sid=<value>`. Backend
+  /// (monerium.domovina.ai) extracts it from the Monerium webhook payload to
+  /// match the incoming EURe mint against the browser session that generated
+  /// the QR. Default is a fresh random id; user can edit or "Random" again.
+  final _sid = TextEditingController(text: _randomSid());
+
+  static String _randomSid() {
+    // Confusable-free alphabet (no 0/O/1/l). 10 chars at 30^10 ≈ 5.9e14
+    // combinations — collision-irrelevant for the short window between QR
+    // generation and webhook receipt.
+    const chars = 'abcdefghijkmnpqrstuvwxyz23456789';
+    final r = Random.secure();
+    return List.generate(10, (_) => chars[r.nextInt(chars.length)]).join();
+  }
 
   final _epcCaptureKey = GlobalKey();
   final _hub3CaptureKey = GlobalKey();
@@ -56,7 +80,7 @@ class _HomePageState extends State<HomePage> {
   final _walletTokenDecimals = TextEditingController(text: '18');
 
   List<TextEditingController> get _allControllers => [
-        _name, _address, _city, _amount, _gnosisAddress,
+        _name, _address, _city, _amount, _gnosisAddress, _sid,
         _hrIban, _model, _reference,
         _eeIban, _bic, _epcPurpose,
         _walletChainId, _walletTokenContract, _walletTokenDecimals,
@@ -64,7 +88,24 @@ class _HomePageState extends State<HomePage> {
 
   String get _gnosisAddr => _gnosisAddress.text.trim();
   bool get _isValidGnosisAddress => _addressRegex.hasMatch(_gnosisAddr);
-  String get _gnosisRemittance => 'gnosis:$_gnosisAddr';
+  String get _sidValue => _sid.text.trim();
+
+  /// EPC remittance now uses MPT routing scheme: Monerium default wallet is
+  /// the MPT main-rail Safe, so ALL incoming SEPA mints to one place
+  /// regardless of memo. The 140-char remittance is therefore ours to use
+  /// for off-Monerium routing: `mpt:0x<target>?sid=<id>` is parsed by the
+  /// monerium.domovina.ai webhook handler, which then submits an
+  /// `execTransactionWithRole` TX via the Safe's Zodiac Roles Modifier to
+  /// forward EURe to the actual recipient. See [[reference-mpt-brand]].
+  String get _epcRemittance => _sidValue.isEmpty
+      ? 'mpt:$_gnosisAddr'
+      : 'mpt:$_gnosisAddr?sid=$_sidValue';
+
+  /// HUB3 PDF417 → Croatian HR IBAN → does NOT go through Monerium, so the
+  /// description field is free for sid tracking + anything else.
+  String get _hub3Description => _sidValue.isEmpty
+      ? 'gnosis:$_gnosisAddr'
+      : 'gnosis:$_gnosisAddr?sid=$_sidValue';
 
   @override
   void initState() {
@@ -91,7 +132,7 @@ class _HomePageState extends State<HomePage> {
         iban: _eeIban.text.trim(),
         amount: _amountValue > 0 ? _amountValue : null,
         purposeCode: _epcPurpose.text.trim(),
-        remittanceInfo: _gnosisRemittance,
+        remittanceInfo: _epcRemittance,
       ).build();
 
   String get _hub3Data => Hub3Payload(
@@ -102,7 +143,7 @@ class _HomePageState extends State<HomePage> {
         iban: _hrIban.text.trim(),
         model: _model.text.trim(),
         reference: _reference.text.trim(),
-        description: _gnosisRemittance,
+        description: _hub3Description,
       ).build();
 
   String get _walletData => EipPayload(
@@ -246,11 +287,46 @@ class _HomePageState extends State<HomePage> {
           _gnosisAddress,
           'Gnosis adresa primatelja (0x…)',
           helper: _isValidGnosisAddress
-              ? 'Remittance / opis: $_gnosisRemittance'
+              ? 'MPT će forwardirati EURe sa Safe-a na ovu adresu nakon mint-a'
               : 'Mora biti validna 0x adresa (40 hex znakova)',
           errorText: _isValidGnosisAddress
               ? null
               : 'Nevažeća adresa',
+        ),
+        // Session id field. Ide u EPC remittance kao `mpt:0x...?sid=<id>` —
+        // Monerium ignorira sve (mint-a na MPT Safe), backend čita memo i
+        // forwarda EURe na pravi wallet kroz Zodiac Roles Modifier. SID
+        // omogućuje real-time match browser sessiona s primljenom uplatom.
+        Padding(
+          padding: const EdgeInsets.symmetric(vertical: 6),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: TextField(
+                  controller: _sid,
+                  decoration: InputDecoration(
+                    labelText: 'Session ID (MPT routing marker)',
+                    helperText: _sidValue.isEmpty
+                        ? 'Prazno = EPC remittance je čisti mpt:$_gnosisAddr (bez tracking-a)'
+                        : 'EPC remittance: $_epcRemittance',
+                    helperMaxLines: 2,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Padding(
+                padding: const EdgeInsets.only(top: 10),
+                child: OutlinedButton.icon(
+                  onPressed: () => setState(() {
+                    _sid.text = _randomSid();
+                  }),
+                  icon: const Icon(Icons.casino_outlined, size: 18),
+                  label: const Text('Random'),
+                ),
+              ),
+            ],
+          ),
         ),
         const SizedBox(height: 20),
         _section('1. EPC QR (SEPA / Monerium)',

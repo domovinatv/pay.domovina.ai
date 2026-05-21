@@ -4,6 +4,13 @@
 # Wrangler local state (Cloudflare Worker dev)
 .wrangler/
 
+# Node artifacts must live under backend/, never at repo root.
+# These guards stop accidental `npm install` runs from the wrong cwd
+# leaking dependencies into the Flutter project root.
+/node_modules/
+/package.json
+/package-lock.json
+
 # Miscellaneous
 *.class
 *.log

@@ -2,6 +2,21 @@ name = "pay-domovina-backend"
 main = "src/index.ts"
 compatibility_date = "2025-01-01"
 compatibility_flags = ["nodejs_compat"]
+account_id = "7dc7167b7e2e00923bfa7cd697df14e4"
+
+# Workers Route — binds this Worker to the monerium.domovina.ai hostname.
+# The DNS record (proxied A/AAAA → Cloudflare) was provisioned manually in
+# the dashboard, so we use a Route here instead of `custom_domain = true`
+# (which would require wrangler to also create the DNS record and errors
+# out when one already exists). Single-level subdomain so Universal SSL
+# covers it automatically — multi-level like `api.pay.domovina.ai` would
+# need Advanced Certificate Manager.
+[[routes]]
+pattern = "monerium.domovina.ai/*"
+zone_name = "domovina.ai"
+
+[observability]
+enabled = true
 
 [triggers]
 crons = ["0 */6 * * *"]
@@ -10,13 +25,13 @@ crons = ["0 */6 * * *"]
 [[d1_databases]]
 binding = "DB"
 database_name = "pay_domovina"
-database_id = "REPLACE_WITH_D1_ID"
+database_id = "70caf01f-e1fa-4f3d-a23f-ebb80356548d"
 migrations_dir = "migrations"
 
 # KV — create with: wrangler kv namespace create TOKEN_CACHE
 [[kv_namespaces]]
 binding = "TOKEN_CACHE"
-id = "REPLACE_WITH_KV_ID"
+id = "8b9f1c0c575246e284b8a18157990b38"
 
 [vars]
 # Choose: "enable_banking" (default) or "gocardless"
@@ -25,18 +40,35 @@ ALLOWED_ORIGINS = "*"
 
 # Enable Banking
 ENABLE_BANKING_BASE_URL = "https://api.enablebanking.com"
-ENABLE_BANKING_REDIRECT_URL = "https://pay-domovina-backend.example.workers.dev/api/hpb/callback"
+ENABLE_BANKING_REDIRECT_URL = "https://monerium.domovina.ai/api/hpb/callback"
 
 # GoCardless (kept for fallback if/when signups reopen)
 GOCARDLESS_BASE_URL = "https://bankaccountdata.gocardless.com/api/v2"
-GOCARDLESS_REDIRECT_URL = "https://pay-domovina-backend.example.workers.dev/api/hpb/callback"
+GOCARDLESS_REDIRECT_URL = "https://monerium.domovina.ai/api/hpb/callback"
 
 # Monerium — production. Flip to https://api.monerium.dev for sandbox testing.
 MONERIUM_BASE_URL = "https://api.monerium.app"
 MONERIUM_PROFILE_ID = ""
 
+# MPT routing — Safe + Zodiac Roles Modifier on Gnosis chain (100).
+# All public; private signer key lives in ROUTER_PRIVATE_KEY secret below.
+GNOSIS_RPC_URL = "https://rpc.gnosischain.com"
+EURE_CONTRACT = "0x420CA0f9B9b604cE0fd9C18EF134C705e5Fa3430"
+# MPT main-rail Safe (Monerium default wallet). Verified on-chain 2026-05-21:
+# Safe v1.4.1, threshold 2/3, owners ms-/ds-/md-mpt-mr-signer.
+SAFE_ADDRESS = "0x449aBCEf4e29a7Dd8d98dB451AF2c463561BAf2e"
+# Zodiac Roles Modifier v2 instance, owner = SAFE_ADDRESS, enabled as Safe module.
+# Verified on-chain 2026-05-21.
+ROLES_MODIFIER_ADDRESS = "0x330347d656b1a5DF972f758DE1E25E99ec36762c"
+# Bytes32 role key for "EUReForwarder" — formatBytes32String("EUReForwarder").
+# Set via safe-tx/001-eure-forwarder-role-setup.{mjs,json}; assigned to backend
+# EOA 0xd61289c5035c6e5eaD6F100b6A8F90ac4ee054CB once that batch executes on Safe.
+ROLE_KEY = "0x45555265466f7277617264657200000000000000000000000000000000000000"
+
 # Secrets — set via `wrangler secret put`:
-#   ADMIN_TOKEN                     # any long random string for /admin/* auth
+#   ADMIN_TOKEN                     # bearer token for /api/*/admin JSON endpoints
+#   MONERIUM_ADMIN_USER             # Basic Auth user for /admin HTML dashboard
+#   MONERIUM_ADMIN_PASS             # Basic Auth pass for /admin HTML dashboard
 #   ENABLE_BANKING_APPLICATION_ID   # UUID from EnableBanking dashboard
 #   ENABLE_BANKING_PRIVATE_KEY      # full PEM PKCS8 (preserve newlines)
 #   GOCARDLESS_SECRET_ID            # only needed if BANKING_PROVIDER=gocardless
@@ -44,3 +76,4 @@ MONERIUM_PROFILE_ID = ""
 #   MONERIUM_CLIENT_ID              # from monerium.app/developers/apps
 #   MONERIUM_CLIENT_SECRET
 #   MONERIUM_WEBHOOK_SECRET         # HMAC secret you set in Monerium webhook config
+#   ROUTER_PRIVATE_KEY              # 0x-prefixed 32-byte hex — backend EOA member of EUReForwarder role

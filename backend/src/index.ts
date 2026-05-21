@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { bearerAuth } from 'hono/bearer-auth';
+import { HTTPException } from 'hono/http-exception';
 
 import type { Env } from './types';
 import { getProvider } from './providers';
@@ -27,6 +28,11 @@ import {
   recordMoneriumWebhookEvent,
   upsertMoneriumOrder,
 } from './monerium/db';
+import { extractRoutingFromOrder, extractSessionId } from './monerium/sid';
+import { insertForward, updateForward } from './monerium/db';
+import { forwardViaSafe } from './router/safe';
+import { mountAdminUi } from './admin/app';
+import type { Address } from 'viem';
 import type { MoneriumWebhookEvent } from './monerium/types';
 
 const app = new Hono<{ Bindings: Env }>();
@@ -140,14 +146,24 @@ app.post('/api/monerium/webhook', async (c) => {
   }
   const eventType = event ? extractEventType(event) : 'invalid_json';
   const order = event ? extractOrder(event) : null;
+  const sid = extractSessionId(order);
+  const amountCents = parseAmountCents(order?.amount);
   const headersObj: Record<string, string> = {};
   c.req.raw.headers.forEach((v, k) => { headersObj[k] = v; });
+  let processingNote: string | null = null;
+  if (!verify.ok) processingNote = `signature_invalid: ${verify.reason}`;
+  else if (eventType === 'subscription.created') processingNote = 'subscription_ack';
+  else if (!order) processingNote = 'no_order_in_payload';
   await recordMoneriumWebhookEvent(c.env, {
     orderId: order?.id ?? null,
     eventType,
     signatureOk: verify.ok,
     payload: rawBody,
     headersJson: JSON.stringify(headersObj),
+    sidExtracted: sid,
+    amountCents,
+    currency: order?.currency ?? null,
+    processingNote,
   });
   if (!verify.ok) {
     console.warn(
@@ -173,6 +189,17 @@ app.post('/api/monerium/webhook', async (c) => {
   if (order) {
     await upsertMoneriumOrder(c.env, order);
     console.log(`monerium ${eventType} order ${order.id} state=${order.state ?? '?'}`);
+    // Auto-forward via Safe + Roles Modifier on incoming issue orders.
+    // Only triggers on order.created (first sight of the order) to avoid
+    // double-forwarding when order.updated fires later. State 'pending' or
+    // 'processed' both mean EURe has been (or will be) minted to our Safe.
+    if (
+      order.kind === 'issue'
+      && eventType === 'order.created'
+      && c.env.ROUTER_PRIVATE_KEY
+    ) {
+      c.executionCtx.waitUntil(handleForward(c.env, order));
+    }
   }
   return c.json({ ok: true });
 });
@@ -310,10 +337,106 @@ moneriumAdmin.post('/webhooks', async (c) => {
 
 app.route('/api/monerium/admin', moneriumAdmin);
 
+// Branded HTML dashboard at /admin (Basic Auth gated).
+mountAdminUi(app);
+
 app.onError((err, c) => {
+  // basicAuth / bearerAuth + any Hono-thrown HTTPException already carries
+  // the right status + WWW-Authenticate header — let it through unchanged
+  // (otherwise a 401 becomes a 500 with empty body, suppressing browser auth
+  // prompts).
+  if (err instanceof HTTPException) return err.getResponse();
   console.error('error', err);
   return c.json({ error: err.message }, 500);
 });
+
+/// Convert Monerium's decimal-string amount ("12.34", "0.5", "1000") to
+/// integer minor units for sortable indexing. Returns null on parse failure
+/// — we still want the event row to land in the audit log either way.
+function parseAmountCents(amount: string | undefined | null): number | null {
+  if (!amount) return null;
+  const n = Number(amount);
+  if (!Number.isFinite(n)) return null;
+  return Math.round(n * 100);
+}
+
+/// EURe has 18 decimals (per Monerium standard). Convert a decimal-string
+/// amount to wei. Avoids floating-point by splitting on the decimal point
+/// and padding the fractional half to 18 chars before BigInt parse.
+function eurToWei(amount: string): bigint {
+  const [whole, frac = ''] = amount.split('.');
+  const fracPadded = (frac + '0'.repeat(18)).slice(0, 18);
+  return BigInt(whole) * 10n ** 18n + BigInt(fracPadded || '0');
+}
+
+/// Fire-and-forget forward of a single issue order's EURe from the Safe to
+/// the wallet encoded in the memo. Called inside `executionCtx.waitUntil`
+/// so the webhook response returns immediately to Monerium.
+async function handleForward(
+  env: import('./types').Env,
+  order: import('./monerium/types').MoneriumOrder,
+): Promise<void> {
+  const routing = extractRoutingFromOrder(order);
+  const amountCents = parseAmountCents(order.amount);
+  if (!routing.target) {
+    await insertForward(env, {
+      orderId: order.id,
+      targetAddress: '',
+      amountWei: '0',
+      amountCents,
+      sid: routing.sid,
+      memoPrefix: routing.prefix,
+      status: 'failed',
+      error: 'no_routing_target',
+    });
+    console.warn(`forward ${order.id}: no target in memo "${order.memo ?? ''}"`);
+    return;
+  }
+  // Skip self-forward — if memo target IS the Safe itself, leave funds in
+  // place. Common for "fund the Safe" deposits.
+  if (env.SAFE_ADDRESS && routing.target.toLowerCase() === env.SAFE_ADDRESS.toLowerCase()) {
+    await insertForward(env, {
+      orderId: order.id,
+      targetAddress: routing.target,
+      amountWei: '0',
+      amountCents,
+      sid: routing.sid,
+      memoPrefix: routing.prefix,
+      status: 'confirmed',
+      error: 'self_target_noop',
+    });
+    return;
+  }
+  const amountWei = eurToWei(order.amount ?? '0');
+  const forwardId = await insertForward(env, {
+    orderId: order.id,
+    targetAddress: routing.target,
+    amountWei: amountWei.toString(),
+    amountCents,
+    sid: routing.sid,
+    memoPrefix: routing.prefix,
+    status: 'pending',
+  });
+  const result = await forwardViaSafe(env, {
+    target: routing.target as Address,
+    amountWei,
+  });
+  if (result.ok) {
+    await updateForward(env, forwardId, {
+      status: 'submitted',
+      tx_hash: result.txHash!,
+      attempts: 1,
+    });
+    console.log(`forward ${order.id} → ${routing.target} tx=${result.txHash}`);
+  } else {
+    await updateForward(env, forwardId, {
+      status: 'failed',
+      error: result.error ?? 'unknown',
+      attempts: 1,
+    });
+    console.error(`forward ${order.id} FAILED: ${result.error}`);
+  }
+}
 
 async function refreshAccountsForAuthorization(
   env: Env,
