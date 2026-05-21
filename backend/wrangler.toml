@@ -4,15 +4,26 @@ compatibility_date = "2025-01-01"
 compatibility_flags = ["nodejs_compat"]
 account_id = "7dc7167b7e2e00923bfa7cd697df14e4"
 
-# Workers Route — binds this Worker to the monerium.domovina.ai hostname.
-# The DNS record (proxied A/AAAA → Cloudflare) was provisioned manually in
-# the dashboard, so we use a Route here instead of `custom_domain = true`
-# (which would require wrangler to also create the DNS record and errors
-# out when one already exists). Single-level subdomain so Universal SSL
-# covers it automatically — multi-level like `api.pay.domovina.ai` would
-# need Advanced Certificate Manager.
+# Workers Routes — both hostnames map to this single Worker script. The Worker
+# is host-agnostic (Hono routes are path-based), so the entire app —
+# /api/monerium/webhook, /admin/*, /api/hpb/*, etc — works on either domain.
+#
+#   monerium.domovina.ai  → Monerium dashboard webhook target (set in 2026-05).
+#                           DO NOT change without updating the URL in the
+#                           Monerium /webhooks subscription.
+#   mpt.domovina.ai       → brand-aligned hostname for the MPT admin UI +
+#                           any public API. Same Worker, same data.
+#
+# DNS for both: proxied A/AAAA records (orange-cloud) on the domovina.ai
+# zone, provisioned manually in CF dashboard. Single-level subdomains so
+# Universal SSL covers them automatically (multi-level like
+# api.pay.domovina.ai would need Advanced Certificate Manager).
 [[routes]]
 pattern = "monerium.domovina.ai/*"
+zone_name = "domovina.ai"
+
+[[routes]]
+pattern = "mpt.domovina.ai/*"
 zone_name = "domovina.ai"
 
 [observability]
