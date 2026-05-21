@@ -1,0 +1,20 @@
+{
+  "version": "1.0",
+  "chainId": "100",
+  "createdAt": 1779367732530,
+  "meta": {
+    "name": "MPT — Manual EURe forward (1.02 → 0x6693a7D1…)",
+    "description": "Direct Safe.transfer of 1.02 EURe from the MPT main-rail Safe 0x449aBCEf4e29a7Dd8d98dB451AF2c463561BAf2e to 0x6693a7D19486Dc45e9F90Fd2D515d972bBA2d65e. Use case: orphan recovery when backend auto-forward did not fire, or one-off settlement that bypasses the Roles Modifier scoping.",
+    "txBuilderVersion": "1.16.5",
+    "createdFromSafeAddress": "0x449aBCEf4e29a7Dd8d98dB451AF2c463561BAf2e"
+  },
+  "transactions": [
+    {
+      "to": "0x420CA0f9B9b604cE0fd9C18EF134C705e5Fa3430",
+      "value": "0",
+      "data": "0xa9059cbb0000000000000000000000006693a7d19486dc45e9f90fd2d515d972bba2d65e0000000000000000000000000000000000000000000000000e27c49886e60000",
+      "contractMethod": null,
+      "contractInputsValues": null
+    }
+  ]
+}

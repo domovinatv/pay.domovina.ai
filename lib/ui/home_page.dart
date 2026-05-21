@@ -14,6 +14,7 @@ import '../main.dart' show DomovinaBrand;
 import '../models/eip681_payload.dart';
 import '../models/epc_payload.dart';
 import '../models/hub3_payload.dart';
+import '../utils/eip55.dart';
 import 'gnosis_history_page.dart';
 import 'hpb_history_page.dart';
 
@@ -25,11 +26,17 @@ class HomePage extends StatefulWidget {
 }
 
 class _HomePageState extends State<HomePage> {
-  static final _addressRegex = RegExp(r'^0x[0-9a-fA-F]{40}$');
-
   static const _epcColor = DomovinaBrand.navy;     // SEPA — primary brand
   static const _hub3Color = DomovinaBrand.red;     // Hrvatska — Croatian red
   static const _walletColor = DomovinaBrand.muted; // Web3 — secondary slate
+
+  /// User must explicitly tick a confirmation checkbox before the QR
+  /// preview cards reveal. Resets automatically on every change to the
+  /// target address — protects against typo-then-scan, since funds sent
+  /// on-chain to a wrong address are irreversible. See
+  /// backend/safe-tx/RISK-MITIGATIONS.md for the full catalogue of typo
+  /// defenses we considered.
+  bool _addressConfirmed = false;
 
   final _name = TextEditingController(text: 'ITalk d.o.o.');
   final _address = TextEditingController(text: 'IX. Južna obala 20');
@@ -87,7 +94,10 @@ class _HomePageState extends State<HomePage> {
       ];
 
   String get _gnosisAddr => _gnosisAddress.text.trim();
-  bool get _isValidGnosisAddress => _addressRegex.hasMatch(_gnosisAddr);
+  Eip55Result get _addressValidation => Eip55.validate(_gnosisAddr);
+  bool get _isValidGnosisAddress =>
+      _addressValidation == Eip55Result.validChecksum ||
+      _addressValidation == Eip55Result.validNoChecksum;
   String get _sidValue => _sid.text.trim();
 
   /// EPC remittance now uses MPT routing scheme: Monerium default wallet is
@@ -113,6 +123,14 @@ class _HomePageState extends State<HomePage> {
     for (final c in _allControllers) {
       c.addListener(() => setState(() {}));
     }
+    // Any change to the target address voids prior confirmation. This is
+    // the typo-protection invariant: confirmation always reflects the
+    // exact bytes the user last verified, never a previous version.
+    _gnosisAddress.addListener(() {
+      if (_addressConfirmed) {
+        setState(() => _addressConfirmed = false);
+      }
+    });
   }
 
   @override
@@ -286,13 +304,10 @@ class _HomePageState extends State<HomePage> {
         _field(
           _gnosisAddress,
           'Gnosis adresa primatelja (0x…)',
-          helper: _isValidGnosisAddress
-              ? 'MPT će forwardirati EURe sa Safe-a na ovu adresu nakon mint-a'
-              : 'Mora biti validna 0x adresa (40 hex znakova)',
-          errorText: _isValidGnosisAddress
-              ? null
-              : 'Nevažeća adresa',
+          helper: _addressHelperText(),
+          errorText: _addressErrorText(),
         ),
+        _buildConfirmTargetBanner(),
         // Session id field. Ide u EPC remittance kao `mpt:0x...?sid=<id>` —
         // Monerium ignorira sve (mint-a na MPT Safe), backend čita memo i
         // forwarda EURe na pravi wallet kroz Zodiac Roles Modifier. SID
@@ -378,6 +393,162 @@ class _HomePageState extends State<HomePage> {
               ),
             ],
           ),
+        ),
+      ),
+    );
+  }
+
+  String _addressHelperText() {
+    switch (_addressValidation) {
+      case Eip55Result.validChecksum:
+        return '✓ EIP-55 checksum potvrđen — adresa je vjerojatno bez tipfelera';
+      case Eip55Result.validNoChecksum:
+        return 'Validan format (sve mala/velika slova — bez EIP-55 typo zaštite). '
+            'Za jaču provjeru, kopiraj adresu s mixed-case iz wallet-a.';
+      case Eip55Result.badChecksum:
+        return 'EIP-55 checksum NE stima — gotovo sigurno typo. '
+            'Predloženo: ${Eip55.toChecksumAddress(_gnosisAddr)}';
+      case Eip55Result.invalidFormat:
+        return 'Mora biti validna 0x adresa (40 hex znakova)';
+    }
+  }
+
+  String? _addressErrorText() {
+    switch (_addressValidation) {
+      case Eip55Result.invalidFormat:
+        return 'Nevažeća adresa';
+      case Eip55Result.badChecksum:
+        return 'Neispravan EIP-55 checksum';
+      case Eip55Result.validChecksum:
+      case Eip55Result.validNoChecksum:
+        return null;
+    }
+  }
+
+  Widget _buildConfirmTargetBanner() {
+    final canConfirm = _isValidGnosisAddress;
+    final bgColor = _addressConfirmed
+        ? DomovinaBrand.surface
+        : const Color(0xFFFFF4E5); // soft amber — "action needed"
+    final borderColor = _addressConfirmed
+        ? const Color(0xFF2E8540)
+        : const Color(0xFFE8B96E);
+    return Container(
+      margin: const EdgeInsets.only(top: 4, bottom: 12),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        color: bgColor,
+        border: Border.all(color: borderColor),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(
+            _addressConfirmed
+                ? Icons.lock_open_rounded
+                : Icons.warning_amber_rounded,
+            size: 22,
+            color: _addressConfirmed ? const Color(0xFF2E8540) : const Color(0xFFB45309),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  _addressConfirmed
+                      ? 'Target adresa potvrđena — QR kodovi su otključani'
+                      : 'EURe poslan na krivu adresu je nepovratan',
+                  style: const TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                    color: DomovinaBrand.navy,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  _addressConfirmed
+                      ? 'Bilo kakva promjena adrese resetira potvrdu.'
+                      : 'Backend će automatski forwardirati EURe sa Safe-a na adresu '
+                        'iznad. Provjeri da je točna prije skeniranja QR-a.',
+                  style: const TextStyle(
+                    fontSize: 12,
+                    height: 1.4,
+                    color: DomovinaBrand.muted,
+                  ),
+                ),
+                const SizedBox(height: 6),
+                Row(
+                  children: [
+                    SizedBox(
+                      height: 24,
+                      width: 24,
+                      child: Checkbox(
+                        value: _addressConfirmed,
+                        onChanged: canConfirm
+                            ? (v) => setState(() => _addressConfirmed = v ?? false)
+                            : null,
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        canConfirm
+                            ? 'Potvrđujem da je target adresa točna'
+                            : 'Najprije unesi validnu 0x adresu',
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                          color: canConfirm
+                              ? DomovinaBrand.navy
+                              : DomovinaBrand.muted,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _unconfirmedPlaceholder() {
+    return Card(
+      clipBehavior: Clip.antiAlias,
+      child: Padding(
+        padding: const EdgeInsets.all(32),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
+            const Icon(Icons.lock_rounded, size: 48, color: DomovinaBrand.muted),
+            const SizedBox(height: 16),
+            const Text(
+              'QR kodovi su zaključani',
+              style: TextStyle(
+                fontSize: 18,
+                fontWeight: FontWeight.w700,
+                color: DomovinaBrand.navy,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              _isValidGnosisAddress
+                  ? 'Potvrdi target adresu (checkbox iznad) da otkriješ QR kodove. '
+                    'Ovo je sigurnosni step — EURe poslan na krivu adresu je nepovratan.'
+                  : 'Najprije unesi validnu Gnosis 0x adresu u polje iznad.',
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                fontSize: 14,
+                height: 1.5,
+                color: DomovinaBrand.muted,
+              ),
+            ),
+          ],
         ),
       ),
     );
@@ -548,6 +719,12 @@ class _HomePageState extends State<HomePage> {
   }
 
   Widget _buildPreview(BoxConstraints constraints) {
+    // Gate: until the user explicitly confirms the routing target, hide
+    // every QR card. The MPT backend will auto-forward EURe to whatever
+    // address it parses out of the EPC remittance — a typo here is
+    // irreversibly painful, so the QR is unscannable until checkbox ticked.
+    if (!_addressConfirmed) return _unconfirmedPlaceholder();
+
     final epcCard = _previewCard(
       index: 1,
       title: 'EPC QR (SEPA Credit Transfer)',

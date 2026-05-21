@@ -41,6 +41,10 @@ dependencies:
   http: ^1.2.2
   intl: ^0.20.2
   url_launcher: ^6.3.1
+  # Keccak-256 for EIP-55 address checksum validation — catches typos in the
+  # MPT routing target before a QR is generated. We use pointycastle's
+  # KeccakDigest(256), tree-shaken from pointycastle's larger crypto suite.
+  pointycastle: ^3.9.1
 
 dev_dependencies:
   flutter_test:

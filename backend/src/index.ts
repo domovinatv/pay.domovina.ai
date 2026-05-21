@@ -23,6 +23,7 @@ import {
 } from './monerium/webhook';
 import {
   alreadyProcessedEvent,
+  getForwardByOrder,
   getMoneriumOrder,
   listMoneriumOrders,
   recordMoneriumWebhookEvent,
@@ -190,15 +191,25 @@ app.post('/api/monerium/webhook', async (c) => {
     await upsertMoneriumOrder(c.env, order);
     console.log(`monerium ${eventType} order ${order.id} state=${order.state ?? '?'}`);
     // Auto-forward via Safe + Roles Modifier on incoming issue orders.
-    // Only triggers on order.created (first sight of the order) to avoid
-    // double-forwarding when order.updated fires later. State 'pending' or
-    // 'processed' both mean EURe has been (or will be) minted to our Safe.
+    //
+    // Critical race-condition fix (2026-05-21): only forward AFTER Monerium
+    // has actually executed the EURe mint TX on-chain. `order.created` fires
+    // when Monerium receives the SEPA payment but BEFORE the mint reaches
+    // chain — Safe has no EURe to forward, so `execTransactionWithRole`
+    // reverts with `ModuleTransactionFailed()` at the inner `EURe.transfer`
+    // call. `order.updated` with `state=processed` is the signal that the
+    // mint TX is in `meta.txHashes` and the Safe balance is live.
+    //
+    // Idempotency: order.updated may fire more than once. Skip if we already
+    // have a `submitted` or `confirmed` forward for this order_id. A prior
+    // `failed` forward is allowed to retry — covers transient RPC errors.
     if (
       order.kind === 'issue'
-      && eventType === 'order.created'
+      && eventType === 'order.updated'
+      && order.state === 'processed'
       && c.env.ROUTER_PRIVATE_KEY
     ) {
-      c.executionCtx.waitUntil(handleForward(c.env, order));
+      c.executionCtx.waitUntil(maybeForward(c.env, order));
     }
   }
   return c.json({ ok: true });
@@ -367,6 +378,21 @@ function eurToWei(amount: string): bigint {
   const [whole, frac = ''] = amount.split('.');
   const fracPadded = (frac + '0'.repeat(18)).slice(0, 18);
   return BigInt(whole) * 10n ** 18n + BigInt(fracPadded || '0');
+}
+
+/// Wrapper that enforces forward-level idempotency before invoking the
+/// actual forward. Called from `executionCtx.waitUntil` so the webhook
+/// response is never blocked.
+async function maybeForward(
+  env: import('./types').Env,
+  order: import('./monerium/types').MoneriumOrder,
+): Promise<void> {
+  const existing = await getForwardByOrder(env, order.id);
+  if (existing && (existing.status === 'submitted' || existing.status === 'confirmed')) {
+    console.log(`forward ${order.id} already ${existing.status}, skipping`);
+    return;
+  }
+  await handleForward(env, order);
 }
 
 /// Fire-and-forget forward of a single issue order's EURe from the Safe to
