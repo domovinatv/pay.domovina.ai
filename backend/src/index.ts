@@ -25,14 +25,22 @@ import {
   alreadyProcessedEvent,
   getForwardByOrder,
   getMoneriumOrder,
+  insertForward,
   listMoneriumOrders,
   recordMoneriumWebhookEvent,
+  updateForward,
   upsertMoneriumOrder,
 } from './monerium/db';
 import { extractRoutingFromOrder, extractSessionId } from './monerium/sid';
-import { insertForward, updateForward } from './monerium/db';
 import { forwardViaSafe } from './router/safe';
 import { mountAdminUi } from './admin/app';
+import { buildIntentApi } from './intents/api';
+import {
+  getIntent,
+  markIntentPaid,
+  sweepExpiredIntents,
+} from './intents/db';
+import { renderCheckoutPage } from './checkout/page';
 import type { Address } from 'viem';
 import type { MoneriumWebhookEvent } from './monerium/types';
 
@@ -348,6 +356,17 @@ moneriumAdmin.post('/webhooks', async (c) => {
 
 app.route('/api/monerium/admin', moneriumAdmin);
 
+// Public payment-intents API (unauthenticated; rate-limit in Phase 2).
+app.route('/api/intents', buildIntentApi());
+
+// Public branded checkout page rendered server-side; polls /api/intents/:sid.
+app.get('/checkout/:sid', async (c) => {
+  const sid = c.req.param('sid');
+  const intent = await getIntent(c.env, sid);
+  if (!intent) return c.text('intent not found', 404);
+  return c.html(renderCheckoutPage(intent));
+});
+
 // Branded HTML dashboard at /admin (Basic Auth gated).
 mountAdminUi(app);
 
@@ -454,6 +473,17 @@ async function handleForward(
       attempts: 1,
     });
     console.log(`forward ${order.id} → ${routing.target} tx=${result.txHash}`);
+    // Link to the corresponding payment intent (if any) so the checkout
+    // page can flip to 'paid'. Idempotent: only flips pending → paid,
+    // ignores already-paid or expired intents.
+    if (routing.sid) {
+      await markIntentPaid(env, routing.sid, {
+        moneriumOrderId: order.id,
+        forwardId,
+        forwardTxHash: result.txHash!,
+        amountReceivedCents: amountCents,
+      });
+    }
   } else {
     await updateForward(env, forwardId, {
       status: 'failed',
@@ -530,6 +560,13 @@ export default {
     ctx.waitUntil(
       refreshAllAccounts(env).then((n) =>
         console.log(`cron: inserted ${n} new transactions`),
+      ),
+    );
+    // Flip overdue pending intents to expired so the checkout page can
+    // show a clear "istekao" state. Idempotent + cheap UPDATE.
+    ctx.waitUntil(
+      sweepExpiredIntents(env).then((n) =>
+        console.log(`cron: expired ${n} pending intents`),
       ),
     );
   },

@@ -61,12 +61,14 @@ class _HomePageState extends State<HomePage> {
   final _sid = TextEditingController(text: _randomSid());
 
   static String _randomSid() {
-    // Confusable-free alphabet (no 0/O/1/l). 10 chars at 30^10 ≈ 5.9e14
-    // combinations — collision-irrelevant for the short window between QR
-    // generation and webhook receipt.
+    // Confusable-free alphabet (no 0/O/1/l), 32 chars × 12 positions =
+    // 32^12 ≈ 1.15e18 (~60 bits). Birthday-collision at 50% sits near
+    // 10^9 payments — comfortable for onchain join-key duty in the
+    // PaymentRegistry feed. Still fits bytes32 onchain and stays under
+    // SEPA memo limits when wrapped as `mpt:0x…?sid=<id>`.
     const chars = 'abcdefghijkmnpqrstuvwxyz23456789';
     final r = Random.secure();
-    return List.generate(10, (_) => chars[r.nextInt(chars.length)]).join();
+    return List.generate(12, (_) => chars[r.nextInt(chars.length)]).join();
   }
 
   final _epcCaptureKey = GlobalKey();

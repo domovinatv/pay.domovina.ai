@@ -1,0 +1,165 @@
+import { Hono } from 'hono';
+
+import type { Env } from '../types';
+import { createIntent, getIntent } from './db';
+import { generateSid } from './sid';
+import { buildEpcText } from './epc';
+
+/// Public, unauthenticated intent API. Mountable into the root Hono app
+/// via `app.route('/api/intents', intentApi)`. Phase 1 is polling-only;
+/// `/stream` is reserved for the Phase 2 SSE upgrade and currently 404s
+/// so EventSource clients fall back to polling cleanly.
+
+interface CreateIntentBody {
+  target_address?: string;
+  amount_eur?: string | number;
+  label?: string;
+  metadata?: Record<string, unknown>;
+  expires_in_seconds?: number;
+}
+
+const ADDR_RE = /^0x[0-9a-fA-F]{40}$/;
+
+/// MPT main-rail LHV IBAN + beneficiary name baked into the EPC payload.
+/// Hardcoded here because changing it requires changing the Monerium
+/// dashboard webhook target too — it's an entire-stack reconfiguration.
+const MPT_BENEFICIARY_NAME = 'ITalk d.o.o.';
+const MPT_IBAN = 'EE7077770001629211 28';
+const MPT_BIC = 'LHVBEE22';
+const DEFAULT_TTL_SECONDS = 900; // 15 min — matches PayCek's window
+const MAX_TTL_SECONDS = 86_400;  // 24 h hard cap
+const MAX_AMOUNT_CENTS = 1_000_000; // €10,000 — bigger needs Phase 2 multisig propose
+
+export function buildIntentApi(): Hono<{ Bindings: Env }> {
+  const api = new Hono<{ Bindings: Env }>();
+
+  api.post('/', async (c) => {
+    let body: CreateIntentBody;
+    try {
+      body = await c.req.json<CreateIntentBody>();
+    } catch {
+      return c.json({ error: 'invalid_json' }, 400);
+    }
+    const target = (body.target_address ?? '').trim();
+    if (!ADDR_RE.test(target)) {
+      return c.json({ error: 'invalid_target_address' }, 400);
+    }
+    const amountEur = parseAmount(body.amount_eur);
+    if (amountEur === null) {
+      return c.json({ error: 'invalid_amount_eur' }, 400);
+    }
+    const amountCents = Math.round(amountEur * 100);
+    if (amountCents <= 0 || amountCents > MAX_AMOUNT_CENTS) {
+      return c.json({ error: 'amount_out_of_range', max: MAX_AMOUNT_CENTS }, 400);
+    }
+    const ttl = Math.min(
+      Math.max(body.expires_in_seconds ?? DEFAULT_TTL_SECONDS, 60),
+      MAX_TTL_SECONDS,
+    );
+    const sid = await insertWithRetry(c.env, target, amountCents, ttl, body);
+    if (!sid) return c.json({ error: 'sid_collision_after_retries' }, 500);
+    const intent = await getIntent(c.env, sid);
+    if (!intent) return c.json({ error: 'intent_not_persisted' }, 500);
+
+    const origin = new URL(c.req.url).origin;
+    return c.json(intentResponseJson(intent, origin));
+  });
+
+  api.get('/:sid', async (c) => {
+    const sid = c.req.param('sid');
+    const intent = await getIntent(c.env, sid);
+    if (!intent) return c.json({ error: 'intent_not_found' }, 404);
+    const origin = new URL(c.req.url).origin;
+    return c.json(intentResponseJson(intent, origin));
+  });
+
+  // Phase 2 SSE endpoint — currently absent. EventSource will receive a 404
+  // and the checkout page's JS falls back to polling automatically.
+  api.get('/:sid/stream', (c) => {
+    return c.json({ error: 'sse_not_yet_implemented_use_polling' }, 404);
+  });
+
+  return api;
+}
+
+/// Builds the full intent representation returned to API callers and used
+/// by the checkout page. Kept in one place so the shape is consistent
+/// between create + status endpoints.
+export function intentResponseJson(
+  intent: import('./db').PaymentIntentRow,
+  origin: string,
+): Record<string, unknown> {
+  const memo = `mpt:${intent.target_address}?sid=${intent.sid}`;
+  const amountEur = (intent.amount_cents / 100).toFixed(2);
+  const epcText = buildEpcText({
+    beneficiaryName: MPT_BENEFICIARY_NAME,
+    iban: MPT_IBAN,
+    amountEur: intent.amount_cents / 100,
+    purposeCode: 'OTHR',
+    remittanceInfo: memo,
+    bic: MPT_BIC,
+  });
+  return {
+    sid: intent.sid,
+    state: intent.state,
+    amount_eur: amountEur,
+    amount_cents: intent.amount_cents,
+    currency: intent.currency,
+    target_address: intent.target_address,
+    label: intent.label,
+    metadata: intent.metadata_json ? JSON.parse(intent.metadata_json) : null,
+    memo,
+    iban: MPT_IBAN,
+    beneficiary_name: MPT_BENEFICIARY_NAME,
+    bic: MPT_BIC,
+    epc_qr_data: epcText,
+    checkout_url: `${origin}/checkout/${intent.sid}`,
+    status_url: `${origin}/api/intents/${intent.sid}`,
+    status_stream_url: `${origin}/api/intents/${intent.sid}/stream`,
+    created_at: isoFromUnix(intent.created_at),
+    expires_at: isoFromUnix(intent.expires_at),
+    paid_at: intent.paid_at ? isoFromUnix(intent.paid_at) : null,
+    monerium_order_id: intent.monerium_order_id,
+    forward_tx_hash: intent.forward_tx_hash,
+    amount_received_cents: intent.amount_received_cents,
+  };
+}
+
+async function insertWithRetry(
+  env: Env,
+  target: string,
+  amountCents: number,
+  ttlSeconds: number,
+  body: CreateIntentBody,
+): Promise<string | null> {
+  for (let i = 0; i < 3; i++) {
+    const sid = generateSid();
+    try {
+      await createIntent(env, {
+        sid,
+        targetAddress: target,
+        amountCents,
+        label: body.label ?? null,
+        metadata: body.metadata ?? null,
+        ttlSeconds,
+      });
+      return sid;
+    } catch (e) {
+      // Most likely PK collision on sid — retry. Any other DB error
+      // bubbles up on the third attempt.
+      if (i === 2) throw e;
+    }
+  }
+  return null;
+}
+
+function parseAmount(input: string | number | undefined): number | null {
+  if (input === undefined || input === null) return null;
+  const n = typeof input === 'number' ? input : Number(String(input).replace(',', '.'));
+  if (!Number.isFinite(n)) return null;
+  return n;
+}
+
+function isoFromUnix(s: number): string {
+  return new Date(s * 1000).toISOString();
+}

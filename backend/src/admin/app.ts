@@ -9,10 +9,12 @@ import {
   listMoneriumWebhookEvents,
   getMoneriumOrder,
 } from '../monerium/db';
+import { listIntents } from '../intents/db';
 import {
   renderEventDetailPage,
   renderEventsPage,
   renderForwardsPage,
+  renderIntentsPage,
   renderOrderDetailPage,
   renderOrdersPage,
 } from './views';
@@ -58,6 +60,21 @@ export function mountAdminUi(app: Hono<{ Bindings: Env }>): void {
   app.get('/admin/api/forwards', async (c) => {
     const status = c.req.query('status') || undefined;
     const { items, total } = await listForwards(c.env, { status, limit: 100 });
+    return c.json({ items, total });
+  });
+  app.get('/admin/intents', (c) => c.html(renderIntentsPage()));
+  app.get('/admin/api/intents', async (c) => {
+    const stateParam = c.req.query('state');
+    const validStates = ['pending', 'paid', 'expired'] as const;
+    const state = (validStates as readonly string[]).includes(stateParam ?? '')
+      ? (stateParam as typeof validStates[number])
+      : undefined;
+    const { items, total } = await listIntents(c.env, {
+      state,
+      sid: c.req.query('sid') || undefined,
+      targetAddress: c.req.query('target_address') || undefined,
+      limit: 100,
+    });
     return c.json({ items, total });
   });
 

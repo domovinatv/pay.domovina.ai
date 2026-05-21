@@ -175,7 +175,7 @@ footer {
 
 interface ShellOptions {
   title: string;
-  tab: 'events' | 'orders' | 'forwards';
+  tab: 'events' | 'orders' | 'forwards' | 'intents';
   body: string;
 }
 
@@ -184,7 +184,8 @@ function renderShell({ title, tab, body }: ShellOptions): string {
     `<a href="${href}" class="${tab === key ? 'active' : ''}">${label}</a>`;
   const badgeLabel = tab === 'events' ? 'Webhook audit'
     : tab === 'orders' ? 'Monerium orders'
-    : 'Safe forwards';
+    : tab === 'forwards' ? 'Safe forwards'
+    : 'Payment intents';
   return `<!doctype html>
 <html lang="hr">
 <head>
@@ -208,6 +209,7 @@ ${BASE_STYLE}
   ${t('events', 'Webhook eventi', '/admin/')}
   ${t('orders', 'Orders', '/admin/orders')}
   ${t('forwards', 'Safe forwards', '/admin/forwards')}
+  ${t('intents', 'Payment intents', '/admin/intents')}
 </nav>
 <main>${body}</main>
 <footer>
@@ -631,6 +633,114 @@ document.getElementById("refresh").addEventListener("click", load);
 document.getElementById("auto").addEventListener("click", e => {
   if (autoTimer) { clearInterval(autoTimer); autoTimer = null; e.target.textContent="Auto: OFF"; e.target.classList.remove("auto-on"); }
   else { autoTimer = setInterval(load, 5000); e.target.textContent="Auto: 5s"; e.target.classList.add("auto-on"); }
+});
+load();
+</script>`;
+
+export function renderIntentsPage(): string {
+  const body = `
+<h1>Payment intents</h1>
+<p class="dim" style="margin-top:-.5rem;margin-bottom:1rem;font-size:.9rem">
+  Svaki red = jedan payment intent. Lifecycle: pending → paid (kad Monerium
+  webhook stigne + forward TX succeed-a) ili expired (kad TTL prođe).
+  Klikni red za detalje.
+</p>
+<div class="controls">
+  <label for="state">Stanje:</label>
+  <select id="state">
+    <option value="">Sva</option>
+    <option value="pending">pending</option>
+    <option value="paid">paid</option>
+    <option value="expired">expired</option>
+  </select>
+  <label for="search">Pretraga:</label>
+  <input id="search" placeholder="sid ili 0x adresa…" style="width:14rem" />
+  <button type="button" id="refresh">↻ Osvježi</button>
+  <button type="button" id="auto">Auto: OFF</button>
+</div>
+<div class="table-wrap">
+  <table>
+    <thead>
+      <tr>
+        <th>Stvoreno</th>
+        <th>Stanje</th>
+        <th>Iznos</th>
+        <th>SID</th>
+        <th>Target</th>
+        <th>Label</th>
+        <th>Istječe</th>
+        <th>Plaćeno</th>
+        <th>Forward TX</th>
+      </tr>
+    </thead>
+    <tbody id="rows"><tr><td colspan="9" class="empty">Učitavam…</td></tr></tbody>
+  </table>
+</div>
+${INTENTS_SCRIPT}`;
+  return renderShell({ title: 'Payment intents', tab: 'intents', body });
+}
+
+const INTENTS_SCRIPT = `<script>
+let state = '', search = '', autoTimer = null;
+const fmtUnix = (u) => u ? new Date(u*1000).toLocaleString('hr-HR', {dateStyle:'short',timeStyle:'medium'}) : '—';
+const esc = (s) => String(s==null?'':s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const short = (s,n=10) => s ? s.slice(0,n)+'…' : '—';
+const eur = (cents) => cents==null ? '—' : (cents/100).toFixed(2)+' EUR';
+
+async function load() {
+  const tbody = document.getElementById('rows');
+  tbody.innerHTML = '<tr><td colspan="9" class="empty">Učitavam…</td></tr>';
+  const q = new URLSearchParams();
+  if (state) q.set('state', state);
+  if (search) {
+    if (search.startsWith('0x')) q.set('target_address', search);
+    else q.set('sid', search);
+  }
+  let data;
+  try {
+    const r = await fetch('/admin/api/intents?'+q.toString(), {credentials:'same-origin'});
+    if (!r.ok) throw new Error('HTTP '+r.status);
+    data = await r.json();
+  } catch (e) {
+    tbody.innerHTML = '<tr><td colspan="9" class="empty">Greška: '+esc(e.message)+'</td></tr>';
+    return;
+  }
+  if (data.items.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="9" class="empty">Nema intentova.</td></tr>';
+    return;
+  }
+  let html = '';
+  for (const it of data.items) {
+    const pill = it.state === 'paid' ? 'ok' : it.state === 'expired' ? 'bad' : 'warn';
+    const checkoutLink = '<a href="/checkout/'+esc(it.sid)+'" target="_blank" rel="noopener" class="mono">'+esc(it.sid)+'</a>';
+    const targetCell = '<a href="https://gnosisscan.io/address/'+esc(it.target_address)+'" target="_blank" rel="noopener" class="mono dim">'+esc(short(it.target_address,10))+'</a>';
+    const txCell = it.forward_tx_hash
+      ? '<a class="mono" href="https://gnosisscan.io/tx/'+esc(it.forward_tx_hash)+'" target="_blank" rel="noopener">'+esc(short(it.forward_tx_hash,10))+'</a>'
+      : '<span class="dim">—</span>';
+    html += '<tr>'
+      + '<td>'+esc(fmtUnix(it.created_at))+'</td>'
+      + '<td><span class="pill '+pill+'">'+esc(it.state)+'</span></td>'
+      + '<td class="amount">'+esc(eur(it.amount_cents))+'</td>'
+      + '<td>'+checkoutLink+'</td>'
+      + '<td>'+targetCell+'</td>'
+      + '<td class="dim">'+esc(it.label||'—')+'</td>'
+      + '<td class="dim">'+esc(fmtUnix(it.expires_at))+'</td>'
+      + '<td class="dim">'+esc(fmtUnix(it.paid_at))+'</td>'
+      + '<td>'+txCell+'</td>'
+      + '</tr>';
+  }
+  document.getElementById('rows').innerHTML = html;
+}
+document.getElementById('state').addEventListener('change', e => { state = e.target.value; load(); });
+document.getElementById('search').addEventListener('input', e => {
+  search = e.target.value.trim();
+  clearTimeout(window._intSearchTimer);
+  window._intSearchTimer = setTimeout(load, 250);
+});
+document.getElementById('refresh').addEventListener('click', load);
+document.getElementById('auto').addEventListener('click', e => {
+  if (autoTimer) { clearInterval(autoTimer); autoTimer = null; e.target.textContent='Auto: OFF'; e.target.classList.remove('auto-on'); }
+  else { autoTimer = setInterval(load, 5000); e.target.textContent='Auto: 5s'; e.target.classList.add('auto-on'); }
 });
 load();
 </script>`;
