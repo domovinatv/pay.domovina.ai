@@ -179,6 +179,107 @@ interface ShellOptions {
   body: string;
 }
 
+/// Shared CSS + JS injected once per page: snackbar/toast notification
+/// system + audio chime. Used by per-tab JS (currently intents) to fire
+/// "💰 Plaćeno!" toasts when polling detects a state transition.
+const TOAST_STYLES = `<style>
+#toastTray {
+  position: fixed; bottom: 1.25rem; right: 1.25rem;
+  z-index: 300; display: flex; flex-direction: column-reverse;
+  gap: .55rem; max-width: 24rem; pointer-events: none;
+}
+.toast {
+  pointer-events: auto;
+  background: var(--navy); color: #fff;
+  border-radius: .55rem;
+  padding: .65rem .85rem;
+  box-shadow: 0 8px 24px rgba(0,0,0,.18);
+  display: flex; gap: .65rem; align-items: flex-start;
+  animation: toast-in .25s cubic-bezier(.34,1.56,.64,1) both;
+  font-size: .9rem;
+  border-left: 4px solid var(--success);
+}
+.toast.paid    { border-left-color: var(--success); }
+.toast.expired { border-left-color: var(--danger); }
+.toast.info    { border-left-color: #4A90E2; }
+.toast .icon { font-size: 1.2rem; line-height: 1; }
+.toast .body { flex: 1; line-height: 1.35; }
+.toast .body .title { font-weight: 700; margin-bottom: .15rem; }
+.toast .body .sub   { opacity: .85; font-size: .8rem; font-family: ui-monospace, monospace; }
+.toast .body a      { color: #fff; text-decoration: underline; }
+.toast.fading-out { animation: toast-out .3s ease-in both; }
+@keyframes toast-in  { from { transform: translateX(120%); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+@keyframes toast-out { from { transform: translateX(0); opacity: 1; } to { transform: translateX(120%); opacity: 0; } }
+</style>`;
+
+const TOAST_JS = `<script>
+window.MPTToast = (function() {
+  let audioCtx;
+  function ensureTray() {
+    let tray = document.getElementById('toastTray');
+    if (!tray) {
+      tray = document.createElement('div');
+      tray.id = 'toastTray';
+      document.body.appendChild(tray);
+    }
+    return tray;
+  }
+  function ensureAudio() {
+    try { audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)(); }
+    catch {}
+  }
+  function chime(variant) {
+    if (!audioCtx) return;
+    try {
+      const t0 = audioCtx.currentTime;
+      const notes = variant === 'paid' ? [[660, 0, .18], [880, .12, .32]]
+                  : variant === 'expired' ? [[440, 0, .25]]
+                  : [[523, 0, .15]];
+      notes.forEach(spec => {
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+        osc.type = 'sine';
+        osc.frequency.value = spec[0];
+        gain.gain.setValueAtTime(0, t0 + spec[1]);
+        gain.gain.linearRampToValueAtTime(.15, t0 + spec[1] + .02);
+        gain.gain.exponentialRampToValueAtTime(.001, t0 + spec[1] + spec[2]);
+        osc.connect(gain).connect(audioCtx.destination);
+        osc.start(t0 + spec[1]);
+        osc.stop(t0 + spec[1] + spec[2] + .05);
+      });
+    } catch {}
+  }
+  function show(opts) {
+    const tray = ensureTray();
+    const variant = opts.variant || 'info';
+    const el = document.createElement('div');
+    el.className = 'toast ' + variant;
+    el.innerHTML = '<span class="icon">' + (opts.icon || '🔔') + '</span>'
+      + '<div class="body">'
+      + '<div class="title">' + (opts.title || '') + '</div>'
+      + (opts.sub ? '<div class="sub">' + opts.sub + '</div>' : '')
+      + '</div>';
+    if (opts.href) {
+      el.style.cursor = 'pointer';
+      el.addEventListener('click', () => { window.location = opts.href; });
+    }
+    tray.appendChild(el);
+    chime(variant);
+    if (navigator.vibrate && variant === 'paid') {
+      try { navigator.vibrate([60, 40, 120]); } catch {}
+    }
+    const dismissMs = opts.dismissMs || 7000;
+    setTimeout(() => {
+      el.classList.add('fading-out');
+      setTimeout(() => el.remove(), 300);
+    }, dismissMs);
+  }
+  // Unlock audio on first user interaction (browser autoplay policy).
+  document.addEventListener('click', ensureAudio, { once: true });
+  return { show: show };
+})();
+</script>`;
+
 function renderShell({ title, tab, body }: ShellOptions): string {
   const t = (key: ShellOptions['tab'], label: string, href: string) =>
     `<a href="${href}" class="${tab === key ? 'active' : ''}">${label}</a>`;
@@ -195,8 +296,10 @@ function renderShell({ title, tab, body }: ShellOptions): string {
 <meta name="robots" content="noindex,nofollow" />
 <meta name="theme-color" content="#002F6C" />
 ${BASE_STYLE}
+${TOAST_STYLES}
 </head>
 <body>
+${TOAST_JS}
 <div class="tricolor"><span class="red"></span><span style="background:#FFFFFF"></span><span class="navy"></span></div>
 <header>
   <div class="brand">
@@ -789,14 +892,54 @@ ${INTENTS_SCRIPT}`;
 
 const INTENTS_SCRIPT = `<script>
 let state = '', search = '', autoTimer = null;
+// Snapshot of last-seen state per sid — used to detect transitions
+// (pending → paid, pending → expired) and fire toast notifications.
+// Only populated after the first load to avoid spamming on page open.
+let lastSeen = null;
 const fmtUnix = (u) => u ? new Date(u*1000).toLocaleString('hr-HR', {dateStyle:'short',timeStyle:'medium'}) : '—';
 const esc = (s) => String(s==null?'':s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const short = (s,n=10) => s ? s.slice(0,n)+'…' : '—';
 const eur = (cents) => cents==null ? '—' : (cents/100).toFixed(2)+' EUR';
 
+function diffAndToast(items) {
+  if (lastSeen === null) return; // first load: skip toast, just establish baseline
+  for (const it of items) {
+    const prev = lastSeen.get(it.sid);
+    if (!prev) {
+      // Brand-new intent appeared. Only toast if it landed already-paid
+      // (rare — usually means it was created from another tab/curl AND
+      // paid before our next poll). Otherwise stay quiet on creation.
+      if (it.state === 'paid') {
+        window.MPTToast.show({
+          variant: 'paid', icon: '💰',
+          title: 'Plaćeno: ' + ((it.amount_cents / 100).toFixed(2)) + ' EUR',
+          sub: 'sid ' + short(it.sid, 12) + ' · ' + short(it.target_address, 10),
+          href: it.forward_tx_hash ? 'https://gnosisscan.io/tx/' + it.forward_tx_hash : undefined,
+        });
+      }
+    } else if (prev.state === 'pending') {
+      if (it.state === 'paid') {
+        window.MPTToast.show({
+          variant: 'paid', icon: '💰',
+          title: 'Plaćeno: ' + ((it.amount_cents / 100).toFixed(2)) + ' EUR',
+          sub: 'sid ' + short(it.sid, 12) + (it.label ? ' · ' + esc(it.label) : ''),
+          href: it.forward_tx_hash ? 'https://gnosisscan.io/tx/' + it.forward_tx_hash : undefined,
+          dismissMs: 12000,
+        });
+      } else if (it.state === 'expired') {
+        window.MPTToast.show({
+          variant: 'expired', icon: '⌛',
+          title: 'Isteklo: ' + ((it.amount_cents / 100).toFixed(2)) + ' EUR',
+          sub: 'sid ' + short(it.sid, 12) + (it.label ? ' · ' + esc(it.label) : ''),
+        });
+      }
+    }
+  }
+}
+
 async function load() {
   const tbody = document.getElementById('rows');
-  tbody.innerHTML = '<tr><td colspan="9" class="empty">Učitavam…</td></tr>';
+  if (lastSeen === null) tbody.innerHTML = '<tr><td colspan="9" class="empty">Učitavam…</td></tr>';
   const q = new URLSearchParams();
   if (state) q.set('state', state);
   if (search) {
@@ -812,6 +955,13 @@ async function load() {
     tbody.innerHTML = '<tr><td colspan="9" class="empty">Greška: '+esc(e.message)+'</td></tr>';
     return;
   }
+  // Toast on transitions BEFORE replacing lastSeen.
+  diffAndToast(data.items);
+  // Rebuild lastSeen for the next diff.
+  const next = new Map();
+  for (const it of data.items) next.set(it.sid, { state: it.state });
+  lastSeen = next;
+
   if (data.items.length === 0) {
     tbody.innerHTML = '<tr><td colspan="9" class="empty">Nema intentova.</td></tr>';
     return;
@@ -845,10 +995,24 @@ document.getElementById('search').addEventListener('input', e => {
   window._intSearchTimer = setTimeout(load, 250);
 });
 document.getElementById('refresh').addEventListener('click', load);
-document.getElementById('auto').addEventListener('click', e => {
-  if (autoTimer) { clearInterval(autoTimer); autoTimer = null; e.target.textContent='Auto: OFF'; e.target.classList.remove('auto-on'); }
-  else { autoTimer = setInterval(load, 5000); e.target.textContent='Auto: 5s'; e.target.classList.add('auto-on'); }
-});
+const autoBtn = document.getElementById('auto');
+function toggleAuto(on) {
+  if (on) {
+    autoTimer = setInterval(load, 5000);
+    autoBtn.textContent = 'Auto: 5s';
+    autoBtn.classList.add('auto-on');
+  } else {
+    if (autoTimer) clearInterval(autoTimer);
+    autoTimer = null;
+    autoBtn.textContent = 'Auto: OFF';
+    autoBtn.classList.remove('auto-on');
+  }
+}
+autoBtn.addEventListener('click', () => toggleAuto(!autoTimer));
+// Auto-polling ON by default so the dashboard feels alive — operator can
+// turn it off explicitly. Toasts fire only on transitions, not on initial
+// load, so opening the page is quiet.
+toggleAuto(true);
 
 // ── New intent modal ────────────────────────────────────────────────
 const modal = document.getElementById('intentModal');

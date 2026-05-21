@@ -465,6 +465,12 @@ async function handleForward(
   const result = await forwardViaSafe(env, {
     target: routing.target as Address,
     amountWei,
+    // When PAYMENT_REGISTRY_ADDRESS + MULTISEND_ADDRESS are set, the rail
+    // batches `registry.record(...)` alongside the transfer so each forward
+    // emits an onchain `Payment` event. `sessionId` is the join-key the feed
+    // indexer uses to look up the offchain metadata (URL, label, …). When
+    // null, we fall through to the legacy single-transfer path.
+    sessionId: routing.sid,
   });
   if (result.ok) {
     await updateForward(env, forwardId, {

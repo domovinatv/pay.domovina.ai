@@ -41,6 +41,15 @@ export interface Env {
   ROLES_MODIFIER_ADDRESS: string;  // Zodiac Roles Modifier v2 instance bound to SAFE_ADDRESS
   ROLE_KEY: string;                // bytes32 hex (0x… 64 chars) — "EUReForwarder" role
   ROUTER_PRIVATE_KEY: string;      // EOA private key (secret); member of ROLE_KEY
+
+  // PaymentRegistry onchain memo — optional. When both PAYMENT_REGISTRY_ADDRESS
+  // and MULTISEND_ADDRESS are set, the rail forwards via a Safe MultiSend
+  // batch [registry.record(...), eure.transfer(...)] so each forward emits an
+  // onchain `Payment` event in the same tx hash as the value transfer.
+  // Leave empty to keep the legacy single-transfer path (zero behavioral
+  // change). See backend/contracts/PaymentRegistry.sol + safe-tx/004,005.
+  PAYMENT_REGISTRY_ADDRESS: string; // 0x… deployed PaymentRegistry on Gnosis
+  MULTISEND_ADDRESS: string;        // 0x… Safe MultiSendCallOnly singleton (v1.4.1 = 0x9641…02e2)
 }
 
 export interface AccountRow {
