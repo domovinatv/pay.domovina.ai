@@ -1,0 +1,116 @@
+{
+  "contractName": "PaymentRegistry",
+  "source": "PaymentRegistry.sol",
+  "compiler": {
+    "version": "0.8.24",
+    "settings": {
+      "optimizer": {
+        "enabled": true,
+        "runs": 200
+      },
+      "evmVersion": "paris",
+      "outputSelection": {
+        "*": {
+          "*": [
+            "abi",
+            "evm.bytecode.object",
+            "evm.deployedBytecode.object",
+            "metadata"
+          ]
+        }
+      }
+    }
+  },
+  "abi": [
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
+          "internalType": "bytes32",
+          "name": "sessionId",
+          "type": "bytes32"
+        },
+        {
+          "indexed": true,
+          "internalType": "bytes32",
+          "name": "kind",
+          "type": "bytes32"
+        },
+        {
+          "indexed": true,
+          "internalType": "address",
+          "name": "recipient",
+          "type": "address"
+        },
+        {
+          "indexed": false,
+          "internalType": "address",
+          "name": "sender",
+          "type": "address"
+        },
+        {
+          "indexed": false,
+          "internalType": "address",
+          "name": "token",
+          "type": "address"
+        },
+        {
+          "indexed": false,
+          "internalType": "uint256",
+          "name": "amount",
+          "type": "uint256"
+        },
+        {
+          "indexed": false,
+          "internalType": "string",
+          "name": "metadataURI",
+          "type": "string"
+        }
+      ],
+      "name": "Payment",
+      "type": "event"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "bytes32",
+          "name": "sessionId",
+          "type": "bytes32"
+        },
+        {
+          "internalType": "bytes32",
+          "name": "kind",
+          "type": "bytes32"
+        },
+        {
+          "internalType": "address",
+          "name": "recipient",
+          "type": "address"
+        },
+        {
+          "internalType": "address",
+          "name": "token",
+          "type": "address"
+        },
+        {
+          "internalType": "uint256",
+          "name": "amount",
+          "type": "uint256"
+        },
+        {
+          "internalType": "string",
+          "name": "metadataURI",
+          "type": "string"
+        }
+      ],
+      "name": "record",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    }
+  ],
+  "bytecode": "0x608060405234801561001057600080fd5b506101f0806100206000396000f3fe608060405234801561001057600080fd5b506004361061002b5760003560e01c8063b66260f714610030575b600080fd5b61004361003e3660046100b5565b610045565b005b846001600160a01b031686887fee05b972f3528804afe2de8bf3d0a61830f97ba15923bb3e0fbba39b6d9b8e4b3388888888604051610088959493929190610166565b60405180910390a450505050505050565b80356001600160a01b03811681146100b057600080fd5b919050565b600080600080600080600060c0888a0312156100d057600080fd5b87359650602088013595506100e760408901610099565b94506100f560608901610099565b93506080880135925060a088013567ffffffffffffffff8082111561011957600080fd5b818a0191508a601f83011261012d57600080fd5b81358181111561013c57600080fd5b8b602082850101111561014e57600080fd5b60208301945080935050505092959891949750929550565b6001600160a01b038681168252851660208201526040810184905260806060820181905281018290526000828460a0840137600060a0848401015260a0601f19601f8501168301019050969550505050505056fea26469706673582212207896c8e0bc5ec12a091c83d4560f245669f4f014e8418e3e49e7728b13470f6564736f6c63430008180033",
+  "deployedBytecode": "0x608060405234801561001057600080fd5b506004361061002b5760003560e01c8063b66260f714610030575b600080fd5b61004361003e3660046100b5565b610045565b005b846001600160a01b031686887fee05b972f3528804afe2de8bf3d0a61830f97ba15923bb3e0fbba39b6d9b8e4b3388888888604051610088959493929190610166565b60405180910390a450505050505050565b80356001600160a01b03811681146100b057600080fd5b919050565b600080600080600080600060c0888a0312156100d057600080fd5b87359650602088013595506100e760408901610099565b94506100f560608901610099565b93506080880135925060a088013567ffffffffffffffff8082111561011957600080fd5b818a0191508a601f83011261012d57600080fd5b81358181111561013c57600080fd5b8b602082850101111561014e57600080fd5b60208301945080935050505092959891949750929550565b6001600160a01b038681168252851660208201526040810184905260806060820181905281018290526000828460a0840137600060a0848401015260a0601f19601f8501168301019050969550505050505056fea26469706673582212207896c8e0bc5ec12a091c83d4560f245669f4f014e8418e3e49e7728b13470f6564736f6c63430008180033",
+  "metadata": "{\"compiler\":{\"version\":\"0.8.24+commit.e11b9ed9\"},\"language\":\"Solidity\",\"output\":{\"abi\":[{\"anonymous\":false,\"inputs\":[{\"indexed\":true,\"internalType\":\"bytes32\",\"name\":\"sessionId\",\"type\":\"bytes32\"},{\"indexed\":true,\"internalType\":\"bytes32\",\"name\":\"kind\",\"type\":\"bytes32\"},{\"indexed\":true,\"internalType\":\"address\",\"name\":\"recipient\",\"type\":\"address\"},{\"indexed\":false,\"internalType\":\"address\",\"name\":\"sender\",\"type\":\"address\"},{\"indexed\":false,\"internalType\":\"address\",\"name\":\"token\",\"type\":\"address\"},{\"indexed\":false,\"internalType\":\"uint256\",\"name\":\"amount\",\"type\":\"uint256\"},{\"indexed\":false,\"internalType\":\"string\",\"name\":\"metadataURI\",\"type\":\"string\"}],\"name\":\"Payment\",\"type\":\"event\"},{\"inputs\":[{\"internalType\":\"bytes32\",\"name\":\"sessionId\",\"type\":\"bytes32\"},{\"internalType\":\"bytes32\",\"name\":\"kind\",\"type\":\"bytes32\"},{\"internalType\":\"address\",\"name\":\"recipient\",\"type\":\"address\"},{\"internalType\":\"address\",\"name\":\"token\",\"type\":\"address\"},{\"internalType\":\"uint256\",\"name\":\"amount\",\"type\":\"uint256\"},{\"internalType\":\"string\",\"name\":\"metadataURI\",\"type\":\"string\"}],\"name\":\"record\",\"outputs\":[],\"stateMutability\":\"nonpayable\",\"type\":\"function\"}],\"devdoc\":{\"details\":\"Permissionless by design \\u2014 `Payment` is informational, anyone can         emit it. Consumers (feed indexer) MUST validate `sessionId`         against their own offchain records before rendering, otherwise         the feed is spammable for a fraction of a cent per event.\",\"events\":{\"Payment(bytes32,bytes32,address,address,address,uint256,string)\":{\"params\":{\"amount\":\"Token amount in base units (wei for 18-dec EURe).\",\"kind\":\"Short ASCII tag right-padded into bytes32 \\u2014                     e.g. \\\"donation\\\", \\\"invoice\\\", \\\"payment\\\", \\\"split\\\".\",\"metadataURI\":\"Pointer to renderable metadata; URL or ipfs://.                     Empty string allowed when no post is attached.\",\"recipient\":\"Final token recipient (post-forward target).\",\"sender\":\"`msg.sender` at record time \\u2014 for the MPT rail,                     this is the Safe `0x449aBCEf\\u2026`.\",\"sessionId\":\"Frontend-generated ID (12-char base32 in                     pay.domovina.ai today), right-padded into                     bytes32. Decode by trimming trailing zeros.\",\"token\":\"ERC-20 contract of the value transfer (EURe today).\"}}},\"kind\":\"dev\",\"methods\":{},\"title\":\"PaymentRegistry \\u2014 onchain memo emitter for the MPT rail\",\"version\":1},\"userdoc\":{\"kind\":\"user\",\"methods\":{},\"notice\":\"Companion to an ERC-20 transfer. Emits a `Payment` event that         carries the offchain join-key (`sessionId`), kind tag, and a         metadata URI (typically a URL with Open Graph tags or `ipfs://\\u2026`).         Designed to be called in the same multisend batch as the         underlying `token.transfer(recipient, amount)` so the event and         the value transfer share one transaction hash.\",\"version\":1}},\"settings\":{\"compilationTarget\":{\"PaymentRegistry.sol\":\"PaymentRegistry\"},\"evmVersion\":\"paris\",\"libraries\":{},\"metadata\":{\"bytecodeHash\":\"ipfs\"},\"optimizer\":{\"enabled\":true,\"runs\":200},\"remappings\":[]},\"sources\":{\"PaymentRegistry.sol\":{\"keccak256\":\"0x65b85e1ffcf8a499f0f841e4e040a8e0fa242181d0d7996a1c8dcfc9d7d980c6\",\"license\":\"MIT\",\"urls\":[\"bzz-raw://5d24936a6ad6bbf80511d3ea35b0803e299426a25a6689dea727b9757c466c06\",\"dweb:/ipfs/QmWTBpsknuLtdBZY3cB92PQBbXpytixLt755mSVBnnQiCK\"]}},\"version\":1}"
+}

@@ -76,6 +76,15 @@ ROLES_MODIFIER_ADDRESS = "0x330347d656b1a5DF972f758DE1E25E99ec36762c"
 # EOA 0xd61289c5035c6e5eaD6F100b6A8F90ac4ee054CB once that batch executes on Safe.
 ROLE_KEY = "0x45555265466f7277617264657200000000000000000000000000000000000000"
 
+# PaymentRegistry onchain memo (optional). When BOTH set, the rail forwards
+# via Safe MultiSend so each forward emits an onchain `Payment` event in the
+# same tx hash as the value transfer. Leave empty to keep the legacy
+# single-`transfer` path.
+#   PAYMENT_REGISTRY_ADDRESS — fill in after safe-tx/004-deploy-payment-registry
+#   MULTISEND_ADDRESS         — Safe MultiSendCallOnly v1.4.1 canonical deploy
+PAYMENT_REGISTRY_ADDRESS = ""
+MULTISEND_ADDRESS = "0x9641d764fc13c8B624c04430C7356C1C7C8102e2"
+
 # Secrets — set via `wrangler secret put`:
 #   ADMIN_TOKEN                     # bearer token for /api/*/admin JSON endpoints
 #   MONERIUM_ADMIN_USER             # Basic Auth user for /admin HTML dashboard

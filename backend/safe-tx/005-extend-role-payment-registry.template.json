@@ -1,0 +1,41 @@
+{
+  "version": "1.0",
+  "chainId": "100",
+  "createdAt": 1779376940524,
+  "meta": {
+    "name": "MPT — Extend EUReForwarder for PaymentRegistry",
+    "description": "Add scoped permissions to the EUReForwarder role on Roles Modifier 0x330347d656b1a5DF972f758DE1E25E99ec36762c: (a) PaymentRegistry.record(...) at <REPLACE_WITH_REGISTRY_ADDRESS_HEX_LOWERCAS>, (b) MultiSendCallOnly.multiSend(bytes) at 0x9641d764fc13c8B624c04430C7356C1C7C8102e2 via DelegateCall. Enables atomic [registry.record + eure.transfer] forward batches under the existing role.",
+    "txBuilderVersion": "1.16.5",
+    "createdFromSafeAddress": "0x449aBCEf4e29a7Dd8d98dB451AF2c463561BAf2e"
+  },
+  "transactions": [
+    {
+      "to": "0x330347d656b1a5DF972f758DE1E25E99ec36762c",
+      "value": "0",
+      "data": "0x0c6c76b845555265466f7277617264657200000000000000000000000000000000000000000000000000000000000000REPLACE_WITH_REGISTRY_ADDRESS_HEX_LOWERCAS",
+      "contractMethod": null,
+      "contractInputsValues": null
+    },
+    {
+      "to": "0x330347d656b1a5DF972f758DE1E25E99ec36762c",
+      "value": "0",
+      "data": "0xb3dd25c745555265466f7277617264657200000000000000000000000000000000000000000000000000000000000000REPLACE_WITH_REGISTRY_ADDRESS_HEX_LOWERCASb66260f7000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+      "contractMethod": null,
+      "contractInputsValues": null
+    },
+    {
+      "to": "0x330347d656b1a5DF972f758DE1E25E99ec36762c",
+      "value": "0",
+      "data": "0x0c6c76b845555265466f72776172646572000000000000000000000000000000000000000000000000000000000000009641d764fc13c8b624c04430c7356c1c7c8102e2",
+      "contractMethod": null,
+      "contractInputsValues": null
+    },
+    {
+      "to": "0x330347d656b1a5DF972f758DE1E25E99ec36762c",
+      "value": "0",
+      "data": "0xb3dd25c745555265466f72776172646572000000000000000000000000000000000000000000000000000000000000009641d764fc13c8b624c04430c7356c1c7c8102e28d80ff0a000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000002",
+      "contractMethod": null,
+      "contractInputsValues": null
+    }
+  ]
+}
