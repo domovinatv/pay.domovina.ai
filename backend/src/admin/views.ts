@@ -646,6 +646,9 @@ export function renderIntentsPage(): string {
   Klikni red za detalje.
 </p>
 <div class="controls">
+  <button type="button" id="newIntent" style="background:var(--navy);color:#fff;font-weight:700;border:none;">
+    + Novi intent
+  </button>
   <label for="state">Stanje:</label>
   <select id="state">
     <option value="">Sva</option>
@@ -658,6 +661,110 @@ export function renderIntentsPage(): string {
   <button type="button" id="refresh">↻ Osvježi</button>
   <button type="button" id="auto">Auto: OFF</button>
 </div>
+
+<!-- New intent modal (hidden by default) -->
+<div id="intentModal" class="modal-overlay" style="display:none">
+  <div class="modal-card">
+    <div class="modal-head">
+      <h2>Novi payment intent</h2>
+      <button type="button" class="modal-close" id="modalClose" aria-label="Zatvori">×</button>
+    </div>
+    <div class="modal-body" id="modalBody">
+      <form id="intentForm">
+        <label class="form-label">Target adresa (gdje EURe ide nakon mint-a)
+          <input type="text" id="f_target" required pattern="^0x[0-9a-fA-F]{40}$"
+                 placeholder="0x…40 hex znakova"
+                 value="0x6693a7D19486Dc45e9F90Fd2D515d972bBA2d65e" />
+        </label>
+        <label class="form-label">Iznos (EUR)
+          <input type="text" id="f_amount" required pattern="^[0-9]+([.,][0-9]{1,2})?$"
+                 placeholder="npr. 0.50" value="0.50" />
+        </label>
+        <label class="form-label">Label (opcionalno)
+          <input type="text" id="f_label" placeholder="npr. test plaćanje" />
+        </label>
+        <label class="form-label">Istječe za (sekundi)
+          <input type="number" id="f_ttl" min="60" max="86400" value="900" />
+          <span class="form-hint">60 do 86400 (24h). Default 900 = 15 min.</span>
+        </label>
+        <div class="form-actions">
+          <button type="button" class="btn-secondary" id="modalCancel">Otkaži</button>
+          <button type="submit" class="btn-primary" id="modalSubmit">Kreiraj intent</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
+<style>
+.modal-overlay {
+  position: fixed; inset: 0; z-index: 200;
+  background: rgba(0,47,108,.45);
+  display: flex; align-items: center; justify-content: center; padding: 1rem;
+}
+.modal-card {
+  background: var(--bg); border-radius: .8rem; padding: 0;
+  max-width: 32rem; width: 100%;
+  box-shadow: 0 20px 60px rgba(0,0,0,.25);
+  max-height: 90vh; overflow-y: auto;
+}
+.modal-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 1rem 1.4rem; border-bottom: 1px solid var(--border);
+}
+.modal-head h2 { margin: 0; font-size: 1.15rem; color: var(--navy); }
+.modal-close {
+  background: none; border: none; font-size: 1.6rem; color: var(--muted);
+  cursor: pointer; line-height: 1; padding: 0 .25rem;
+}
+.modal-close:hover { color: var(--navy); }
+.modal-body { padding: 1.2rem 1.4rem 1.4rem; }
+.form-label {
+  display: block; margin-bottom: 1rem; font-size: .85rem;
+  color: var(--muted); font-weight: 600;
+}
+.form-label input {
+  display: block; width: 100%; margin-top: .35rem; padding: .55rem .65rem;
+  border: 1px solid var(--border); border-radius: .4rem;
+  font-size: .95rem; color: var(--navy); font-family: inherit;
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+.form-label input:focus { outline: 2px solid var(--navy); outline-offset: -1px; border-color: var(--navy); }
+.form-hint { display: block; margin-top: .25rem; font-size: .75rem; color: var(--muted); font-weight: 400; }
+.form-actions { display: flex; gap: .5rem; justify-content: flex-end; margin-top: 1.2rem; }
+.btn-primary, .btn-secondary {
+  padding: .55rem 1rem; border-radius: .4rem;
+  font-size: .9rem; font-weight: 600; font-family: inherit; cursor: pointer;
+  border: 1px solid var(--navy);
+}
+.btn-primary { background: var(--navy); color: #fff; }
+.btn-primary:hover:not(:disabled) { background: #001D4A; }
+.btn-primary:disabled { background: #8A95A5; border-color: #8A95A5; cursor: not-allowed; }
+.btn-secondary { background: var(--bg); color: var(--navy); }
+.btn-secondary:hover { background: var(--surface); }
+.form-error {
+  background: #F8E2E0; color: var(--danger); border: 1px solid var(--danger);
+  padding: .55rem .8rem; border-radius: .4rem; margin-bottom: 1rem; font-size: .9rem;
+}
+.created-card {
+  text-align: center; padding: .5rem 0;
+}
+.created-card .checkmark {
+  width: 56px; height: 56px; margin: 0 auto .8rem;
+  border-radius: 50%; background: var(--success);
+  display: flex; align-items: center; justify-content: center;
+  color: #fff; font-size: 1.8rem; font-weight: 700;
+}
+.created-card h3 { margin: 0 0 .35rem; font-size: 1.1rem; color: var(--navy); }
+.created-card .sid { font-family: ui-monospace, monospace; color: var(--muted); margin: 0 0 1rem; font-size: .9rem; }
+.created-card .link-row { display: flex; gap: .5rem; justify-content: center; flex-wrap: wrap; }
+.created-card .link-row a {
+  padding: .55rem 1rem; border-radius: .4rem; text-decoration: none;
+  font-size: .9rem; font-weight: 600; border: 1px solid var(--navy);
+}
+.created-card .link-row a.primary { background: var(--navy); color: #fff; }
+.created-card .link-row a.secondary { background: var(--bg); color: var(--navy); }
+</style>
 <div class="table-wrap">
   <table>
     <thead>
@@ -742,6 +849,96 @@ document.getElementById('auto').addEventListener('click', e => {
   if (autoTimer) { clearInterval(autoTimer); autoTimer = null; e.target.textContent='Auto: OFF'; e.target.classList.remove('auto-on'); }
   else { autoTimer = setInterval(load, 5000); e.target.textContent='Auto: 5s'; e.target.classList.add('auto-on'); }
 });
+
+// ── New intent modal ────────────────────────────────────────────────
+const modal = document.getElementById('intentModal');
+const modalBody = document.getElementById('modalBody');
+const FORM_HTML = modalBody.innerHTML; // snapshot original form for reset
+
+function openModal() {
+  modalBody.innerHTML = FORM_HTML;
+  wireForm();
+  modal.style.display = 'flex';
+  // Autofocus first field
+  setTimeout(() => { const el = document.getElementById('f_target'); if (el) el.focus(); }, 50);
+}
+function closeModal() {
+  modal.style.display = 'none';
+}
+
+function wireForm() {
+  const form = document.getElementById('intentForm');
+  document.getElementById('modalCancel').addEventListener('click', closeModal);
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const submitBtn = document.getElementById('modalSubmit');
+    submitBtn.disabled = true;
+    submitBtn.textContent = 'Kreiram…';
+    // Remove any previous error
+    const prevErr = form.querySelector('.form-error');
+    if (prevErr) prevErr.remove();
+
+    const target = document.getElementById('f_target').value.trim();
+    const amountRaw = document.getElementById('f_amount').value.trim().replace(',', '.');
+    const label = document.getElementById('f_label').value.trim();
+    const ttl = parseInt(document.getElementById('f_ttl').value, 10) || 900;
+
+    try {
+      const r = await fetch('/api/intents', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          target_address: target,
+          amount_eur: amountRaw,
+          label: label || undefined,
+          expires_in_seconds: ttl,
+        }),
+      });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.error || ('HTTP ' + r.status));
+      showCreated(d);
+      load(); // refresh table behind modal
+    } catch (err) {
+      const errDiv = document.createElement('div');
+      errDiv.className = 'form-error';
+      errDiv.textContent = 'Greška: ' + esc(err.message);
+      form.insertBefore(errDiv, form.firstChild);
+      submitBtn.disabled = false;
+      submitBtn.textContent = 'Kreiraj intent';
+    }
+  });
+}
+
+function showCreated(d) {
+  const ttlMin = Math.round((new Date(d.expires_at).getTime() - Date.now()) / 1000 / 60);
+  modalBody.innerHTML = ''
+    + '<div class="created-card">'
+    + '<div class="checkmark">✓</div>'
+    + '<h3>Intent kreiran</h3>'
+    + '<p class="sid">SID: ' + esc(d.sid) + ' · ' + esc(d.amount_eur) + ' EUR · TTL ' + ttlMin + ' min</p>'
+    + '<div class="link-row">'
+    + '<a class="primary" href="' + esc(d.checkout_url) + '" target="_blank" rel="noopener">↗ Otvori checkout</a>'
+    + '<a class="secondary" href="' + esc(d.status_url) + '" target="_blank" rel="noopener">JSON status</a>'
+    + '</div>'
+    + '<div style="margin-top:1rem;text-align:left;background:var(--surface);padding:.8rem 1rem;border-radius:.4rem;font-size:.8rem;font-family:ui-monospace,monospace;color:var(--muted);word-break:break-all">'
+    + '<div><b style="color:var(--navy)">memo:</b> ' + esc(d.memo) + '</div>'
+    + '<div style="margin-top:.4rem"><b style="color:var(--navy)">amount:</b> ' + esc(d.amount_eur) + ' EUR</div>'
+    + '<div style="margin-top:.4rem"><b style="color:var(--navy)">target:</b> ' + esc(d.target_address) + '</div>'
+    + '</div>'
+    + '<div class="form-actions" style="justify-content:center;margin-top:1.2rem">'
+    + '<button type="button" class="btn-secondary" id="createdCloseBtn">Zatvori</button>'
+    + '<button type="button" class="btn-primary" id="createdNewBtn">Još jedan</button>'
+    + '</div>'
+    + '</div>';
+  document.getElementById('createdCloseBtn').addEventListener('click', closeModal);
+  document.getElementById('createdNewBtn').addEventListener('click', openModal);
+}
+
+document.getElementById('newIntent').addEventListener('click', openModal);
+document.getElementById('modalClose').addEventListener('click', closeModal);
+modal.addEventListener('click', (e) => { if (e.target === modal) closeModal(); });
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && modal.style.display !== 'none') closeModal(); });
+
 load();
 </script>`;
 
