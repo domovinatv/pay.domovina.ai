@@ -1,17 +1,67 @@
-# pay_domovina
+# pay.DOMOVINA.ai
 
-A new Flutter project.
+<p align="center">
+  <a href="https://pay.domovina.ai">
+    <img src="web/favicon.svg" width="120" alt="Domovina Pay logotip">
+  </a>
+</p>
 
-## Getting Started
+Generator platnih barkodova za hrvatska plaćanja i most prema *on-chain* euru, dostupan na **[pay.domovina.ai](https://pay.domovina.ai)**.
 
-This project is a starting point for a Flutter application.
+Iz jedne forme producira tri kompatibilna formata:
 
-A few resources to get you started if this is your first Flutter project:
+- **SEPA EPC QR** — skenira Revolut, Wise i sve EPC-kompatibilne aplikacije; stroga 10-redna shema s pozicijskim praznim poljima koja jamči ispravan parsing na iOS-u.
+- **HUB3 PDF417** — puni 14-poljni FINA layout (uključujući prazan blok platitelja 4–6) za hrvatsko mobilno bankarstvo i FINA aplikacije.
+- **EIP-681 wallet QR** — *deep link* za Monerium EURe na Gnosis Chainu (`0x420CA0f9…`) koji MetaMask, Rainbow i ostali Web3 walleti čitaju kao gotovu transakciju.
 
-- [Learn Flutter](https://docs.flutter.dev/get-started/learn-flutter)
-- [Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Flutter learning resources](https://docs.flutter.dev/reference/learning-resources)
+Dio je obitelji proizvoda **Domovina** (vidi [mediakit.domovina.tv](https://github.com/domovinatv/mediakit.domovina.tv)).
 
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
+## Arhitektura
+
+| Sloj | Tehnologija | Lokacija |
+|---|---|---|
+| Frontend | Flutter web (WASM release) | `lib/`, `web/` |
+| Backend | Cloudflare Workers + D1 + KV | `backend/` |
+| Hosting (frontend) | Cloudflare Pages (`pay-domovina` projekt) | `pay.domovina.ai` |
+| Hosting (backend) | Cloudflare Workers | `monerium.domovina.ai` |
+| On-chain routing | Safe 2/3 + Zodiac Roles Modifier (Gnosis) | `backend/safe-tx/` |
+
+Glavni *rail* za Monerium EURe prijenose ide kroz **MPT Safe** (`0x449aBCEf4e29a7Dd8d98dB451AF2c463561BAf2e`) s Zodiac Roles Modifier mehanizmom — privatne korisničke transakcije se ne dogode bez 2-od-3 Safe potpisa, dok dnevno IBAN→EURe rutiranje ide kroz EOA backend signera ograničenog na samo `EUReForwarder` ulogu.
+
+## Lokalni razvoj
+
+```bash
+# Frontend
+flutter pub get
+flutter run -d chrome
+
+# Backend (zaseban poddirektorij)
+cd backend
+npm install
+wrangler dev --remote   # --remote daje javni *.workers.dev URL za Monerium webhook
+```
+
+## Produkcijski deploy
+
+```bash
+# Frontend → Cloudflare Pages
+flutter build web --wasm --release
+wrangler pages deploy build/web --project-name=pay-domovina --branch=main --commit-dirty=true
+
+# Backend → Cloudflare Workers
+cd backend && wrangler deploy
+```
+
+Cloudflare account ID: `7dc7167b7e2e00923bfa7cd697df14e4`.
+
+## Brand
+
+Ikona slijedi jedinstveni Domovina vizualni okvir: slovo „D" ispunjeno horizontalnim prugama hrvatske zastave, unutarnji bijeli prostor i centralni simbol — u ovom slučaju **znak eura (€)** koji označava domenu proizvoda (euro denominirana plaćanja, SEPA i *on-chain*). Izvor SVG-a živi u zajedničkom [mediakitu](https://github.com/domovinatv/mediakit.domovina.tv) pod imenom `domovina_pay_logo_square.svg`.
+
+Paleta: tamnoplava `#002F6C`, crvena `#FF0000`, bijela `#FFFFFF`.
+
+## Licenca
+
+Kod je objavljen u istom repozitoriju kao i ostale ITalk d.o.o. interne komponente — za pitanja oko ponovne upotrebe javite se autoru.
+
+Brand resursi (logotip, ikona, paleta) podliježu licenci **[CC BY-ND 4.0](https://creativecommons.org/licenses/by-nd/4.0/)** definiranoj u [mediakitu](https://github.com/domovinatv/mediakit.domovina.tv).
