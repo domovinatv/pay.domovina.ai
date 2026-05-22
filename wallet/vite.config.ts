@@ -39,7 +39,11 @@ export default defineConfig({
       globals: { Buffer: true, process: true, global: true },
     }),
     VitePWA({
-      registerType: 'autoUpdate',
+      // 'prompt' lets us show a snackbar when a new SW is waiting — autoUpdate
+      // silently activates the new SW only on next full reload, which never
+      // happens inside a standalone PWA (no browser refresh button). See
+      // UpdateBanner.tsx for the user-facing flow.
+      registerType: 'prompt',
       includeAssets: ['icons/*.png'],
       manifest: {
         name: 'DOMOVINA Wallet',

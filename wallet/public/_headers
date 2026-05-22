@@ -2,6 +2,16 @@
   Cache-Control: no-cache, no-store, must-revalidate
   Pragma: no-cache
 
+# Service worker must never be edge-cached or browsers will keep installing
+# the stale one and the in-app UpdateBanner will never light up.
+/sw.js
+  Cache-Control: no-cache, no-store, must-revalidate
+  Pragma: no-cache
+
+/registerSW.js
+  Cache-Control: no-cache, no-store, must-revalidate
+  Pragma: no-cache
+
 /assets/*
   Cache-Control: public, max-age=31536000, immutable
 
