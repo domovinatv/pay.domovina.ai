@@ -61,6 +61,10 @@ GOCARDLESS_REDIRECT_URL = "https://monerium.domovina.ai/api/hpb/callback"
 MONERIUM_BASE_URL = "https://api.monerium.app"
 MONERIUM_PROFILE_ID = ""
 
+# otp.domovina.ai — Reverse OTP service for wallet phone binding + recovery.
+# Source repo: /Users/ms/git/domovinatv/sms.domovina.ai
+OTP_API_BASE = "https://otp.domovina.ai"
+
 # MPT routing — Safe + Zodiac Roles Modifier on Gnosis chain (100).
 # All public; private signer key lives in ROUTER_PRIVATE_KEY secret below.
 GNOSIS_RPC_URL = "https://rpc.gnosischain.com"
@@ -97,3 +101,4 @@ MULTISEND_ADDRESS = "0x9641d764fc13c8B624c04430C7356C1C7C8102e2"
 #   MONERIUM_CLIENT_SECRET
 #   MONERIUM_WEBHOOK_SECRET         # HMAC secret you set in Monerium webhook config
 #   ROUTER_PRIVATE_KEY              # 0x-prefixed 32-byte hex — backend EOA member of EUReForwarder role
+#   PHONE_PEPPER                    # opaque secret string — HMAC key for hashing E.164 phones in wallet_registry

@@ -10,6 +10,8 @@ import {
   getMoneriumOrder,
 } from '../monerium/db';
 import { listIntents } from '../intents/db';
+import { countWallets, listWallets } from '../wallets/db';
+import { publicWalletView } from '../wallets/api';
 import {
   renderEventDetailPage,
   renderEventsPage,
@@ -17,6 +19,7 @@ import {
   renderIntentsPage,
   renderOrderDetailPage,
   renderOrdersPage,
+  renderWalletsPage,
 } from './views';
 
 /// Mounts the branded `/admin` HTML dashboard on the given app.
@@ -119,5 +122,24 @@ export function mountAdminUi(app: Hono<{ Bindings: Env }>): void {
   app.get('/admin/api/orders', async (c) => {
     const orders = await listMoneriumOrders(c.env);
     return c.json({ orders });
+  });
+
+  // Self-custody wallet registry — Phase 3 (customer count) + Phase 4a
+  // (phone binding via otp.domovina.ai). See [[reference-wallet-domovina]].
+  app.get('/admin/wallets', (c) => c.html(renderWalletsPage()));
+  app.get('/admin/api/wallets', async (c) => {
+    const limit = Math.min(Math.max(Number(c.req.query('limit')) || 50, 1), 500);
+    const offset = Math.max(Number(c.req.query('offset')) || 0, 0);
+    const phoneOnly = c.req.query('phone') === '1';
+    const rows = await listWallets(c.env, { limit, offset });
+    const counts = await countWallets(c.env);
+    const filtered = phoneOnly ? rows.filter((r) => r.phone_hash !== null) : rows;
+    return c.json({
+      total: counts.total,
+      with_phone: counts.withPhone,
+      limit,
+      offset,
+      rows: filtered.map(publicWalletView),
+    });
   });
 }

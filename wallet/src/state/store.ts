@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import type { Address } from 'viem';
 
-type Screen = 'wallet' | 'receive' | 'send';
+type Screen = 'wallet' | 'receive' | 'send' | 'bind-phone';
 
 type WalletState = {
   screen: Screen;

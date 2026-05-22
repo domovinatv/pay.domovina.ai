@@ -1,11 +1,15 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { BrandHeader } from '../components/Brand';
 import { AddressView } from '../components/AddressView';
 import { useWalletStore } from '../state/store';
 import { getEureBalance } from '../lib/balance';
+import { lookupWallet, registerWalletWithBackend } from '../lib/registry';
+import { getActivePasskey } from '../lib/passkey';
+import { RP_ID } from '../lib/constants';
 
 export function Wallet() {
-  const { safeAddress, balance, setBalance, setScreen } = useWalletStore();
+  const { safeAddress, credentialId, balance, setBalance, setScreen } = useWalletStore();
+  const [hasPhone, setHasPhone] = useState<boolean | null>(null);
 
   useEffect(() => {
     if (!safeAddress) return;
@@ -25,6 +29,38 @@ export function Wallet() {
       clearInterval(id);
     };
   }, [safeAddress, setBalance]);
+
+  useEffect(() => {
+    if (!credentialId) return;
+    let cancelled = false;
+    (async () => {
+      let view = await lookupWallet(credentialId);
+      if (!view) {
+        // Backward compatibility: walletovi kreirani prije Phase 3 nisu u
+        // registry-u. Auto-register sa lokalno pohranjenim podacima tako da
+        // bind-phone i ostali registry-gated featuri rade i za njih.
+        const passkey = getActivePasskey();
+        const x = passkey?.pubKey?.x;
+        const y = passkey?.pubKey?.y;
+        // Skip if we only have stub pubKey ('0') — that's the cross-device
+        // restore path and registering would inject garbage values.
+        if (passkey && x && y && x !== '0' && y !== '0') {
+          view = await registerWalletWithBackend({
+            credentialId: passkey.credentialId,
+            pubKeyX: x,
+            pubKeyY: y,
+            signerAddress: passkey.signerAddress,
+            safeAddress: passkey.safeAddress,
+            rpId: RP_ID,
+          });
+        }
+      }
+      if (!cancelled) setHasPhone(view ? view.has_phone : null);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [credentialId]);
 
   if (!safeAddress) return null;
 
@@ -52,6 +88,20 @@ export function Wallet() {
             Send
           </button>
         </div>
+
+        {hasPhone !== true && (
+          <button
+            onClick={() => setScreen('bind-phone')}
+            className="text-sm text-domovina-navy underline self-center"
+          >
+            + Dodaj recovery telefon
+          </button>
+        )}
+        {hasPhone === true && (
+          <div className="text-xs text-center text-gray-400">
+            Recovery telefon povezan ✓
+          </div>
+        )}
       </main>
 
       <footer className="py-6 text-center text-xs text-gray-400">

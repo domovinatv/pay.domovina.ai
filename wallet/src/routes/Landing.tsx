@@ -11,6 +11,8 @@ import {
   setActivePasskey,
 } from '../lib/passkey';
 import { predictSignerAddress, predictSafeAddress } from '../lib/safe';
+import { lookupWallet, registerWalletWithBackend } from '../lib/registry';
+import { RP_ID } from '../lib/constants';
 
 export function Landing() {
   const setIdentity = useWalletStore((s) => s.setIdentity);
@@ -45,6 +47,17 @@ export function Landing() {
       };
       savePasskey(record);
       setIdentity({ credentialId, signerAddress, safeAddress });
+
+      // Fire-and-forget registry POST so we can count customers + later
+      // support cross-device login. See [[reference-wallet-domovina]].
+      void registerWalletWithBackend({
+        credentialId,
+        pubKeyX: pubKey.x.toString(),
+        pubKeyY: pubKey.y.toString(),
+        signerAddress,
+        safeAddress,
+        rpId: RP_ID,
+      });
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -57,12 +70,30 @@ export function Landing() {
     setBusy('open');
     try {
       const { credentialId } = await pickExistingPasskey();
-      const record = lookupPasskey(credentialId);
+      let record = lookupPasskey(credentialId);
       if (!record) {
-        throw new Error(
-          'Ovaj passkey ne pripada nijednom walletu pohranjenom na ovom uređaju. ' +
-            'Otvori na izvornom uređaju ili kreiraj novi wallet.',
-        );
+        // Cross-device fallback: passkey synced via iCloud/Google but no
+        // localStorage on this device. Try the backend registry.
+        const remote = await lookupWallet(credentialId);
+        if (!remote) {
+          throw new Error(
+            'Ovaj passkey nije registriran ni lokalno ni na serveru. ' +
+              'Otvori na izvornom uređaju ili kreiraj novi wallet.',
+          );
+        }
+        // We don't have pubKey from the registry response (intentionally —
+        // it's not needed for already-deployed Safes), so we store stub
+        // values. Future Sign flow can recover pubKey from the assertion if
+        // the on-chain signer needs verification.
+        const restored = {
+          credentialId,
+          pubKey: { x: '0', y: '0' },
+          signerAddress: remote.signer_address,
+          safeAddress: remote.safe_address,
+          createdAt: remote.created_at,
+        };
+        savePasskey(restored);
+        record = restored;
       }
       setActivePasskey(credentialId);
       setIdentity({

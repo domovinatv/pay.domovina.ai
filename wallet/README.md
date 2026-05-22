@@ -112,17 +112,33 @@ Stubovi koji `throw new Error('not implemented yet')`:
    `walletClient` na Gnosis RPC; opcionalno batch deploy signer proxya
    i Safea kroz `MultiSendCallOnly` ako su counterfactual.
 
-## TODO
+## Design principle — 100% self-custody
 
-- **Phase 3: backend pubkey registry** — kad user otvori `wallet.domovina.ai` na
-  potpuno novom uređaju (npr. dobio iPhone, prvi put login), iCloud Keychain je
-  sync-ao passkey, ali localStorage je prazan → "Otvori drugi pohranjeni
-  passkey" baca jer nemamo `credentialId → pubkey` mapping lokalno. Fix:
-  opt-in backend endpoint na `mpt.domovina.ai/api/wallets` koji čuva
-  `{ credentialId: pubkey }` mapiranje. Pri create-u POST registry, pri pick-up
-  unknown credentialId → GET lookup → derive Safe address. Privacy: server vidi
-  samo mapping, ne i privatni ključ ni tx detalje. Marketinški: "Sign in across
-  devices" toggle u Settings.
+`wallet.domovina.ai` is strictly P2P. The user's passkey is the only
+key with authority over their Safe. Our backend's only onchain role is
+gas sponsorship via the CF Worker relay — it submits user-signed
+`safe.execTransaction` payloads and holds no key that can mutate Safe
+ownership or move funds.
+
+A full server-side recovery design (Zodiac Roles Modifier + server-held
+`RECOVERY_EOA`) was considered and **permanently rejected**. See
+[`docs/decisions/0001-no-server-side-recovery.md`](../docs/decisions/0001-no-server-side-recovery.md)
+for the full rationale and the alternative user-driven recovery
+patterns we'll implement instead (multi-passkey 2-of-N, user-chosen
+guardians, hardware wallet as second signer, etc.).
+
+## Status (Phase 3 shipped)
+
+Backend wallet registry at `mpt.domovina.ai/api/wallets` is live:
+- `POST /api/wallets` — register on passkey create (fire-and-forget)
+- `GET /api/wallets/:credentialId` — public lookup, used as cross-device
+  login fallback when iCloud Keychain syncs a passkey to a fresh
+  browser but localStorage isn't seeded
+- Admin UI at `mpt.domovina.ai/admin/wallets` shows customer count +
+  paginated wallet list (Basic Auth via `MONERIUM_ADMIN_*`).
+
+The registry holds only public information (credentialId, P-256 pubkey,
+Safe address). Never any private key or Safe-authoritative data.
 
 ## Otvorena pitanja
 

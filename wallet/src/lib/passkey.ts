@@ -20,6 +20,28 @@ const ACTIVE_KEY = 'domovina_active_wallet';
 
 type WalletRegistry = Record<string, PasskeyRecord>;
 
+/// Ensure all credentialId fields in the registry use the canonical
+/// "0x" + lowercase-hex format. Early wallet builds saved them as plain hex
+/// (no prefix) because protocol-kit returns that form from extractPasskeyData.
+/// Run on every load; no-op once everything's already normalized.
+function normalizeCredentialId(id: string): string {
+  const lower = id.toLowerCase();
+  return lower.startsWith('0x') ? lower : '0x' + lower;
+}
+
+function migrateRegistryShape(reg: WalletRegistry): { changed: boolean; reg: WalletRegistry } {
+  let changed = false;
+  const next: WalletRegistry = {};
+  for (const [key, value] of Object.entries(reg)) {
+    const canonical = normalizeCredentialId(value.credentialId ?? key);
+    if (canonical !== key || canonical !== value.credentialId) {
+      changed = true;
+    }
+    next[canonical] = { ...value, credentialId: canonical };
+  }
+  return { changed, reg: next };
+}
+
 function loadRegistry(): WalletRegistry {
   // One-time migration from v1 (single wallet) to v2 (keyed registry).
   const v1Raw = localStorage.getItem(STORAGE_KEY_V1);
@@ -28,10 +50,15 @@ function loadRegistry(): WalletRegistry {
       const v1 = JSON.parse(v1Raw) as PasskeyRecord;
       const v2Raw = localStorage.getItem(STORAGE_KEY_V2);
       const v2: WalletRegistry = v2Raw ? JSON.parse(v2Raw) : {};
-      if (!v2[v1.credentialId]) {
-        v2[v1.credentialId] = { ...v1, createdAt: v1.createdAt ?? new Date().toISOString() };
+      const canonicalId = normalizeCredentialId(v1.credentialId);
+      if (!v2[canonicalId]) {
+        v2[canonicalId] = {
+          ...v1,
+          credentialId: canonicalId,
+          createdAt: v1.createdAt ?? new Date().toISOString(),
+        };
         localStorage.setItem(STORAGE_KEY_V2, JSON.stringify(v2));
-        localStorage.setItem(ACTIVE_KEY, v1.credentialId);
+        localStorage.setItem(ACTIVE_KEY, canonicalId);
       }
       localStorage.removeItem(STORAGE_KEY_V1);
     } catch {
@@ -40,7 +67,17 @@ function loadRegistry(): WalletRegistry {
     }
   }
   const raw = localStorage.getItem(STORAGE_KEY_V2);
-  return raw ? (JSON.parse(raw) as WalletRegistry) : {};
+  const reg: WalletRegistry = raw ? (JSON.parse(raw) as WalletRegistry) : {};
+  const migrated = migrateRegistryShape(reg);
+  if (migrated.changed) {
+    localStorage.setItem(STORAGE_KEY_V2, JSON.stringify(migrated.reg));
+    const activeRaw = localStorage.getItem(ACTIVE_KEY);
+    if (activeRaw) {
+      const canonicalActive = normalizeCredentialId(activeRaw);
+      if (canonicalActive !== activeRaw) localStorage.setItem(ACTIVE_KEY, canonicalActive);
+    }
+  }
+  return migrated.reg;
 }
 
 function saveRegistry(reg: WalletRegistry): void {
@@ -144,8 +181,14 @@ export async function createPasskey(label?: string): Promise<{ credentialId: str
   if (!cred) throw new Error('Passkey creation cancelled');
 
   const data = await extractPasskeyData(cred);
+  // protocol-kit returns rawId as plain lowercase hex without 0x prefix.
+  // Normalize to our canonical "0x" + hex form so it matches what
+  // pickExistingPasskey produces and what the backend registry validates.
+  const credentialId = data.rawId.startsWith('0x')
+    ? data.rawId.toLowerCase()
+    : '0x' + data.rawId.toLowerCase();
   return {
-    credentialId: data.rawId,
+    credentialId,
     pubKey: { x: BigInt(data.coordinates.x), y: BigInt(data.coordinates.y) },
   };
 }
