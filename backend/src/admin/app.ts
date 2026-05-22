@@ -12,6 +12,7 @@ import {
 import { listIntents } from '../intents/db';
 import {
   countWallets,
+  listPhoneBindingsForCredentials,
   listSybilClusters,
   listWallets,
   listWalletsSharingPhone,
@@ -140,12 +141,24 @@ export function mountAdminUi(app: Hono<{ Bindings: Env }>): void {
     const rows = await listWallets(c.env, { limit, offset });
     const counts = await countWallets(c.env);
     const filtered = phoneOnly ? rows.filter((r) => r.phone_hash !== null) : rows;
+    const bindingsMap = await listPhoneBindingsForCredentials(
+      c.env,
+      filtered.map((r) => r.credential_id),
+    );
     return c.json({
       total: counts.total,
       with_phone: counts.withPhone,
       limit,
       offset,
-      rows: filtered.map(publicWalletView),
+      rows: filtered.map((r) => ({
+        ...publicWalletView(r),
+        phones: (bindingsMap.get(r.credential_id) ?? []).map((b) => ({
+          phone_hash_short: b.phone_hash.slice(0, 10) + '…' + b.phone_hash.slice(-6),
+          first_bound_at: new Date(b.first_bound_at * 1000).toISOString(),
+          latest_verified_at: new Date(b.latest_verified_at * 1000).toISOString(),
+          verification_count: b.verification_count,
+        })),
+      })),
     });
   });
 

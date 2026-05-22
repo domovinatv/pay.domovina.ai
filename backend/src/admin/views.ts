@@ -1207,8 +1207,10 @@ export function renderWalletsPage(): string {
 <h1>Self-custody wallets</h1>
 <p class="dim" style="margin-top:-.5rem;margin-bottom:1rem;font-size:.9rem">
   Svaki red = jedan passkey registriran kroz wallet.domovina.ai. Counterfactual
-  Safe adresa je deterministička iz pubkey-a; \`has_phone\` = ✓ znači da je
-  korisnik vezao broj kroz otp.domovina.ai za recovery.
+  Safe adresa je deterministička iz pubkey-a. Kolona "Verifikacije telefona"
+  pokazuje sve telefone koje je wallet ikad vezao, sa per-phone count-om i
+  vremenskim rasponom prve do zadnje verifikacije. Više brojeva po walletu =
+  jači "stvarna osoba" signal.
 </p>
 <div class="stats" id="stats"></div>
 <div class="controls">
@@ -1231,7 +1233,7 @@ export function renderWalletsPage(): string {
         <th>Kreirano</th>
         <th>Safe adresa</th>
         <th>Signer</th>
-        <th>Telefon</th>
+        <th>Verifikacije telefona</th>
         <th>RP</th>
         <th>Credential</th>
       </tr>
@@ -1250,6 +1252,14 @@ export function renderWalletsPage(): string {
 <script>
 let limit = 50, offset = 0, phoneFilter = "";
 let autoTimer = null;
+
+const PHONE_STYLE = document.createElement("style");
+PHONE_STYLE.textContent = ".phone-list{display:flex;flex-direction:column;gap:.2rem}" +
+  ".phone-line{display:flex;align-items:center;gap:.5rem;font-size:.85rem;line-height:1.3}" +
+  ".phone-hash{color:var(--navy)}" +
+  ".phone-count{display:inline-block;min-width:1.8rem;padding:.05rem .4rem;border-radius:.7rem;background:var(--surface);border:1px solid var(--border);font-size:.75rem;font-weight:700;color:var(--navy);text-align:center}" +
+  ".phone-range{font-size:.75rem}";
+document.head.appendChild(PHONE_STYLE);
 
 function esc(s) { return String(s).replace(/[&<>"']/g, c =>
   ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
@@ -1285,9 +1295,26 @@ async function load() {
   } else {
     let html = "";
     for (const w of data.rows) {
-      const phoneCell = w.has_phone
-        ? '<span class="pill ok">✓ ' + esc(fmt(w.phone_bound_at)) + '</span>'
-        : '<span class="dim">—</span>';
+      let phoneCell;
+      const phones = w.phones || [];
+      if (phones.length === 0) {
+        phoneCell = '<span class="dim">—</span>';
+      } else {
+        // Compact per-phone list: short hash + count pill + date range.
+        let lines = '';
+        for (const p of phones) {
+          const range = p.first_bound_at === p.latest_verified_at
+            ? esc(fmt(p.first_bound_at).slice(0, 10))
+            : esc(fmt(p.first_bound_at).slice(0, 10)) + ' → ' + esc(fmt(p.latest_verified_at).slice(0, 10));
+          lines +=
+            '<div class="phone-line">' +
+              '<span class="phone-hash mono">' + esc(p.phone_hash_short) + '</span>' +
+              '<span class="phone-count">' + p.verification_count + '×</span>' +
+              '<span class="phone-range mono dim">' + range + '</span>' +
+            '</div>';
+        }
+        phoneCell = '<div class="phone-list">' + lines + '</div>';
+      }
       html += '<tr>' +
         '<td class="mono dim">' + esc(fmt(w.created_at)) + '</td>' +
         '<td class="mono"><a href="https://gnosisscan.io/address/' + esc(w.safe_address) +

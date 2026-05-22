@@ -139,6 +139,37 @@ export interface PhoneBindingRow {
   verification_count: number;
 }
 
+/// Batch lookup: bindings for a page of wallets in a single query. Used by
+/// the admin wallets table to display per-row phone histories without
+/// running N round-trips to D1.
+export async function listPhoneBindingsForCredentials(
+  env: Env,
+  credentialIds: string[],
+): Promise<Map<string, PhoneBindingRow[]>> {
+  const out = new Map<string, PhoneBindingRow[]>();
+  if (credentialIds.length === 0) return out;
+  const placeholders = credentialIds.map(() => '?').join(',');
+  const res = await env.DB.prepare(
+    `SELECT credential_id, phone_hash, first_bound_at, latest_verified_at, verification_count
+       FROM wallet_phone_bindings
+      WHERE credential_id IN (${placeholders})
+      ORDER BY first_bound_at ASC`,
+  )
+    .bind(...credentialIds)
+    .all<PhoneBindingRow & { credential_id: string }>();
+  for (const row of res.results ?? []) {
+    const arr = out.get(row.credential_id) ?? [];
+    arr.push({
+      phone_hash: row.phone_hash,
+      first_bound_at: row.first_bound_at,
+      latest_verified_at: row.latest_verified_at,
+      verification_count: row.verification_count,
+    });
+    out.set(row.credential_id, arr);
+  }
+  return out;
+}
+
 export async function listPhoneBindingsForCredential(
   env: Env,
   credentialId: string,
