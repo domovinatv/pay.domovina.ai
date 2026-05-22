@@ -1,6 +1,17 @@
 import { useRef, useState } from 'react';
 import { parseUnits, encodeFunctionData, erc20Abi, isAddress, type Address } from 'viem';
+import { ArrowLeft, ClipboardPaste, ExternalLink, Fingerprint } from 'lucide-react';
 import { BrandHeader } from '../components/Brand';
+import {
+  AddressInput,
+  Button,
+  Card,
+  Field,
+  IconButton,
+  Input,
+  Section,
+  useToast,
+} from '../ui';
 import { useWalletStore } from '../state/store';
 import { EURE_ADDRESS, EURE_DECIMALS } from '../lib/constants';
 import { encodeWebAuthnSignature, getSafeTxHash } from '../lib/safe';
@@ -9,6 +20,7 @@ import { relayTx } from '../lib/relay';
 
 export function Send() {
   const { safeAddress, credentialId, signerAddress, setScreen } = useWalletStore();
+  const { toast } = useToast();
   const [to, setTo] = useState('');
   const [amount, setAmount] = useState('');
   const [busy, setBusy] = useState(false);
@@ -16,7 +28,18 @@ export function Send() {
   const [txHash, setTxHash] = useState<string | null>(null);
   const sendInFlightRef = useRef(false);
 
+  const addressLooksValid = to.length === 0 || isAddress(to);
+  const amountValid = amount.length === 0 || Number(amount) > 0;
   const valid = isAddress(to) && Number(amount) > 0;
+
+  async function paste() {
+    try {
+      const text = await navigator.clipboard.readText();
+      if (text) setTo(text.trim());
+    } catch {
+      toast({ variant: 'error', title: 'Clipboard nedostupan' });
+    }
+  }
 
   async function send() {
     if (sendInFlightRef.current) {
@@ -73,7 +96,6 @@ export function Send() {
         authenticatorDataLen: assertion.authenticatorData.length,
         clientDataJSONLen: assertion.clientDataJSON.length,
         signatureLen: assertion.signature.length,
-        clientDataJSONSnippet: new TextDecoder().decode(assertion.clientDataJSON).slice(0, 120),
       });
 
       console.log('[Send] step 8: encoding WebAuthn signature…');
@@ -97,9 +119,12 @@ export function Send() {
         throw new Error(result.rateLimited ? 'Dosegao si dnevni limit (5 besplatnih).' : result.error);
       }
       setTxHash(result.txHash);
+      toast({ variant: 'success', title: 'Poslano ✓', description: `${amount} EURe → ${shortAddr(to)}` });
     } catch (e) {
       console.error('[Send] FAILED', e);
-      setError(e instanceof Error ? e.message : String(e));
+      const msg = e instanceof Error ? e.message : String(e);
+      setError(msg);
+      toast({ variant: 'error', title: 'Slanje neuspješno', description: msg });
     } finally {
       setBusy(false);
       sendInFlightRef.current = false;
@@ -111,57 +136,89 @@ export function Send() {
       <BrandHeader />
 
       <main className="flex-1 flex flex-col gap-6">
-        <button onClick={() => setScreen('wallet')} className="self-start text-sm text-gray-500">
-          ← natrag
-        </button>
+        <Button
+          onClick={() => setScreen('wallet')}
+          variant="ghost"
+          size="sm"
+          className="self-start"
+        >
+          <ArrowLeft className="h-4 w-4" />
+          Natrag
+        </Button>
 
-        <section className="card space-y-4">
-          <h2 className="text-xl font-semibold">Pošalji EURe</h2>
+        <Section title="Pošalji EURe" description="Na Gnosis Chain, bez gas-a za tebe">
+          <Card className="flex flex-col gap-5">
+            <Field
+              label="Primatelj"
+              hint="Gnosis Chain · EVM adresa"
+              error={!addressLooksValid ? 'Adresa nije valjana' : undefined}
+            >
+              {() => (
+                <AddressInput
+                  value={to}
+                  onChange={(e) => setTo(e.target.value)}
+                  invalid={!addressLooksValid}
+                  trailing={
+                    <IconButton aria-label="Zalijepi" size="sm" variant="ghost" onClick={paste}>
+                      <ClipboardPaste />
+                    </IconButton>
+                  }
+                />
+              )}
+            </Field>
 
-          <label className="block">
-            <span className="text-sm text-gray-600">Primatelj (Gnosis adresa)</span>
-            <input
-              value={to}
-              onChange={(e) => setTo(e.target.value)}
-              placeholder="0x…"
-              className="mt-1 w-full rounded-xl border border-gray-300 px-4 py-3 font-mono text-sm"
-              spellCheck={false}
-              autoCapitalize="off"
-              autoComplete="off"
-            />
-          </label>
+            <Field
+              label="Iznos (EURe)"
+              error={!amountValid ? 'Iznos mora biti veći od 0' : undefined}
+            >
+              {(id) => (
+                <Input
+                  id={id}
+                  type="number"
+                  inputMode="decimal"
+                  value={amount}
+                  onChange={(e) => setAmount(e.target.value)}
+                  min="0"
+                  step="0.01"
+                  invalid={!amountValid}
+                  className="text-2xl font-semibold tabular text-center"
+                  placeholder="0,00"
+                />
+              )}
+            </Field>
 
-          <label className="block">
-            <span className="text-sm text-gray-600">Iznos (EURe)</span>
-            <input
-              type="number"
-              inputMode="decimal"
-              value={amount}
-              onChange={(e) => setAmount(e.target.value)}
-              className="mt-1 w-full rounded-xl border border-gray-300 px-4 py-3 text-lg font-semibold"
-              min="0"
-              step="0.01"
-            />
-          </label>
+            <Button onClick={send} disabled={!valid || busy} size="xl" block>
+              <Fingerprint className="h-5 w-5" />
+              {busy ? 'Potpisujem & šaljem…' : 'Potpiši s Face ID i pošalji'}
+            </Button>
 
-          <button onClick={send} disabled={!valid || busy} className="btn-primary w-full">
-            {busy ? 'Potpisujem & šaljem…' : 'Sign with Face ID & send'}
-          </button>
+            {error && (
+              <p className="text-sm text-brand-red-700 text-center" role="alert">
+                {error}
+              </p>
+            )}
+          </Card>
+        </Section>
 
-          {error && <div className="text-sm text-domovina-red">{error}</div>}
-          {txHash && (
+        {txHash && (
+          <Card padding="md" elevation="elevated" className="flex flex-col gap-3 border-emerald-200 dark:border-emerald-900/40">
+            <div className="text-center">
+              <p className="font-semibold text-ink-primary">Poslano ✓</p>
+              <p className="text-sm text-ink-secondary">{amount} EURe → {shortAddr(to)}</p>
+            </div>
             <a
               href={`https://gnosisscan.io/tx/${txHash}`}
               target="_blank"
               rel="noreferrer"
-              className="block text-sm text-domovina-navy underline break-all"
+              className="inline-flex items-center justify-center gap-2 rounded-2xl border border-surface-border bg-surface-sunken px-4 py-3 text-sm font-medium text-ink-primary hover:bg-surface-muted transition"
             >
-              Vidi tx ↗
+              Pogledaj na Gnosisscan
+              <ExternalLink className="h-4 w-4" />
             </a>
-          )}
-        </section>
+          </Card>
+        )}
 
-        <p className="text-xs text-center text-gray-400">
+        <p className="text-xs text-center text-ink-muted">
           xDAI gas plaćamo mi · 5 besplatnih transakcija dnevno
         </p>
       </main>
@@ -174,4 +231,9 @@ function hexToBytes(hex: string): Uint8Array {
   const bytes = new Uint8Array(clean.length / 2);
   for (let i = 0; i < bytes.length; i++) bytes[i] = parseInt(clean.slice(i * 2, i * 2 + 2), 16);
   return bytes;
+}
+
+function shortAddr(addr: string): string {
+  if (!addr.startsWith('0x') || addr.length < 12) return addr;
+  return `${addr.slice(0, 6)}…${addr.slice(-4)}`;
 }
