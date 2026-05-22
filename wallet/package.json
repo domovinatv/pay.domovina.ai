@@ -11,11 +11,18 @@
     "deploy": "wrangler pages deploy dist --project-name=wallet-domovina"
   },
   "dependencies": {
+    "@radix-ui/react-dialog": "^1.1.15",
+    "@radix-ui/react-tabs": "^1.1.13",
+    "@radix-ui/react-toast": "^1.2.15",
     "@safe-global/protocol-kit": "^7.1.0",
     "@safe-global/safe-passkey": "0.2.0",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
+    "lucide-react": "^1.16.0",
     "qr-code-styling": "^1.9.2",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
+    "tailwind-merge": "^3.6.0",
     "viem": "^2.50.0",
     "zustand": "^5.0.0"
   },
