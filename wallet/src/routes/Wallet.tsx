@@ -1,33 +1,49 @@
 import { useEffect, useState } from 'react';
+import { ArrowDownToLine, ArrowUpFromLine, Phone, ShieldCheck } from 'lucide-react';
 import { BrandHeader } from '../components/Brand';
-import { AddressView } from '../components/AddressView';
+import {
+  AddressChip,
+  BalanceDisplay,
+  Badge,
+  Button,
+  Card,
+  Section,
+} from '../ui';
 import { useWalletStore } from '../state/store';
 import { getEureBalance } from '../lib/balance';
 import { lookupWallet, registerWalletWithBackend } from '../lib/registry';
 import { getActivePasskey } from '../lib/passkey';
 import { RP_ID } from '../lib/constants';
 
+type PhoneVerification = {
+  phone_hash_short: string;
+  first_bound_at: string;
+  latest_verified_at: string;
+  verification_count: number;
+};
+
 export function Wallet() {
   const { safeAddress, credentialId, balance, setBalance, setScreen } = useWalletStore();
-  const [phones, setPhones] = useState<
-    Array<{
-      phone_hash_short: string;
-      first_bound_at: string;
-      latest_verified_at: string;
-      verification_count: number;
-    }>
-  >([]);
+  const [phones, setPhones] = useState<PhoneVerification[]>([]);
   const [totalVerifications, setTotalVerifications] = useState<number>(0);
+  const [lastSync, setLastSync] = useState<number | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
 
   useEffect(() => {
     if (!safeAddress) return;
     let cancelled = false;
     async function tick() {
       try {
+        setRefreshing(true);
         const { formatted } = await getEureBalance(safeAddress!);
-        if (!cancelled) setBalance(formatted);
+        if (!cancelled) {
+          setBalance(formatted);
+          setLastSync(Date.now());
+        }
       } catch {
         /* ignore — likely not yet deployed */
+      } finally {
+        if (!cancelled) setRefreshing(false);
       }
     }
     tick();
@@ -44,14 +60,11 @@ export function Wallet() {
     (async () => {
       let view = await lookupWallet(credentialId);
       if (!view) {
-        // Backward compatibility: walletovi kreirani prije Phase 3 nisu u
-        // registry-u. Auto-register sa lokalno pohranjenim podacima tako da
-        // bind-phone i ostali registry-gated featuri rade i za njih.
+        // Backward compat: pre-Phase 3 wallets aren't in the registry.
+        // Auto-register so bind-phone + other registry-gated features work.
         const passkey = getActivePasskey();
         const x = passkey?.pubKey?.x;
         const y = passkey?.pubKey?.y;
-        // Skip if we only have stub pubKey ('0') — that's the cross-device
-        // restore path and registering would inject garbage values.
         if (passkey && x && y && x !== '0' && y !== '0') {
           view = await registerWalletWithBackend({
             credentialId: passkey.credentialId,
@@ -75,82 +88,134 @@ export function Wallet() {
 
   if (!safeAddress) return null;
 
-  // Side-effect-free helper; hoisting into render is fine here.
-  function formatDate(iso: string): string {
-    const d = new Date(iso);
-    return isNaN(d.getTime()) ? iso : d.toISOString().slice(0, 10);
-  }
-  void formatDate;
-
   return (
     <div className="min-h-full flex flex-col px-6 max-w-md mx-auto">
       <BrandHeader />
 
       <main className="flex-1 flex flex-col gap-6">
-        <section className="card text-center">
-          <div className="text-xs uppercase tracking-widest text-gray-400">Balance</div>
-          <div className="text-5xl font-bold mt-2">
-            {balance === null ? '—' : Number(balance).toFixed(2)}
-            <span className="text-2xl text-gray-400 ml-2">EURe</span>
-          </div>
-          <div className="mt-4">
-            <AddressView address={safeAddress} />
-          </div>
-        </section>
-
-        <div className="grid grid-cols-2 gap-3">
-          <button onClick={() => setScreen('receive')} className="btn-primary">
-            Receive
-          </button>
-          <button onClick={() => setScreen('send')} className="btn-secondary">
-            Send
-          </button>
+        {/* Identity strip */}
+        <div className="flex items-center justify-center">
+          <AddressChip address={safeAddress} label="Tvoja Safe adresa" />
         </div>
 
-        <section className="pt-2 space-y-3">
-          {phones.length > 0 && (
-            <div className="space-y-2">
-              <div className="text-xs uppercase tracking-widest text-gray-400 text-center">
-                Verifikacije telefona — {phones.length}{' '}
-                {phones.length === 1 ? 'broj' : 'broja'} · {totalVerifications}× ukupno
-              </div>
-              <ul className="space-y-1.5">
-                {phones.map((p) => (
-                  <li
-                    key={p.phone_hash_short}
-                    className="rounded-xl border border-gray-200 px-3 py-2 text-xs flex items-center justify-between gap-2"
-                  >
-                    <div className="font-mono text-gray-500">{p.phone_hash_short}</div>
-                    <div className="text-right text-gray-400 leading-tight">
-                      <div>
-                        <span className="font-semibold text-domovina-navy">
-                          {p.verification_count}×
-                        </span>
-                      </div>
-                      <div>
+        {/* Hero balance */}
+        <Card padding="lg" elevation="elevated" className="flex flex-col gap-6">
+          <BalanceDisplay
+            amount={balance === null ? null : formatBalance(balance)}
+            currency="EURe"
+            lastUpdatedAgo={lastSync ? agoLabel(lastSync) : null}
+            refreshing={refreshing}
+          />
+          <div className="grid grid-cols-2 gap-3">
+            <Button onClick={() => setScreen('receive')} size="lg" block>
+              <ArrowDownToLine className="h-5 w-5" />
+              Primi
+            </Button>
+            <Button
+              onClick={() => setScreen('send')}
+              variant="secondary"
+              size="lg"
+              block
+            >
+              <ArrowUpFromLine className="h-5 w-5" />
+              Pošalji
+            </Button>
+          </div>
+        </Card>
+
+        {/* Phone verifications */}
+        {phones.length > 0 ? (
+          <Section
+            title="Verificirani telefoni"
+            description={`${phones.length} ${phones.length === 1 ? 'broj' : 'broja'} · ${totalVerifications}× ukupno`}
+          >
+            <Card padding="sm" className="flex flex-col divide-y divide-surface-border">
+              {phones.map((p) => (
+                <div
+                  key={p.phone_hash_short}
+                  className="flex items-center justify-between gap-3 py-3 first:pt-1 last:pb-1"
+                >
+                  <div className="flex items-center gap-3 min-w-0">
+                    <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-surface-sunken text-ink-muted">
+                      <ShieldCheck className="h-4 w-4" />
+                    </div>
+                    <div className="flex flex-col leading-tight min-w-0">
+                      <span className="font-mono text-xs text-ink-secondary truncate">
+                        {p.phone_hash_short}
+                      </span>
+                      <span className="text-[11px] text-ink-muted">
                         {formatDate(p.first_bound_at)}
                         {p.latest_verified_at !== p.first_bound_at && (
                           <> → {formatDate(p.latest_verified_at)}</>
                         )}
-                      </div>
+                      </span>
                     </div>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
-          <button
-            onClick={() => setScreen('bind-phone')}
-            className="block mx-auto text-sm text-domovina-navy underline"
-          >
-            {phones.length > 0 ? '+ Verificiraj telefon (isti ili novi)' : '+ Dodaj telefon'}
-          </button>
-        </section>
+                  </div>
+                  <Badge tone="info">{p.verification_count}×</Badge>
+                </div>
+              ))}
+            </Card>
+            <Button
+              onClick={() => setScreen('bind-phone')}
+              variant="ghost"
+              size="sm"
+              block
+            >
+              <Phone className="h-4 w-4" />
+              Verificiraj telefon (isti ili novi)
+            </Button>
+          </Section>
+        ) : (
+          <Section title="Sigurnost">
+            <Card padding="md" className="flex items-start gap-3">
+              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-surface-sunken text-brand-navy-500">
+                <Phone className="h-5 w-5" />
+              </div>
+              <div className="flex-1 flex flex-col gap-2">
+                <div>
+                  <p className="font-medium text-ink-primary">Poveži telefon</p>
+                  <p className="text-sm text-ink-secondary">
+                    Recovery + sybil-resistant identitet.
+                  </p>
+                </div>
+                <Button
+                  onClick={() => setScreen('bind-phone')}
+                  variant="secondary"
+                  size="sm"
+                >
+                  Pokreni verifikaciju
+                </Button>
+              </div>
+            </Card>
+          </Section>
+        )}
       </main>
 
-      <footer className="py-6 text-center text-xs text-gray-400">
+      <footer className="py-6 text-center text-xs text-ink-muted">
         Gnosis Chain · Safe smart account
       </footer>
     </div>
   );
+}
+
+function formatBalance(raw: string): string {
+  const n = Number(raw);
+  if (!isFinite(n)) return raw;
+  return n.toLocaleString('hr-HR', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
+}
+
+function formatDate(iso: string): string {
+  const d = new Date(iso);
+  return isNaN(d.getTime()) ? iso : d.toISOString().slice(0, 10);
+}
+
+function agoLabel(ts: number): string {
+  const s = Math.max(0, Math.floor((Date.now() - ts) / 1000));
+  if (s < 5) return 'ažurirano sad';
+  if (s < 60) return `prije ${s} s`;
+  const m = Math.floor(s / 60);
+  return `prije ${m} min`;
 }
