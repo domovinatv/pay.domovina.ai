@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useLocation } from 'wouter';
 import { ArrowDownToLine, ArrowUpFromLine, Phone, ShieldCheck } from 'lucide-react';
 import { Badge, BalanceDisplay, Button, Card, Section } from '../ui';
+import { ActivityFeed } from '../components/ActivityFeed';
 import { useWalletStore } from '../state/store';
 import { getEureBalance } from '../lib/balance';
 import { lookupWallet, registerWalletWithBackend } from '../lib/registry';
@@ -22,10 +23,12 @@ export function Wallet() {
   const [totalVerifications, setTotalVerifications] = useState<number>(0);
   const [lastSync, setLastSync] = useState<number | null>(null);
   const [refreshing, setRefreshing] = useState(false);
+  const [activityKey, setActivityKey] = useState(0);
 
   useEffect(() => {
     if (!safeAddress) return;
     let cancelled = false;
+    let tickCount = 0;
     async function tick() {
       try {
         setRefreshing(true);
@@ -38,6 +41,13 @@ export function Wallet() {
         /* ignore — likely not yet deployed */
       } finally {
         if (!cancelled) setRefreshing(false);
+      }
+      // Bump activity refetch every 3rd tick (~30s). On the very first call
+      // (tickCount===0) the ActivityFeed already kicks off its own first
+      // load, so we skip incrementing then.
+      tickCount += 1;
+      if (tickCount > 0 && tickCount % 3 === 0 && !cancelled) {
+        setActivityKey((k) => k + 1);
       }
     }
     tick();
@@ -107,6 +117,10 @@ export function Wallet() {
           </Button>
         </div>
       </Card>
+
+      <Section title="Aktivnost">
+        <ActivityFeed safeAddress={safeAddress} refetchKey={activityKey} />
+      </Section>
 
       {phones.length > 0 ? (
         <Section

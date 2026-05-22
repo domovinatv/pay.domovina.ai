@@ -21,9 +21,9 @@ import { lookupWallet } from '../lib/registry';
 
 const REPO_URL = 'https://github.com/domovinatv/pay.domovina.ai';
 const ADR_LINKS = [
-  { id: '0001', title: 'Self-custody principle' },
-  { id: '0002', title: 'Onchain phone attestation' },
-  { id: '0003', title: 'PhoneSBT contract design' },
+  { id: '0001', title: 'Self-custody principle', slug: 'no-server-side-recovery' },
+  { id: '0002', title: 'Onchain phone attestation', slug: 'phase-5-onchain-phone-attestation' },
+  { id: '0003', title: 'PhoneSBT contract design', slug: 'phase-5-sbt-design' },
 ];
 
 type PhoneSummary = {
@@ -134,7 +134,7 @@ export function Settings() {
           {ADR_LINKS.map((adr) => (
             <a
               key={adr.id}
-              href={`${REPO_URL}/blob/main/docs/decisions/${adr.id}-${slugify(adr.title)}.md`}
+              href={`${REPO_URL}/blob/main/docs/decisions/${adr.id}-${adr.slug}.md`}
               target="_blank"
               rel="noreferrer"
               className="flex items-center gap-3 py-3 first:pt-1 last:pb-1 hover:bg-surface-sunken -mx-1 px-1 rounded-lg transition"
@@ -239,10 +239,6 @@ function BuildInfoRow() {
       <ExternalLink className="h-3.5 w-3.5 text-ink-muted shrink-0" />
     </a>
   );
-}
-
-function slugify(title: string): string {
-  return title.toLowerCase().replace(/[^a-z0-9]+/g, '-');
 }
 
 function formatBuildTime(iso: string): string {
