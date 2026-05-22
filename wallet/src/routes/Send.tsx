@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react';
 import { parseUnits, encodeFunctionData, erc20Abi, isAddress, type Address } from 'viem';
-import { ClipboardPaste, ExternalLink, Fingerprint } from 'lucide-react';
+import { ClipboardPaste, ExternalLink, Fingerprint, ScanLine } from 'lucide-react';
 import {
   AddressInput,
   Button,
@@ -11,6 +11,8 @@ import {
   Section,
   useToast,
 } from '../ui';
+import { ScannerSheet } from '../components/ScannerSheet';
+import { decodeQR } from '../lib/eip681';
 import { useWalletStore } from '../state/store';
 import { haptic } from '../lib/haptic';
 import { parseAmount, isAmountInvalidForDisplay } from '../lib/amount';
@@ -27,7 +29,32 @@ export function Send() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [txHash, setTxHash] = useState<string | null>(null);
+  const [scanOpen, setScanOpen] = useState(false);
   const sendInFlightRef = useRef(false);
+
+  function handleScanResult(raw: string) {
+    const decoded = decodeQR(raw);
+    if (decoded.kind === 'unsupported') {
+      toast({ variant: 'error', title: 'QR nije podržan', description: decoded.reason });
+      setScanOpen(false);
+      return;
+    }
+    setTo(decoded.recipient);
+    if (decoded.kind === 'eure-gnosis' && decoded.amountDecimal) {
+      // Convert canonical "1.5" → user-locale "1,5" so the field reads natural.
+      setAmount(decoded.amountDecimal.replace('.', ','));
+    }
+    setScanOpen(false);
+    haptic('success');
+    toast({
+      variant: 'success',
+      title: 'QR skeniran',
+      description:
+        decoded.kind === 'eure-gnosis' && decoded.amountDecimal
+          ? `${decoded.amountDecimal} EURe → ${decoded.recipient.slice(0, 6)}…${decoded.recipient.slice(-4)}`
+          : `${decoded.recipient.slice(0, 6)}…${decoded.recipient.slice(-4)}`,
+    });
+  }
 
   const addressLooksValid = to.length === 0 || isAddress(to);
   const parsedAmount = parseAmount(amount);
@@ -161,9 +188,22 @@ export function Send() {
                 onChange={(e) => setTo(e.target.value)}
                 invalid={!addressLooksValid}
                 trailing={
-                  <IconButton aria-label="Zalijepi" size="sm" variant="ghost" onClick={paste}>
-                    <ClipboardPaste />
-                  </IconButton>
+                  <div className="flex gap-0.5">
+                    <IconButton
+                      aria-label="Skeniraj QR"
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => {
+                        haptic('tap');
+                        setScanOpen(true);
+                      }}
+                    >
+                      <ScanLine />
+                    </IconButton>
+                    <IconButton aria-label="Zalijepi" size="sm" variant="ghost" onClick={paste}>
+                      <ClipboardPaste />
+                    </IconButton>
+                  </div>
                 }
               />
             )}
@@ -225,6 +265,8 @@ export function Send() {
       <p className="text-xs text-center text-ink-muted">
         xDAI gas plaćamo mi · 5 besplatnih transakcija dnevno
       </p>
+
+      <ScannerSheet open={scanOpen} onOpenChange={setScanOpen} onResult={handleScanResult} />
     </div>
   );
 }
