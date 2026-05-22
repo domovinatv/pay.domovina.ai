@@ -175,7 +175,7 @@ footer {
 
 interface ShellOptions {
   title: string;
-  tab: 'events' | 'orders' | 'forwards' | 'intents';
+  tab: 'events' | 'orders' | 'forwards' | 'intents' | 'wallets' | 'sybil';
   body: string;
 }
 
@@ -286,6 +286,8 @@ function renderShell({ title, tab, body }: ShellOptions): string {
   const badgeLabel = tab === 'events' ? 'Webhook audit'
     : tab === 'orders' ? 'Monerium orders'
     : tab === 'forwards' ? 'Safe forwards'
+    : tab === 'wallets' ? 'Self-custody wallets'
+    : tab === 'sybil' ? 'Sybil dashboard'
     : 'Payment intents';
   return `<!doctype html>
 <html lang="hr">
@@ -313,6 +315,8 @@ ${TOAST_JS}
   ${t('orders', 'Orders', '/admin/orders')}
   ${t('forwards', 'Safe forwards', '/admin/forwards')}
   ${t('intents', 'Payment intents', '/admin/intents')}
+  ${t('wallets', 'Wallets', '/admin/wallets')}
+  ${t('sybil', 'Sybil', '/admin/sybil')}
 </nav>
 <main>${body}</main>
 <footer>
@@ -1105,6 +1109,249 @@ document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && modal.st
 
 load();
 </script>`;
+
+export function renderSybilPage(): string {
+  const body = `
+<h1>Sybil dashboard</h1>
+<p class="dim" style="margin-top:-.5rem;margin-bottom:1rem;font-size:.9rem">
+  Telefonski hash-evi koje dijeli 2+ različita walleta. Legitiman ali rijedak
+  scenario je migracija wallet-a istog vlasnika (raniji wallet → noviji). Klaster s
+  3+ walleta u kratkom vremenskom prozoru je tipičan sybil signal — provjeri u
+  drill-downu da li djeluje organski.
+</p>
+<div class="controls">
+  <button type="button" id="refresh">↻ Osvježi</button>
+</div>
+<div class="table-wrap">
+  <table>
+    <thead>
+      <tr>
+        <th>Phone hash</th>
+        <th>Walleti</th>
+        <th>Prvo bound</th>
+        <th>Zadnja verifikacija</th>
+      </tr>
+    </thead>
+    <tbody id="rows"><tr><td colspan="4" class="empty">Učitavam…</td></tr></tbody>
+  </table>
+</div>
+<div id="drill" style="margin-top:1.5rem"></div>
+
+<script>
+function esc(s) { return String(s).replace(/[&<>"']/g, c =>
+  ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+function fmt(iso) {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return iso;
+  return d.toISOString().slice(0,19).replace("T"," ");
+}
+function shortHash(h) { return h.slice(0, 10) + "…" + h.slice(-6); }
+
+async function loadClusters() {
+  const res = await fetch('/admin/api/sybil');
+  if (!res.ok) {
+    document.getElementById('rows').innerHTML =
+      '<tr><td colspan="4" class="empty">Greška: ' + res.status + '</td></tr>';
+    return;
+  }
+  const data = await res.json();
+  const tbody = document.getElementById('rows');
+  if (!data.clusters || data.clusters.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="4" class="empty">Nema sybil klastera (svi telefoni su unikatni po walletu).</td></tr>';
+    return;
+  }
+  let html = '';
+  for (const c of data.clusters) {
+    const fb = new Date(c.first_bound_at * 1000).toISOString();
+    const lv = new Date(c.latest_verified_at * 1000).toISOString();
+    html += '<tr style="cursor:pointer" onclick="drill(\\'' + esc(c.phone_hash) + '\\')">' +
+      '<td class="mono">' + esc(shortHash(c.phone_hash)) + '</td>' +
+      '<td><span class="pill warn">' + c.wallet_count + '</span></td>' +
+      '<td class="mono dim">' + esc(fmt(fb)) + '</td>' +
+      '<td class="mono dim">' + esc(fmt(lv)) + '</td>' +
+      '</tr>';
+  }
+  tbody.innerHTML = html;
+}
+
+async function drill(phoneHash) {
+  const res = await fetch('/admin/api/sybil/phone/' + encodeURIComponent(phoneHash));
+  const data = await res.json();
+  const wallets = data.wallets || [];
+  let html = '<h2 style="font-size:1.05rem;color:var(--navy);margin:0 0 .6rem">Walleti dijele ' + esc(shortHash(phoneHash)) + '</h2>';
+  html += '<table><thead><tr><th>Credential</th><th>Prvi bind</th><th>Zadnja verif.</th><th>Count</th></tr></thead><tbody>';
+  for (const w of wallets) {
+    const fb = new Date(w.first_bound_at * 1000).toISOString();
+    const lv = new Date(w.latest_verified_at * 1000).toISOString();
+    html += '<tr>' +
+      '<td class="mono dim">' + esc(w.credential_id.slice(0,10) + '…' + w.credential_id.slice(-6)) + '</td>' +
+      '<td class="mono dim">' + esc(fmt(fb)) + '</td>' +
+      '<td class="mono dim">' + esc(fmt(lv)) + '</td>' +
+      '<td>' + w.verification_count + '</td>' +
+      '</tr>';
+  }
+  html += '</tbody></table>';
+  document.getElementById('drill').innerHTML = html;
+  document.getElementById('drill').scrollIntoView({ behavior: 'smooth' });
+}
+
+document.getElementById('refresh').addEventListener('click', loadClusters);
+loadClusters();
+</script>`;
+  return renderShell({ title: 'Sybil dashboard', tab: 'sybil', body });
+}
+
+export function renderWalletsPage(): string {
+  const body = `
+<h1>Self-custody wallets</h1>
+<p class="dim" style="margin-top:-.5rem;margin-bottom:1rem;font-size:.9rem">
+  Svaki red = jedan passkey registriran kroz wallet.domovina.ai. Counterfactual
+  Safe adresa je deterministička iz pubkey-a. Kolona "Verifikacije telefona"
+  pokazuje sve telefone koje je wallet ikad vezao, sa per-phone count-om i
+  vremenskim rasponom prve do zadnje verifikacije. Više brojeva po walletu =
+  jači "stvarna osoba" signal.
+</p>
+<div class="stats" id="stats"></div>
+<div class="controls">
+  <label for="phone">Filter:</label>
+  <select id="phone">
+    <option value="">Svi</option>
+    <option value="1">Samo s telefonom</option>
+  </select>
+  <label for="size">Po stranici:</label>
+  <select id="size">
+    <option>50</option><option>100</option><option>200</option><option>500</option>
+  </select>
+  <button type="button" id="refresh">↻ Osvježi</button>
+  <button type="button" id="auto">Auto: OFF</button>
+</div>
+<div class="table-wrap">
+  <table>
+    <thead>
+      <tr>
+        <th>Kreirano</th>
+        <th>Safe adresa</th>
+        <th>Signer</th>
+        <th>Verifikacije telefona</th>
+        <th>RP</th>
+        <th>Credential</th>
+      </tr>
+    </thead>
+    <tbody id="rows">
+      <tr><td colspan="6" class="empty">Učitavam…</td></tr>
+    </tbody>
+  </table>
+</div>
+<div class="pager">
+  <button type="button" id="prev" disabled>← Prethodna</button>
+  <span id="pageInfo" class="dim">—</span>
+  <button type="button" id="next">Sljedeća →</button>
+</div>
+
+<script>
+let limit = 50, offset = 0, phoneFilter = "";
+let autoTimer = null;
+
+const PHONE_STYLE = document.createElement("style");
+PHONE_STYLE.textContent = ".phone-list{display:flex;flex-direction:column;gap:.2rem}" +
+  ".phone-line{display:flex;align-items:center;gap:.5rem;font-size:.85rem;line-height:1.3}" +
+  ".phone-hash{color:var(--navy)}" +
+  ".phone-count{display:inline-block;min-width:1.8rem;padding:.05rem .4rem;border-radius:.7rem;background:var(--surface);border:1px solid var(--border);font-size:.75rem;font-weight:700;color:var(--navy);text-align:center}" +
+  ".phone-range{font-size:.75rem}";
+document.head.appendChild(PHONE_STYLE);
+
+function esc(s) { return String(s).replace(/[&<>"']/g, c =>
+  ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+function fmt(iso) {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return iso;
+  return d.toISOString().slice(0,19).replace("T"," ");
+}
+function shortAddr(a) { return a ? a.slice(0,8) + "…" + a.slice(-4) : "—"; }
+function shortCred(a) { return a ? a.slice(0,10) + "…" + a.slice(-4) : "—"; }
+
+async function load() {
+  const params = new URLSearchParams({ limit: String(limit), offset: String(offset) });
+  if (phoneFilter) params.set("phone", phoneFilter);
+  const res = await fetch("/admin/api/wallets?" + params.toString());
+  if (!res.ok) {
+    document.getElementById("rows").innerHTML =
+      '<tr><td colspan="6" class="empty">Greška: ' + res.status + '</td></tr>';
+    return;
+  }
+  const data = await res.json();
+  const statsEl = document.getElementById("stats");
+  const pct = data.total > 0 ? Math.round(data.with_phone * 100 / data.total) : 0;
+  statsEl.innerHTML =
+    '<div class="stat"><div class="value">' + data.total + '</div><div class="label">Ukupno walleta</div></div>' +
+    '<div class="stat"><div class="value">' + data.with_phone + '</div><div class="label">S recovery telefonom</div></div>' +
+    '<div class="stat"><div class="value">' + pct + '%</div><div class="label">Conversion</div></div>';
+
+  const tbody = document.getElementById("rows");
+  if (!data.rows || data.rows.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="6" class="empty">Nema walleta.</td></tr>';
+  } else {
+    let html = "";
+    for (const w of data.rows) {
+      let phoneCell;
+      const phones = w.phones || [];
+      if (phones.length === 0) {
+        phoneCell = '<span class="dim">—</span>';
+      } else {
+        // Compact per-phone list: short hash + count pill + date range.
+        let lines = '';
+        for (const p of phones) {
+          const range = p.first_bound_at === p.latest_verified_at
+            ? esc(fmt(p.first_bound_at).slice(0, 10))
+            : esc(fmt(p.first_bound_at).slice(0, 10)) + ' → ' + esc(fmt(p.latest_verified_at).slice(0, 10));
+          lines +=
+            '<div class="phone-line">' +
+              '<span class="phone-hash mono">' + esc(p.phone_hash_short) + '</span>' +
+              '<span class="phone-count">' + p.verification_count + '×</span>' +
+              '<span class="phone-range mono dim">' + range + '</span>' +
+            '</div>';
+        }
+        phoneCell = '<div class="phone-list">' + lines + '</div>';
+      }
+      html += '<tr>' +
+        '<td class="mono dim">' + esc(fmt(w.created_at)) + '</td>' +
+        '<td class="mono"><a href="https://gnosisscan.io/address/' + esc(w.safe_address) +
+          '" target="_blank" rel="noreferrer">' + esc(shortAddr(w.safe_address)) + '</a></td>' +
+        '<td class="mono dim">' + esc(shortAddr(w.signer_address)) + '</td>' +
+        '<td>' + phoneCell + '</td>' +
+        '<td class="mono dim">' + esc(w.rp_id) + '</td>' +
+        '<td class="mono dim" title="' + esc(w.credential_id) + '">' + esc(shortCred(w.credential_id)) + '</td>' +
+        '</tr>';
+    }
+    tbody.innerHTML = html;
+  }
+
+  // Pager
+  document.getElementById("prev").disabled = offset === 0;
+  document.getElementById("next").disabled = (offset + data.rows.length) >= data.total;
+  document.getElementById("pageInfo").textContent =
+    (offset + 1) + "–" + (offset + data.rows.length) + " od " + data.total;
+}
+
+document.getElementById("phone").addEventListener("change", e => { phoneFilter = e.target.value; offset = 0; load(); });
+document.getElementById("size").addEventListener("change", e => { limit = Number(e.target.value); offset = 0; load(); });
+document.getElementById("refresh").addEventListener("click", load);
+document.getElementById("prev").addEventListener("click", () => { offset = Math.max(0, offset - limit); load(); });
+document.getElementById("next").addEventListener("click", () => { offset = offset + limit; load(); });
+document.getElementById("auto").addEventListener("click", e => {
+  if (autoTimer) {
+    clearInterval(autoTimer); autoTimer = null; e.target.textContent = "Auto: OFF";
+  } else {
+    autoTimer = setInterval(load, 5000); e.target.textContent = "Auto: ON";
+  }
+});
+
+load();
+</script>`;
+  return renderShell({ title: 'Self-custody wallets', tab: 'wallets', body });
+}
 
 function prettyJson(s: string | null): string {
   if (!s) return '—';

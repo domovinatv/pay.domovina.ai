@@ -11,12 +11,22 @@ import {
 } from '../monerium/db';
 import { listIntents } from '../intents/db';
 import {
+  countWallets,
+  listPhoneBindingsForCredentials,
+  listSybilClusters,
+  listWallets,
+  listWalletsSharingPhone,
+} from '../wallets/db';
+import { publicWalletView } from '../wallets/api';
+import {
   renderEventDetailPage,
   renderEventsPage,
   renderForwardsPage,
   renderIntentsPage,
   renderOrderDetailPage,
   renderOrdersPage,
+  renderSybilPage,
+  renderWalletsPage,
 } from './views';
 
 /// Mounts the branded `/admin` HTML dashboard on the given app.
@@ -119,5 +129,53 @@ export function mountAdminUi(app: Hono<{ Bindings: Env }>): void {
   app.get('/admin/api/orders', async (c) => {
     const orders = await listMoneriumOrders(c.env);
     return c.json({ orders });
+  });
+
+  // Self-custody wallet registry — Phase 3 (customer count) + Phase 4a
+  // (phone binding via otp.domovina.ai). See [[reference-wallet-domovina]].
+  app.get('/admin/wallets', (c) => c.html(renderWalletsPage()));
+  app.get('/admin/api/wallets', async (c) => {
+    const limit = Math.min(Math.max(Number(c.req.query('limit')) || 50, 1), 500);
+    const offset = Math.max(Number(c.req.query('offset')) || 0, 0);
+    const phoneOnly = c.req.query('phone') === '1';
+    const rows = await listWallets(c.env, { limit, offset });
+    const counts = await countWallets(c.env);
+    const filtered = phoneOnly ? rows.filter((r) => r.phone_hash !== null) : rows;
+    const bindingsMap = await listPhoneBindingsForCredentials(
+      c.env,
+      filtered.map((r) => r.credential_id),
+    );
+    return c.json({
+      total: counts.total,
+      with_phone: counts.withPhone,
+      limit,
+      offset,
+      rows: filtered.map((r) => ({
+        ...publicWalletView(r),
+        phones: (bindingsMap.get(r.credential_id) ?? []).map((b) => ({
+          phone_hash_short: b.phone_hash.slice(0, 10) + '…' + b.phone_hash.slice(-6),
+          first_bound_at: new Date(b.first_bound_at * 1000).toISOString(),
+          latest_verified_at: new Date(b.latest_verified_at * 1000).toISOString(),
+          verification_count: b.verification_count,
+        })),
+      })),
+    });
+  });
+
+  // Sybil dashboard — phone hashes held by 2+ distinct wallets. Surfaces the
+  // many-to-many wallet_phone_bindings duplicates that Phase 4a-fix made
+  // queryable. Each row drills down to the wallets sharing that phone.
+  app.get('/admin/sybil', (c) => c.html(renderSybilPage()));
+  app.get('/admin/api/sybil', async (c) => {
+    const limit = Math.min(Math.max(Number(c.req.query('limit')) || 50, 1), 500);
+    const offset = Math.max(Number(c.req.query('offset')) || 0, 0);
+    const clusters = await listSybilClusters(c.env, { limit, offset });
+    return c.json({ limit, offset, clusters });
+  });
+  app.get('/admin/api/sybil/phone/:phoneHash', async (c) => {
+    const phoneHash = c.req.param('phoneHash');
+    if (!/^[0-9a-fA-F]{64}$/.test(phoneHash)) return c.json({ error: 'bad_phone_hash' }, 400);
+    const wallets = await listWalletsSharingPhone(c.env, phoneHash);
+    return c.json({ phone_hash: phoneHash, wallets });
   });
 }

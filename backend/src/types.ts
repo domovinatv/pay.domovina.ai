@@ -50,6 +50,11 @@ export interface Env {
   // change). See backend/contracts/PaymentRegistry.sol + safe-tx/004,005.
   PAYMENT_REGISTRY_ADDRESS: string; // 0x… deployed PaymentRegistry on Gnosis
   MULTISEND_ADDRESS: string;        // 0x… Safe MultiSendCallOnly singleton (v1.4.1 = 0x9641…02e2)
+
+  // Wallet registry (Phase 3) + OTP-gated phone binding (Phase 4a).
+  // See [[reference-wallet-domovina]] and [[reference-otp-domovina]].
+  OTP_API_BASE: string;             // e.g. "https://otp.domovina.ai" — env var, not secret
+  PHONE_PEPPER: string;             // SECRET — HMAC key for hashing E.164 phones before DB write
 }
 
 export interface AccountRow {

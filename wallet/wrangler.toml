@@ -1,0 +1,15 @@
+name = "wallet-domovina"
+compatibility_date = "2026-05-01"
+pages_build_output_dir = "dist"
+# CF account_id is NOT supported in Pages wrangler.toml — set via CLOUDFLARE_ACCOUNT_ID env
+# (account: D.O.M. = 7dc7167b7e2e00923bfa7cd697df14e4)
+
+[[kv_namespaces]]
+binding = "RELAY_KV"
+id = "e2de780503fe47c4acf6c22fe1a70937"
+
+[vars]
+GNOSIS_RPC_URL = "https://rpc.gnosischain.com"
+
+# Secrets (set via `wrangler pages secret put`):
+#   RELAYER_PRIVATE_KEY  — xDAI funding wallet that pays gas

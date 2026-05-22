@@ -35,6 +35,7 @@ import { extractRoutingFromOrder, extractSessionId } from './monerium/sid';
 import { forwardViaSafe } from './router/safe';
 import { mountAdminUi } from './admin/app';
 import { buildIntentApi } from './intents/api';
+import { buildWalletApi } from './wallets/api';
 import {
   getIntent,
   markIntentPaid,
@@ -358,6 +359,11 @@ app.route('/api/monerium/admin', moneriumAdmin);
 
 // Public payment-intents API (unauthenticated; rate-limit in Phase 2).
 app.route('/api/intents', buildIntentApi());
+
+// Self-custody wallet registry (Phase 3) + OTP-gated phone binding (Phase 4a).
+// See [[reference-wallet-domovina]] and [[reference-otp-domovina]].
+// Admin endpoints + HTML dashboard live under /admin/wallets (see admin/app.ts).
+app.route('/api/wallets', buildWalletApi());
 
 // Public branded checkout page rendered server-side; polls /api/intents/:sid.
 app.get('/checkout/:sid', async (c) => {
