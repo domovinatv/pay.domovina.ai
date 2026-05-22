@@ -2,6 +2,7 @@ import * as ToastPrimitive from '@radix-ui/react-toast';
 import { CheckCircle2, AlertCircle, Info, X } from 'lucide-react';
 import { createContext, useCallback, useContext, useMemo, useState, type ReactNode } from 'react';
 import { cn } from './cn';
+import { haptic } from '../lib/haptic';
 
 type ToastVariant = 'success' | 'error' | 'info';
 
@@ -29,6 +30,9 @@ export function ToastProvider({ children }: { children: ReactNode }) {
 
   const toast = useCallback<ToastContextValue['toast']>(({ title, description, variant = 'info' }) => {
     setItems((prev) => [...prev, { id: Date.now() + Math.random(), title, description, variant }]);
+    if (variant === 'success') haptic('success');
+    else if (variant === 'error') haptic('error');
+    else haptic('tap');
   }, []);
 
   const value = useMemo(() => ({ toast }), [toast]);
@@ -71,7 +75,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
           </ToastPrimitive.Root>
         ))}
         <ToastPrimitive.Viewport
-          className="fixed bottom-0 left-0 right-0 z-[60] flex flex-col gap-2 p-4 outline-none
+          className="fixed bottom-0 left-0 right-0 z-[60] flex flex-col gap-2 p-4 pb-safe outline-none
                      sm:left-auto sm:right-4 sm:bottom-4 sm:max-w-sm"
         />
       </ToastPrimitive.Provider>

@@ -112,7 +112,7 @@ export function Landing() {
   const hasKnown = knownCount > 0;
 
   return (
-    <div className="min-h-full flex flex-col px-6 max-w-md mx-auto">
+    <div className="min-h-full flex flex-col px-6 max-w-md mx-auto pt-safe pb-safe">
       <BrandHeader />
 
       <main className="flex-1 flex flex-col justify-center gap-8 pb-12">
