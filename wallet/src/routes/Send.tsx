@@ -43,8 +43,41 @@ export function Send() {
 
   // Refresh recents when navigating back to /send (browser back, etc.) — the
   // localStorage may have been updated by a successful Send mid-session.
+  // Also: parse `?to=` and `?amount=` so a shareable link from /receive opens
+  // here pre-filled. Strips the query from the URL once consumed so a refresh
+  // doesn't keep re-prefilling and clobbering edits.
   useEffect(() => {
     setRecents(listRecentRecipients(5));
+
+    if (typeof window === 'undefined') return;
+    const params = new URLSearchParams(window.location.search);
+    const linkTo = params.get('to');
+    const linkAmount = params.get('amount');
+    if (!linkTo && !linkAmount) return;
+
+    let prefilled = false;
+    if (linkTo && isAddress(linkTo)) {
+      setTo(linkTo);
+      prefilled = true;
+    }
+    if (linkAmount) {
+      // Accept either dot or comma in shared links; render in user locale.
+      const cleaned = linkAmount.replace(',', '.');
+      if (/^\d+(\.\d+)?$/.test(cleaned)) {
+        setAmount(cleaned.replace('.', ','));
+        prefilled = true;
+      }
+    }
+    if (prefilled) {
+      haptic('success');
+      toast({
+        variant: 'success',
+        title: 'Transakcija prefiltirana',
+        description: linkTo && isAddress(linkTo) ? `${linkTo.slice(0, 6)}…${linkTo.slice(-4)}` : undefined,
+      });
+      // Clean the URL so a refresh starts blank.
+      window.history.replaceState({}, '', '/send');
+    }
   }, []);
 
   function handleScanResult(raw: string) {
