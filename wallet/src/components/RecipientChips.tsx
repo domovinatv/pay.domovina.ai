@@ -1,19 +1,33 @@
+import { Pencil } from 'lucide-react';
 import type { Address } from 'viem';
 import type { Recipient } from '../lib/recipients';
 
 type Props = {
   recipients: Recipient[];
   onPick: (address: Address) => void;
+  onEdit?: () => void;
 };
 
-export function RecipientChips({ recipients, onPick }: Props) {
+export function RecipientChips({ recipients, onPick, onEdit }: Props) {
   if (recipients.length === 0) return null;
 
   return (
     <div className="flex flex-col gap-2">
-      <p className="text-[11px] uppercase tracking-widest text-ink-muted px-1">
-        Nedavno korišteno
-      </p>
+      <div className="flex items-center justify-between px-1">
+        <p className="text-[11px] uppercase tracking-widest text-ink-muted">
+          Nedavno korišteno
+        </p>
+        {onEdit && (
+          <button
+            type="button"
+            onClick={onEdit}
+            className="inline-flex items-center gap-1 text-[11px] uppercase tracking-widest text-ink-secondary hover:text-ink-primary transition"
+          >
+            <Pencil className="h-3 w-3" />
+            Uredi
+          </button>
+        )}
+      </div>
       <div className="-mx-1 px-1 flex gap-2 overflow-x-auto pb-1 snap-x">
         {recipients.map((r) => (
           <button

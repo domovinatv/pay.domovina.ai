@@ -3,6 +3,7 @@ import { ArrowDownLeft, ArrowUpRight, ExternalLink, Wallet as WalletIcon, AlertC
 import type { Address } from 'viem';
 import { Card, EmptyState, Skeleton } from '../ui';
 import { fetchActivity, formatAmount, timeAgo, type ActivityItem } from '../lib/activity';
+import { getLabel } from '../lib/recipients';
 
 type Props = {
   safeAddress: Address;
@@ -88,6 +89,7 @@ function ActivityRow({ item }: { item: ActivityItem }) {
   const Icon = incoming ? ArrowDownLeft : ArrowUpRight;
   const sign = incoming ? '+' : '−';
   const amountColor = incoming ? 'text-emerald-600 dark:text-emerald-400' : 'text-ink-primary';
+  const label = getLabel(item.counterparty);
 
   return (
     <a
@@ -107,8 +109,12 @@ function ActivityRow({ item }: { item: ActivityItem }) {
         <Icon className="h-5 w-5" />
       </div>
       <div className="flex flex-col leading-tight min-w-0 flex-1">
-        <span className="text-sm font-medium text-ink-primary">
-          {incoming ? 'Primljeno' : 'Poslano'}
+        <span className="text-sm font-medium text-ink-primary truncate">
+          {label
+            ? `${incoming ? 'Od' : 'Za'} ${label}`
+            : incoming
+              ? 'Primljeno'
+              : 'Poslano'}
         </span>
         <span className="font-mono text-[11px] text-ink-muted truncate">
           {shortAddr(item.counterparty)}

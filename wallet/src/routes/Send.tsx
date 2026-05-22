@@ -13,6 +13,7 @@ import {
 } from '../ui';
 import { ScannerSheet } from '../components/ScannerSheet';
 import { RecipientChips } from '../components/RecipientChips';
+import { AddressBookSheet } from '../components/AddressBookSheet';
 import { decodeQR } from '../lib/eip681';
 import { useWalletStore } from '../state/store';
 import { haptic } from '../lib/haptic';
@@ -33,6 +34,7 @@ export function Send() {
   const [error, setError] = useState<string | null>(null);
   const [txHash, setTxHash] = useState<string | null>(null);
   const [scanOpen, setScanOpen] = useState(false);
+  const [bookOpen, setBookOpen] = useState(false);
   const [recents, setRecents] = useState<Recipient[]>(() => listRecentRecipients(5));
   const sendInFlightRef = useRef(false);
 
@@ -234,6 +236,7 @@ export function Send() {
               haptic('tap');
               setTo(addr);
             }}
+            onEdit={() => setBookOpen(true)}
           />
           <Field
             label="Primatelj"
@@ -325,6 +328,11 @@ export function Send() {
       </p>
 
       <ScannerSheet open={scanOpen} onOpenChange={setScanOpen} onResult={handleScanResult} />
+      <AddressBookSheet
+        open={bookOpen}
+        onOpenChange={setBookOpen}
+        onChange={() => setRecents(listRecentRecipients(5))}
+      />
     </div>
   );
 }
