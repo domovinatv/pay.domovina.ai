@@ -3,8 +3,36 @@
 @tailwind utilities;
 
 @layer base {
+  /* Light theme tokens (default) */
   :root {
     color-scheme: light;
+
+    --surface-base: 255 255 255;        /* page background */
+    --surface-raised: 255 255 255;       /* cards */
+    --surface-sunken: 244 245 247;       /* inputs, subtle wells */
+    --surface-muted: 248 249 251;        /* dividers/strips */
+    --surface-border: 226 230 236;       /* hairline borders */
+
+    --ink-primary: 0 47 108;             /* brand navy as primary text */
+    --ink-secondary: 71 84 103;          /* body secondary */
+    --ink-muted: 138 148 165;             /* labels, captions */
+    --ink-inverse: 255 255 255;          /* text on dark surface */
+  }
+
+  /* Dark theme tokens (Phase 1 wires the toggle; tokens defined now so primitives are dark-ready). */
+  .dark {
+    color-scheme: dark;
+
+    --surface-base: 11 13 18;
+    --surface-raised: 20 23 31;
+    --surface-sunken: 14 17 24;
+    --surface-muted: 26 30 40;
+    --surface-border: 38 44 56;
+
+    --ink-primary: 245 247 250;
+    --ink-secondary: 178 187 201;
+    --ink-muted: 124 133 148;
+    --ink-inverse: 11 13 18;
   }
 
   html, body, #root {
@@ -12,12 +40,34 @@
   }
 
   body {
-    @apply bg-white text-domovina-navy antialiased;
+    @apply bg-surface-base text-ink-primary antialiased;
     overscroll-behavior-y: none;
+    font-feature-settings: "ss01";
+  }
+
+  /* Tabular numerals helper — applied where amounts/addresses live */
+  .tabular {
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: "tnum";
+  }
+
+  /* Focus ring — premium feel, brand-tinted */
+  :where(button, a, [role="button"], input, textarea, select):focus-visible {
+    @apply outline-none ring-2 ring-brand-navy-400/60 ring-offset-2 ring-offset-surface-base;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+    }
   }
 }
 
 @layer components {
+  /* Legacy classes — still used by existing routes (Landing/Wallet/Receive/Send/BindPhone).
+     Will be removed once each route migrates to <Button>/<Card> primitives. */
   .btn-primary {
     @apply inline-flex items-center justify-center gap-2 rounded-2xl bg-domovina-navy text-white
            font-semibold px-6 py-4 text-lg shadow-md active:scale-[0.98] transition
