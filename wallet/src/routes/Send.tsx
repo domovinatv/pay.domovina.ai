@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { parseUnits, encodeFunctionData, erc20Abi, isAddress, type Address } from 'viem';
 import { ClipboardPaste, ExternalLink, Fingerprint, ScanLine } from 'lucide-react';
 import {
@@ -12,10 +12,12 @@ import {
   useToast,
 } from '../ui';
 import { ScannerSheet } from '../components/ScannerSheet';
+import { RecipientChips } from '../components/RecipientChips';
 import { decodeQR } from '../lib/eip681';
 import { useWalletStore } from '../state/store';
 import { haptic } from '../lib/haptic';
 import { parseAmount, isAmountInvalidForDisplay } from '../lib/amount';
+import { addRecipient, listRecentRecipients, type Recipient } from '../lib/recipients';
 import { EURE_ADDRESS, EURE_DECIMALS } from '../lib/constants';
 import { encodeWebAuthnSignature, getSafeTxHash } from '../lib/safe';
 import { getActivePasskey, signWithPasskey } from '../lib/passkey';
@@ -30,7 +32,20 @@ export function Send() {
   const [error, setError] = useState<string | null>(null);
   const [txHash, setTxHash] = useState<string | null>(null);
   const [scanOpen, setScanOpen] = useState(false);
+  const [recents, setRecents] = useState<Recipient[]>(() => listRecentRecipients(5));
   const sendInFlightRef = useRef(false);
+
+  // Filter out the current input value so we don't show "Nedavno" for the
+  // address the user is already targeting.
+  const visibleRecents = recents.filter(
+    (r) => r.address.toLowerCase() !== to.toLowerCase(),
+  );
+
+  // Refresh recents when navigating back to /send (browser back, etc.) — the
+  // localStorage may have been updated by a successful Send mid-session.
+  useEffect(() => {
+    setRecents(listRecentRecipients(5));
+  }, []);
 
   function handleScanResult(raw: string) {
     const decoded = decodeQR(raw);
@@ -161,6 +176,8 @@ export function Send() {
         throw new Error(result.rateLimited ? 'Dosegao si dnevni limit (5 besplatnih).' : result.error);
       }
       setTxHash(result.txHash);
+      addRecipient(to);
+      setRecents(listRecentRecipients(5));
       toast({ variant: 'success', title: 'Poslano ✓', description: `${parsedAmount.normalized} EURe → ${shortAddr(to)}` });
     } catch (e) {
       console.error('[Send] FAILED', e);
@@ -177,6 +194,13 @@ export function Send() {
     <div className="flex flex-col gap-6">
       <Section title="Pošalji EURe" description="Na Gnosis Chain, bez gas-a za tebe">
         <Card className="flex flex-col gap-5">
+          <RecipientChips
+            recipients={visibleRecents}
+            onPick={(addr) => {
+              haptic('tap');
+              setTo(addr);
+            }}
+          />
           <Field
             label="Primatelj"
             hint="Gnosis Chain · EVM adresa"
