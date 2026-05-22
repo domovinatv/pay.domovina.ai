@@ -13,6 +13,7 @@ import {
 } from '../ui';
 import { useTheme } from '../lib/theme';
 import { useWalletStore } from '../state/store';
+import { parseAmount, isAmountInvalidForDisplay } from '../lib/amount';
 import {
   createPaymentIntent,
   subscribePaymentIntent,
@@ -32,14 +33,28 @@ export function Receive() {
   const [error, setError] = useState<string | null>(null);
   const qrRef = useRef<HTMLDivElement>(null);
 
+  const parsedAmount = parseAmount(amount);
+  const amountShowsError = isAmountInvalidForDisplay(amount);
+  const amountErrorMsg = amountShowsError
+    ? parsedAmount.ok
+      ? undefined
+      : parsedAmount.reason === 'zero'
+        ? 'Iznos mora biti veći od 0'
+        : 'Iznos nije valjan broj'
+    : undefined;
+
   async function createIntent() {
     if (!safeAddress) return;
+    if (!parsedAmount.ok) {
+      setError('Iznos nije valjan broj.');
+      return;
+    }
     setError(null);
     setBusy(true);
     try {
       const next = await createPaymentIntent({
         destination: safeAddress,
-        amountEur: Number(amount),
+        amountEur: parsedAmount.numeric,
         label: 'DOMOVINA Wallet top-up',
       });
       setIntent(next);
@@ -78,17 +93,18 @@ export function Receive() {
           description="Plati SEPA prijenosom → dobiješ EURe na svoj wallet"
         >
           <Card className="flex flex-col gap-5">
-            <Field label="Iznos u EUR">
+            <Field label="Iznos u EUR" error={amountErrorMsg}>
               {(id) => (
                 <Input
                   id={id}
-                  type="number"
+                  type="text"
                   inputMode="decimal"
+                  autoComplete="off"
                   value={amount}
                   onChange={(e) => setAmount(e.target.value)}
-                  min="1"
-                  step="1"
+                  invalid={amountShowsError}
                   className="text-2xl font-semibold tabular text-center"
+                  placeholder="0,00"
                 />
               )}
             </Field>

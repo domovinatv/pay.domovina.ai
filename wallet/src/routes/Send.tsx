@@ -13,6 +13,7 @@ import {
 } from '../ui';
 import { useWalletStore } from '../state/store';
 import { haptic } from '../lib/haptic';
+import { parseAmount, isAmountInvalidForDisplay } from '../lib/amount';
 import { EURE_ADDRESS, EURE_DECIMALS } from '../lib/constants';
 import { encodeWebAuthnSignature, getSafeTxHash } from '../lib/safe';
 import { getActivePasskey, signWithPasskey } from '../lib/passkey';
@@ -29,8 +30,16 @@ export function Send() {
   const sendInFlightRef = useRef(false);
 
   const addressLooksValid = to.length === 0 || isAddress(to);
-  const amountValid = amount.length === 0 || Number(amount) > 0;
-  const valid = isAddress(to) && Number(amount) > 0;
+  const parsedAmount = parseAmount(amount);
+  const amountShowsError = isAmountInvalidForDisplay(amount);
+  const valid = isAddress(to) && parsedAmount.ok;
+  const amountErrorMsg = amountShowsError
+    ? parsedAmount.ok
+      ? undefined
+      : parsedAmount.reason === 'zero'
+        ? 'Iznos mora biti veći od 0'
+        : 'Iznos nije valjan broj'
+    : undefined;
 
   async function paste() {
     try {
@@ -70,12 +79,17 @@ export function Send() {
       credentialId: passkey.credentialId,
       pubKeyX: passkey.pubKey.x.slice(0, 18) + '…',
     });
+    if (!parsedAmount.ok) {
+      sendInFlightRef.current = false;
+      setError('Iznos nije valjan broj.');
+      return;
+    }
     setError(null);
     setTxHash(null);
     setBusy(true);
     haptic('tap');
     try {
-      const value = parseUnits(amount, EURE_DECIMALS);
+      const value = parseUnits(parsedAmount.normalized, EURE_DECIMALS);
       const data = encodeFunctionData({
         abi: erc20Abi,
         functionName: 'transfer',
@@ -120,7 +134,7 @@ export function Send() {
         throw new Error(result.rateLimited ? 'Dosegao si dnevni limit (5 besplatnih).' : result.error);
       }
       setTxHash(result.txHash);
-      toast({ variant: 'success', title: 'Poslano ✓', description: `${amount} EURe → ${shortAddr(to)}` });
+      toast({ variant: 'success', title: 'Poslano ✓', description: `${parsedAmount.normalized} EURe → ${shortAddr(to)}` });
     } catch (e) {
       console.error('[Send] FAILED', e);
       const msg = e instanceof Error ? e.message : String(e);
@@ -155,20 +169,16 @@ export function Send() {
             )}
           </Field>
 
-          <Field
-            label="Iznos (EURe)"
-            error={!amountValid ? 'Iznos mora biti veći od 0' : undefined}
-          >
+          <Field label="Iznos (EURe)" error={amountErrorMsg}>
             {(id) => (
               <Input
                 id={id}
-                type="number"
+                type="text"
                 inputMode="decimal"
+                autoComplete="off"
                 value={amount}
                 onChange={(e) => setAmount(e.target.value)}
-                min="0"
-                step="0.01"
-                invalid={!amountValid}
+                invalid={amountShowsError}
                 className="text-2xl font-semibold tabular text-center"
                 placeholder="0,00"
               />
@@ -196,7 +206,9 @@ export function Send() {
         >
           <div className="text-center">
             <p className="font-semibold text-ink-primary">Poslano ✓</p>
-            <p className="text-sm text-ink-secondary">{amount} EURe → {shortAddr(to)}</p>
+            <p className="text-sm text-ink-secondary">
+              {parsedAmount.ok ? parsedAmount.normalized : amount} EURe → {shortAddr(to)}
+            </p>
           </div>
           <a
             href={`https://gnosisscan.io/tx/${txHash}`}
