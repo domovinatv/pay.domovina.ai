@@ -15,6 +15,7 @@ import {
 import { useTheme } from '../lib/theme';
 import { useWalletStore } from '../state/store';
 import { parseAmount, isAmountInvalidForDisplay } from '../lib/amount';
+import { humanizeError } from '../lib/errors';
 import { encodeEureTransferUri } from '../lib/eip681';
 import {
   createPaymentIntent,
@@ -88,7 +89,7 @@ function SepaReceive() {
       });
       setIntent(next);
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      setError(humanizeError(e));
     } finally {
       setBusy(false);
     }
@@ -250,8 +251,8 @@ function P2PReceive({ safeAddress }: { safeAddress: `0x${string}` }) {
     try {
       await navigator.clipboard.writeText(safeAddress);
       toast({ variant: 'success', title: 'Adresa kopirana' });
-    } catch {
-      toast({ variant: 'error', title: 'Clipboard nedostupan' });
+    } catch (e) {
+      toast({ variant: 'error', title: humanizeError(e, 'clipboard') });
     }
   }
 
@@ -259,8 +260,8 @@ function P2PReceive({ safeAddress }: { safeAddress: `0x${string}` }) {
     try {
       await navigator.clipboard.writeText(deepLink);
       toast({ variant: 'success', title: 'Link kopiran' });
-    } catch {
-      toast({ variant: 'error', title: 'Clipboard nedostupan' });
+    } catch (e) {
+      toast({ variant: 'error', title: humanizeError(e, 'clipboard') });
     }
   }
 
@@ -316,7 +317,7 @@ function P2PReceive({ safeAddress }: { safeAddress: `0x${string}` }) {
       });
       toast({ variant: 'success', title: 'QR spremljen' });
     } catch (e) {
-      toast({ variant: 'error', title: 'Spremanje neuspješno', description: e instanceof Error ? e.message : String(e) });
+      toast({ variant: 'error', title: 'Spremanje neuspješno', description: humanizeError(e) });
     }
   }
 
@@ -434,8 +435,8 @@ function DetailRow({ label, value, mono, onCopied }: DetailRowProps) {
       setCopied(true);
       onCopied({ variant: 'success', title: `${label} kopirano` });
       setTimeout(() => setCopied(false), 1500);
-    } catch {
-      onCopied({ variant: 'error', title: 'Clipboard nedostupan' });
+    } catch (e) {
+      onCopied({ variant: 'error', title: humanizeError(e, 'clipboard') });
     }
   }
 
