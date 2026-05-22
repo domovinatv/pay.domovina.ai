@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import QRCodeStyling from 'qr-code-styling';
-import { Copy, Check, ScanLine, Landmark, Wallet as WalletIcon } from 'lucide-react';
+import { Copy, Check, ScanLine, Landmark, Wallet as WalletIcon, Share2, Link as LinkIcon, Download } from 'lucide-react';
 import {
   Button,
   Card,
@@ -207,6 +207,7 @@ function P2PReceive({ safeAddress }: { safeAddress: `0x${string}` }) {
   const { resolved } = useTheme();
   const [amount, setAmount] = useState('');
   const qrRef = useRef<HTMLDivElement>(null);
+  const qrInstanceRef = useRef<QRCodeStyling | null>(null);
 
   const parsedAmount = parseAmount(amount);
   const amountShowsError = isAmountInvalidForDisplay(amount);
@@ -223,17 +224,26 @@ function P2PReceive({ safeAddress }: { safeAddress: `0x${string}` }) {
     amountDecimal: parsedAmount.ok ? parsedAmount.normalized : undefined,
   });
 
+  // Sharable https deep-link that opens DOMOVINA Wallet directly on /send
+  // with the recipient + amount pre-filled. Same data as the EIP-681 QR but
+  // clickable, so iMessage / Signal / WhatsApp can preview and tap-launch.
+  const deepLinkParams = new URLSearchParams({ to: safeAddress });
+  if (parsedAmount.ok) deepLinkParams.set('amount', parsedAmount.normalized);
+  const deepLink = `${window.location.origin}/send?${deepLinkParams.toString()}`;
+
   useEffect(() => {
     if (!qrRef.current) return;
     qrRef.current.innerHTML = '';
-    new QRCodeStyling({
+    const instance = new QRCodeStyling({
       width: 320,
       height: 320,
       data: uri,
       qrOptions: { errorCorrectionLevel: 'M' },
       dotsOptions: { color: '#002F6C', type: 'square' },
       backgroundOptions: { color: '#ffffff' },
-    }).append(qrRef.current);
+    });
+    instance.append(qrRef.current);
+    qrInstanceRef.current = instance;
   }, [uri, resolved]);
 
   async function copyAddress() {
@@ -242,6 +252,71 @@ function P2PReceive({ safeAddress }: { safeAddress: `0x${string}` }) {
       toast({ variant: 'success', title: 'Adresa kopirana' });
     } catch {
       toast({ variant: 'error', title: 'Clipboard nedostupan' });
+    }
+  }
+
+  async function copyDeepLink() {
+    try {
+      await navigator.clipboard.writeText(deepLink);
+      toast({ variant: 'success', title: 'Link kopiran' });
+    } catch {
+      toast({ variant: 'error', title: 'Clipboard nedostupan' });
+    }
+  }
+
+  async function shareReceive() {
+    const shareTitle = 'Pošalji mi EURe';
+    const amountSuffix = parsedAmount.ok ? ` ${parsedAmount.normalized} EURe` : '';
+    const shareText = `Pošalji${amountSuffix} na moj DOMOVINA wallet`;
+
+    // Best path: native share sheet with both the QR image and the deep link.
+    // iOS Safari 15+ supports files; Android Chrome PWA does too.
+    let qrFile: File | null = null;
+    try {
+      const blob = await qrInstanceRef.current?.getRawData('png');
+      if (blob instanceof Blob) {
+        qrFile = new File([blob], 'domovina-eure-qr.png', { type: 'image/png' });
+      }
+    } catch {
+      /* fall through to URL-only share */
+    }
+
+    const sharePayload: ShareData = {
+      title: shareTitle,
+      text: shareText,
+      url: deepLink,
+    };
+    if (qrFile && typeof navigator.canShare === 'function' && navigator.canShare({ files: [qrFile] })) {
+      sharePayload.files = [qrFile];
+    }
+
+    if (typeof navigator.share === 'function') {
+      try {
+        await navigator.share(sharePayload);
+        return;
+      } catch (e) {
+        // AbortError = user dismissed the share sheet — silent.
+        if (e instanceof Error && e.name !== 'AbortError') {
+          // Fall through to clipboard fallback below.
+        } else {
+          return;
+        }
+      }
+    }
+    // Final fallback: copy link to clipboard.
+    await copyDeepLink();
+  }
+
+  async function downloadQr() {
+    if (!qrInstanceRef.current) return;
+    try {
+      await qrInstanceRef.current.download({
+        name: 'domovina-eure-qr',
+        extension: 'png',
+      });
+      toast({ variant: 'success', title: 'QR spremljen' });
+    } catch (e) {
+      toast({ variant: 'error', title: 'Spremanje neuspješno', description: e instanceof Error ? e.message : String(e) });
     }
   }
 
@@ -286,18 +361,40 @@ function P2PReceive({ safeAddress }: { safeAddress: `0x${string}` }) {
         )}
       </Card>
 
-      <Card padding="md" className="flex items-center justify-between gap-3">
-        <div className="flex flex-col leading-tight min-w-0 flex-1">
-          <span className="text-[11px] uppercase tracking-widest text-ink-muted">Tvoja Safe adresa</span>
-          <span className="font-mono text-sm text-ink-primary truncate">{safeAddress}</span>
+      <div className="grid grid-cols-2 gap-2">
+        <Button onClick={shareReceive} size="lg" block>
+          <Share2 className="h-4 w-4" />
+          Podijeli
+        </Button>
+        <Button onClick={downloadQr} variant="secondary" size="lg" block>
+          <Download className="h-4 w-4" />
+          Spremi QR
+        </Button>
+      </div>
+
+      <Card padding="md" className="flex flex-col divide-y divide-surface-border">
+        <div className="flex items-center justify-between gap-3 py-3 first:pt-1 last:pb-1">
+          <div className="flex flex-col leading-tight min-w-0 flex-1">
+            <span className="text-[11px] uppercase tracking-widest text-ink-muted">Tvoja Safe adresa</span>
+            <span className="font-mono text-sm text-ink-primary truncate">{safeAddress}</span>
+          </div>
+          <IconButton aria-label="Kopiraj adresu" size="sm" variant="ghost" onClick={copyAddress}>
+            <Copy className="h-4 w-4" />
+          </IconButton>
         </div>
-        <IconButton aria-label="Kopiraj adresu" size="sm" variant="ghost" onClick={copyAddress}>
-          <Copy className="h-4 w-4" />
-        </IconButton>
+        <div className="flex items-center justify-between gap-3 py-3 first:pt-1 last:pb-1">
+          <div className="flex flex-col leading-tight min-w-0 flex-1">
+            <span className="text-[11px] uppercase tracking-widest text-ink-muted">Link za dijeljenje</span>
+            <span className="font-mono text-xs text-ink-secondary truncate">{deepLink}</span>
+          </div>
+          <IconButton aria-label="Kopiraj link" size="sm" variant="ghost" onClick={copyDeepLink}>
+            <LinkIcon className="h-4 w-4" />
+          </IconButton>
+        </div>
       </Card>
 
       <p className="text-xs text-ink-muted text-center">
-        Pošiljatelj skenira → njegov wallet prefilla recipient + iznos → potpis Face ID-om → ERC-20 transfer ide odmah na Gnosis Chain.
+        QR skeniraš s bilo kojim EVM wallet-om · link otvara DOMOVINA wallet drugog korisnika s prefilled transakcijom.
       </p>
     </div>
   );
