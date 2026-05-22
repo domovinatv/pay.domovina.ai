@@ -29,7 +29,7 @@ export function AppShell({ children }: Props) {
 
   return (
     <div className="min-h-full flex flex-col">
-      <header className="sticky top-0 z-30 bg-surface-base/85 backdrop-blur border-b border-surface-border">
+      <header className="sticky top-0 z-30 bg-surface-base/85 backdrop-blur border-b border-surface-border pt-safe">
         <div className="mx-auto max-w-md flex items-center justify-between gap-2 px-4 py-3">
           <div className="flex items-center gap-2 min-w-0">
             {isHome ? (
@@ -49,7 +49,13 @@ export function AppShell({ children }: Props) {
         </div>
       </header>
 
-      <main className="flex-1 mx-auto w-full max-w-md px-6 py-6">{children}</main>
+      <main className="flex-1 mx-auto w-full max-w-md px-6 py-6 pb-safe">
+        {/* Re-mount on every route change so the enter animation replays.
+            CSS reduced-motion guard collapses the animation to ~0ms. */}
+        <div key={location} className="animate-route-enter">
+          {children}
+        </div>
+      </main>
     </div>
   );
 }

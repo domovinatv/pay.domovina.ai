@@ -12,6 +12,7 @@ import {
   useToast,
 } from '../ui';
 import { useWalletStore } from '../state/store';
+import { haptic } from '../lib/haptic';
 import { EURE_ADDRESS, EURE_DECIMALS } from '../lib/constants';
 import { encodeWebAuthnSignature, getSafeTxHash } from '../lib/safe';
 import { getActivePasskey, signWithPasskey } from '../lib/passkey';
@@ -72,6 +73,7 @@ export function Send() {
     setError(null);
     setTxHash(null);
     setBusy(true);
+    haptic('tap');
     try {
       const value = parseUnits(amount, EURE_DECIMALS);
       const data = encodeFunctionData({

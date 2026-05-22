@@ -1,6 +1,7 @@
 import { Copy, Check } from 'lucide-react';
 import { useState, type HTMLAttributes } from 'react';
 import { cn } from './cn';
+import { haptic } from '../lib/haptic';
 
 export type AddressChipProps = HTMLAttributes<HTMLButtonElement> & {
   address: string;
@@ -34,6 +35,7 @@ export function AddressChip({
     try {
       await navigator.clipboard.writeText(address);
       setCopied(true);
+      haptic('tap');
       setTimeout(() => setCopied(false), 1500);
     } catch {
       /* clipboard may not be available — silent */
