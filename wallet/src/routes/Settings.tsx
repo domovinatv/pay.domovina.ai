@@ -13,11 +13,14 @@ import {
   Code2,
   Copy,
   Check,
+  Wallet as WalletIcon,
 } from 'lucide-react';
 import { Badge, Button, Card, IconButton, Section, SegmentedControl, useToast } from '../ui';
+import { WalletSwitcherSheet } from '../components/WalletSwitcherSheet';
 import { useTheme, type ThemeMode } from '../lib/theme';
 import { useWalletStore } from '../state/store';
 import { lookupWallet } from '../lib/registry';
+import { listKnownPasskeys } from '../lib/passkey';
 
 const REPO_URL = 'https://github.com/domovinatv/pay.domovina.ai';
 const ADR_LINKS = [
@@ -37,6 +40,12 @@ export function Settings() {
   const { mode, setMode } = useTheme();
   const { safeAddress, signerAddress, credentialId, reset } = useWalletStore();
   const [phoneSummary, setPhoneSummary] = useState<PhoneSummary | null>(null);
+  const [switcherOpen, setSwitcherOpen] = useState(false);
+  const [knownCount, setKnownCount] = useState(0);
+
+  useEffect(() => {
+    setKnownCount(listKnownPasskeys().length);
+  }, [credentialId]);
 
   useEffect(() => {
     if (!credentialId) return;
@@ -64,6 +73,27 @@ export function Settings() {
 
   return (
     <div className="flex flex-col gap-8">
+      {knownCount > 1 && (
+        <Section title="Wallet">
+          <button
+            type="button"
+            onClick={() => setSwitcherOpen(true)}
+            className="text-left rounded-3xl bg-surface-raised border border-surface-border shadow-card p-5 hover:bg-surface-sunken transition flex items-center gap-3"
+          >
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-surface-sunken text-brand-navy-500">
+              <WalletIcon className="h-5 w-5" />
+            </div>
+            <div className="flex-1 flex flex-col leading-tight">
+              <span className="font-medium text-ink-primary">Promijeni wallet</span>
+              <span className="text-sm text-ink-secondary">
+                {knownCount} walleta na ovom uređaju
+              </span>
+            </div>
+            <ChevronRight className="h-4 w-4 text-ink-muted" />
+          </button>
+        </Section>
+      )}
+
       <Section title="Račun">
         <Card padding="md" className="flex flex-col divide-y divide-surface-border">
           <CopyableAddressRow
@@ -172,6 +202,19 @@ export function Settings() {
           </Button>
         </Card>
       </Section>
+
+      <WalletSwitcherSheet
+        open={switcherOpen}
+        onOpenChange={setSwitcherOpen}
+        onSwitched={(record) => {
+          toast({
+            variant: 'success',
+            title: 'Otvoren wallet',
+            description: `${record.safeAddress.slice(0, 6)}…${record.safeAddress.slice(-4)}`,
+          });
+          setLocation('/');
+        }}
+      />
     </div>
   );
 }
