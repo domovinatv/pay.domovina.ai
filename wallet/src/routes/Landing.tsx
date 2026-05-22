@@ -5,6 +5,7 @@ import { BrandHeader } from '../components/Brand';
 import { AddressChip, Button, Card } from '../ui';
 import { useWalletStore } from '../state/store';
 import { haptic } from '../lib/haptic';
+import { humanizeError } from '../lib/errors';
 import {
   createPasskey,
   listKnownPasskeys,
@@ -76,7 +77,7 @@ export function Landing() {
       setStage({ kind: 'created', record });
     } catch (e) {
       haptic('error');
-      setStage({ kind: 'error', message: e instanceof Error ? e.message : String(e) });
+      setStage({ kind: 'error', message: humanizeError(e, 'passkey') });
     }
   }
 
@@ -128,7 +129,7 @@ export function Landing() {
       });
     } catch (e) {
       haptic('error');
-      setStage({ kind: 'error', message: e instanceof Error ? e.message : String(e) });
+      setStage({ kind: 'error', message: humanizeError(e, 'passkey') });
     }
   }
 

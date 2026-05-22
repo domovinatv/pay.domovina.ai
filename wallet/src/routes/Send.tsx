@@ -16,6 +16,7 @@ import { RecipientChips } from '../components/RecipientChips';
 import { decodeQR } from '../lib/eip681';
 import { useWalletStore } from '../state/store';
 import { haptic } from '../lib/haptic';
+import { humanizeError } from '../lib/errors';
 import { parseAmount, isAmountInvalidForDisplay } from '../lib/amount';
 import { addRecipient, listRecentRecipients, type Recipient } from '../lib/recipients';
 import { EURE_ADDRESS, EURE_DECIMALS } from '../lib/constants';
@@ -120,8 +121,8 @@ export function Send() {
     try {
       const text = await navigator.clipboard.readText();
       if (text) setTo(text.trim());
-    } catch {
-      toast({ variant: 'error', title: 'Clipboard nedostupan' });
+    } catch (e) {
+      toast({ variant: 'error', title: humanizeError(e, 'clipboard') });
     }
   }
 
@@ -214,9 +215,9 @@ export function Send() {
       toast({ variant: 'success', title: 'Poslano ✓', description: `${parsedAmount.normalized} EURe → ${shortAddr(to)}` });
     } catch (e) {
       console.error('[Send] FAILED', e);
-      const msg = e instanceof Error ? e.message : String(e);
-      setError(msg);
-      toast({ variant: 'error', title: 'Slanje neuspješno', description: msg });
+      const friendly = humanizeError(e, 'passkey');
+      setError(friendly);
+      toast({ variant: 'error', title: 'Slanje neuspješno', description: friendly });
     } finally {
       setBusy(false);
       sendInFlightRef.current = false;

@@ -3,6 +3,7 @@ import QrScanner from 'qr-scanner';
 import { CameraOff, ScanLine, ImagePlus } from 'lucide-react';
 import { Sheet, Button } from '../ui';
 import { haptic } from '../lib/haptic';
+import { humanizeError } from '../lib/errors';
 
 type Props = {
   open: boolean;
@@ -124,12 +125,14 @@ export function ScannerSheet({ open, onOpenChange, onResult }: Props) {
         setState('scanning');
       } catch (e) {
         if (cancelled) return;
-        const msg = e instanceof Error ? e.message : String(e);
-        if (/permission|denied|notallowed|not allowed/i.test(msg)) {
+        // NotAllowedError gets its own dedicated "permission denied" panel
+        // with concrete instructions; everything else falls into the
+        // generic error panel with a humanized Croatian message.
+        if (e instanceof DOMException && e.name === 'NotAllowedError') {
           setState('denied');
         } else {
           setState('error');
-          setErrMsg(msg);
+          setErrMsg(humanizeError(e, 'camera'));
         }
       }
     };
