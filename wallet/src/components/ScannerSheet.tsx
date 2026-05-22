@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import QrScanner from 'qr-scanner';
-import { CameraOff, ScanLine } from 'lucide-react';
+import { CameraOff, ScanLine, ImagePlus } from 'lucide-react';
 import { Sheet, Button } from '../ui';
+import { haptic } from '../lib/haptic';
 
 type Props = {
   open: boolean;
@@ -23,6 +24,31 @@ export function ScannerSheet({ open, onOpenChange, onResult }: Props) {
 
   const [state, setState] = useState<ScanState>('idle');
   const [errMsg, setErrMsg] = useState<string>('');
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [galleryError, setGalleryError] = useState<string | null>(null);
+  const [galleryBusy, setGalleryBusy] = useState(false);
+
+  async function handleGalleryFile(file: File) {
+    setGalleryError(null);
+    setGalleryBusy(true);
+    try {
+      const result = await QrScanner.scanImage(file, { returnDetailedScanResult: true });
+      haptic('tap');
+      // Tear scanner down first — onResult navigates away from the sheet.
+      const s = scannerRef.current;
+      scannerRef.current = null;
+      if (s) {
+        s.stop();
+        s.destroy();
+      }
+      onResultRef.current(result.data);
+    } catch {
+      setGalleryError('U slici nije pronađen QR kod.');
+      haptic('error');
+    } finally {
+      setGalleryBusy(false);
+    }
+  }
 
   // The video element is owned by the Radix portal — use a callback ref so
   // we get notified the moment it mounts and unmounts. A plain useRef +
@@ -177,11 +203,43 @@ export function ScannerSheet({ open, onOpenChange, onResult }: Props) {
           )}
         </div>
 
+        <Button
+          variant="secondary"
+          size="md"
+          block
+          disabled={galleryBusy}
+          onClick={() => {
+            haptic('tap');
+            fileInputRef.current?.click();
+          }}
+        >
+          <ImagePlus className="h-4 w-4" />
+          {galleryBusy ? 'Učitavam sliku…' : 'Učitaj iz galerije'}
+        </Button>
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="image/*"
+          className="hidden"
+          onChange={(e) => {
+            const file = e.target.files?.[0];
+            // Reset the input so picking the same file twice still fires onChange.
+            e.target.value = '';
+            if (file) void handleGalleryFile(file);
+          }}
+        />
+
+        {galleryError && (
+          <p className="text-sm text-brand-red-700 text-center" role="alert">
+            {galleryError}
+          </p>
+        )}
+
         <p className="text-xs text-ink-muted text-center">
           Podržan format: EIP-681 (Ethereum URI) ili 0x… adresa.
         </p>
 
-        <Button variant="secondary" size="md" block onClick={() => onOpenChange(false)}>
+        <Button variant="ghost" size="md" block onClick={() => onOpenChange(false)}>
           Zatvori
         </Button>
       </div>
