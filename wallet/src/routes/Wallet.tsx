@@ -9,7 +9,15 @@ import { RP_ID } from '../lib/constants';
 
 export function Wallet() {
   const { safeAddress, credentialId, balance, setBalance, setScreen } = useWalletStore();
-  const [hasPhone, setHasPhone] = useState<boolean | null>(null);
+  const [phones, setPhones] = useState<
+    Array<{
+      phone_hash_short: string;
+      first_bound_at: string;
+      latest_verified_at: string;
+      verification_count: number;
+    }>
+  >([]);
+  const [totalVerifications, setTotalVerifications] = useState<number>(0);
 
   useEffect(() => {
     if (!safeAddress) return;
@@ -55,7 +63,10 @@ export function Wallet() {
           });
         }
       }
-      if (!cancelled) setHasPhone(view ? view.has_phone : null);
+      if (!cancelled) {
+        setPhones(view?.phones ?? []);
+        setTotalVerifications(view?.verification?.count ?? 0);
+      }
     })();
     return () => {
       cancelled = true;
@@ -63,6 +74,13 @@ export function Wallet() {
   }, [credentialId]);
 
   if (!safeAddress) return null;
+
+  // Side-effect-free helper; hoisting into render is fine here.
+  function formatDate(iso: string): string {
+    const d = new Date(iso);
+    return isNaN(d.getTime()) ? iso : d.toISOString().slice(0, 10);
+  }
+  void formatDate;
 
   return (
     <div className="min-h-full flex flex-col px-6 max-w-md mx-auto">
@@ -89,19 +107,45 @@ export function Wallet() {
           </button>
         </div>
 
-        {hasPhone !== true && (
+        <section className="pt-2 space-y-3">
+          {phones.length > 0 && (
+            <div className="space-y-2">
+              <div className="text-xs uppercase tracking-widest text-gray-400 text-center">
+                Verifikacije telefona — {phones.length}{' '}
+                {phones.length === 1 ? 'broj' : 'broja'} · {totalVerifications}× ukupno
+              </div>
+              <ul className="space-y-1.5">
+                {phones.map((p) => (
+                  <li
+                    key={p.phone_hash_short}
+                    className="rounded-xl border border-gray-200 px-3 py-2 text-xs flex items-center justify-between gap-2"
+                  >
+                    <div className="font-mono text-gray-500">{p.phone_hash_short}</div>
+                    <div className="text-right text-gray-400 leading-tight">
+                      <div>
+                        <span className="font-semibold text-domovina-navy">
+                          {p.verification_count}×
+                        </span>
+                      </div>
+                      <div>
+                        {formatDate(p.first_bound_at)}
+                        {p.latest_verified_at !== p.first_bound_at && (
+                          <> → {formatDate(p.latest_verified_at)}</>
+                        )}
+                      </div>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
           <button
             onClick={() => setScreen('bind-phone')}
-            className="text-sm text-domovina-navy underline self-center"
+            className="block mx-auto text-sm text-domovina-navy underline"
           >
-            + Dodaj recovery telefon
+            {phones.length > 0 ? '+ Verificiraj telefon (isti ili novi)' : '+ Dodaj telefon'}
           </button>
-        )}
-        {hasPhone === true && (
-          <div className="text-xs text-center text-gray-400">
-            Recovery telefon povezan ✓
-          </div>
-        )}
+        </section>
       </main>
 
       <footer className="py-6 text-center text-xs text-gray-400">

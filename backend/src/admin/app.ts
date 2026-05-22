@@ -10,7 +10,12 @@ import {
   getMoneriumOrder,
 } from '../monerium/db';
 import { listIntents } from '../intents/db';
-import { countWallets, listWallets } from '../wallets/db';
+import {
+  countWallets,
+  listSybilClusters,
+  listWallets,
+  listWalletsSharingPhone,
+} from '../wallets/db';
 import { publicWalletView } from '../wallets/api';
 import {
   renderEventDetailPage,
@@ -19,6 +24,7 @@ import {
   renderIntentsPage,
   renderOrderDetailPage,
   renderOrdersPage,
+  renderSybilPage,
   renderWalletsPage,
 } from './views';
 
@@ -141,5 +147,22 @@ export function mountAdminUi(app: Hono<{ Bindings: Env }>): void {
       offset,
       rows: filtered.map(publicWalletView),
     });
+  });
+
+  // Sybil dashboard — phone hashes held by 2+ distinct wallets. Surfaces the
+  // many-to-many wallet_phone_bindings duplicates that Phase 4a-fix made
+  // queryable. Each row drills down to the wallets sharing that phone.
+  app.get('/admin/sybil', (c) => c.html(renderSybilPage()));
+  app.get('/admin/api/sybil', async (c) => {
+    const limit = Math.min(Math.max(Number(c.req.query('limit')) || 50, 1), 500);
+    const offset = Math.max(Number(c.req.query('offset')) || 0, 0);
+    const clusters = await listSybilClusters(c.env, { limit, offset });
+    return c.json({ limit, offset, clusters });
+  });
+  app.get('/admin/api/sybil/phone/:phoneHash', async (c) => {
+    const phoneHash = c.req.param('phoneHash');
+    if (!/^[0-9a-fA-F]{64}$/.test(phoneHash)) return c.json({ error: 'bad_phone_hash' }, 400);
+    const wallets = await listWalletsSharingPhone(c.env, phoneHash);
+    return c.json({ phone_hash: phoneHash, wallets });
   });
 }

@@ -68,6 +68,10 @@ export async function getWalletsByPhoneHash(
   return res.results ?? [];
 }
 
+/// Legacy convenience: keeps `wallet_registry.phone_hash` and `phone_bound_at`
+/// in sync as a denormalized "latest phone bound to this wallet" cache for
+/// admin UI rendering and the `has_phone` boolean. The source of truth for
+/// per-phone history is `wallet_phone_bindings` — see `upsertPhoneBinding`.
 export async function bindPhone(
   env: Env,
   credentialId: string,
@@ -82,6 +86,135 @@ export async function bindPhone(
     .bind(phoneHash, now, credentialId)
     .run();
   return (res.meta.changes ?? 0) > 0;
+}
+
+/// Upsert a (credential_id, phone_hash) row in wallet_phone_bindings.
+/// If the pair exists: bump verification_count and refresh latest_verified_at.
+/// If new: insert with count=1 and both timestamps = now.
+/// This is the source of truth for "phones this wallet has verified."
+export async function upsertPhoneBinding(
+  env: Env,
+  credentialId: string,
+  phoneHash: string,
+): Promise<{ isNewPhone: boolean; verificationCount: number; firstBoundAt: number; latestVerifiedAt: number }> {
+  const now = Math.floor(Date.now() / 1000);
+  const existing = await env.DB.prepare(
+    `SELECT first_bound_at, verification_count FROM wallet_phone_bindings
+      WHERE credential_id = ? AND phone_hash = ?`,
+  )
+    .bind(credentialId, phoneHash)
+    .first<{ first_bound_at: number; verification_count: number }>();
+
+  if (existing) {
+    const nextCount = existing.verification_count + 1;
+    await env.DB.prepare(
+      `UPDATE wallet_phone_bindings
+          SET verification_count = ?, latest_verified_at = ?
+        WHERE credential_id = ? AND phone_hash = ?`,
+    )
+      .bind(nextCount, now, credentialId, phoneHash)
+      .run();
+    return {
+      isNewPhone: false,
+      verificationCount: nextCount,
+      firstBoundAt: existing.first_bound_at,
+      latestVerifiedAt: now,
+    };
+  }
+
+  await env.DB.prepare(
+    `INSERT INTO wallet_phone_bindings
+       (credential_id, phone_hash, first_bound_at, latest_verified_at, verification_count)
+     VALUES (?, ?, ?, ?, 1)`,
+  )
+    .bind(credentialId, phoneHash, now, now)
+    .run();
+  return { isNewPhone: true, verificationCount: 1, firstBoundAt: now, latestVerifiedAt: now };
+}
+
+export interface PhoneBindingRow {
+  phone_hash: string;
+  first_bound_at: number;
+  latest_verified_at: number;
+  verification_count: number;
+}
+
+export async function listPhoneBindingsForCredential(
+  env: Env,
+  credentialId: string,
+): Promise<PhoneBindingRow[]> {
+  const res = await env.DB.prepare(
+    `SELECT phone_hash, first_bound_at, latest_verified_at, verification_count
+       FROM wallet_phone_bindings
+      WHERE credential_id = ?
+      ORDER BY first_bound_at ASC`,
+  )
+    .bind(credentialId)
+    .all<PhoneBindingRow>();
+  return res.results ?? [];
+}
+
+/// "Are any of this wallet's phones shared with another wallet?" — used for
+/// the admin sybil flag in the wallets list. Returns the count of OTHER
+/// wallets that share at least one phone hash with this one.
+export async function countSybilNeighbors(
+  env: Env,
+  credentialId: string,
+): Promise<number> {
+  const row = await env.DB.prepare(
+    `SELECT COUNT(DISTINCT b2.credential_id) AS c
+       FROM wallet_phone_bindings b1
+       JOIN wallet_phone_bindings b2 ON b1.phone_hash = b2.phone_hash
+      WHERE b1.credential_id = ? AND b2.credential_id != ?`,
+  )
+    .bind(credentialId, credentialId)
+    .first<{ c: number }>();
+  return row?.c ?? 0;
+}
+
+export interface SybilCluster {
+  phone_hash: string;
+  wallet_count: number;
+  first_bound_at: number;
+  latest_verified_at: number;
+}
+
+/// Admin sybil dashboard: phone hashes held by 2+ wallets, with metadata.
+export async function listSybilClusters(
+  env: Env,
+  args: { limit: number; offset: number },
+): Promise<SybilCluster[]> {
+  const res = await env.DB.prepare(
+    `SELECT
+        phone_hash,
+        COUNT(*) AS wallet_count,
+        MIN(first_bound_at) AS first_bound_at,
+        MAX(latest_verified_at) AS latest_verified_at
+       FROM wallet_phone_bindings
+      GROUP BY phone_hash
+      HAVING COUNT(*) > 1
+      ORDER BY wallet_count DESC, latest_verified_at DESC
+      LIMIT ? OFFSET ?`,
+  )
+    .bind(args.limit, args.offset)
+    .all<SybilCluster>();
+  return res.results ?? [];
+}
+
+/// List of wallets sharing a given phone hash (for sybil cluster drill-down).
+export async function listWalletsSharingPhone(
+  env: Env,
+  phoneHash: string,
+): Promise<{ credential_id: string; first_bound_at: number; latest_verified_at: number; verification_count: number }[]> {
+  const res = await env.DB.prepare(
+    `SELECT credential_id, first_bound_at, latest_verified_at, verification_count
+       FROM wallet_phone_bindings
+      WHERE phone_hash = ?
+      ORDER BY first_bound_at ASC`,
+  )
+    .bind(phoneHash)
+    .all<{ credential_id: string; first_bound_at: number; latest_verified_at: number; verification_count: number }>();
+  return res.results ?? [];
 }
 
 export interface ListWalletsArgs {

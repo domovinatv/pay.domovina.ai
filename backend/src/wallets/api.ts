@@ -5,8 +5,11 @@ import {
   bindPhone,
   getVerificationStats,
   getWalletByCredentialId,
+  listPhoneBindingsForCredential,
   markOtpConsumed,
   registerWallet,
+  upsertPhoneBinding,
+  type PhoneBindingRow,
 } from './db';
 import { fetchOtpVerification, hashPhone } from './otp';
 
@@ -85,8 +88,15 @@ export function buildWalletApi(): Hono<{ Bindings: Env }> {
     if (!HEX_RE.test(credentialId)) return c.json({ error: 'invalid_credential_id' }, 400);
     const row = await getWalletByCredentialId(c.env, credentialId);
     if (!row) return c.json({ error: 'not_found' }, 404);
-    const stats = await getVerificationStats(c.env, credentialId);
-    return c.json({ ...publicWalletView(row), verification: viewStats(stats) });
+    const [stats, phones] = await Promise.all([
+      getVerificationStats(c.env, credentialId),
+      listPhoneBindingsForCredential(c.env, credentialId),
+    ]);
+    return c.json({
+      ...publicWalletView(row),
+      verification: viewStats(stats),
+      phones: phones.map(viewPhoneBinding),
+    });
   });
 
   api.post('/:credentialId/bind-phone', async (c) => {
@@ -129,12 +139,26 @@ export function buildWalletApi(): Hono<{ Bindings: Env }> {
     if (!consumed) return c.json({ error: 'otp_already_used' }, 409);
 
     const phoneHash = await hashPhone(c.env, otp.verified_phone);
-    const updated = await bindPhone(c.env, credentialId, phoneHash);
-    if (!updated) return c.json({ error: 'wallet_unchanged' }, 500);
+    // Upsert the many-to-many binding (source of truth for per-phone history)
+    // and refresh the legacy denormalized cache on wallet_registry so
+    // existing admin UI rendering keeps working.
+    const binding = await upsertPhoneBinding(c.env, credentialId, phoneHash);
+    await bindPhone(c.env, credentialId, phoneHash);
 
     const row = await getWalletByCredentialId(c.env, credentialId);
-    const stats = await getVerificationStats(c.env, credentialId);
-    return c.json({ ...publicWalletView(row), verification: viewStats(stats) });
+    const [stats, phones] = await Promise.all([
+      getVerificationStats(c.env, credentialId),
+      listPhoneBindingsForCredential(c.env, credentialId),
+    ]);
+    return c.json({
+      ...publicWalletView(row),
+      verification: viewStats(stats),
+      phones: phones.map(viewPhoneBinding),
+      last_binding: {
+        is_new_phone: binding.isNewPhone,
+        verification_count: binding.verificationCount,
+      },
+    });
   });
 
   return api;
@@ -169,6 +193,18 @@ function viewStats(stats: { count: number; first_at: number | null; latest_at: n
     count: stats.count,
     first_at: stats.first_at ? isoFromUnix(stats.first_at) : null,
     latest_at: stats.latest_at ? isoFromUnix(stats.latest_at) : null,
+  };
+}
+
+/// Per-phone binding view shape. phone_hash is exposed only as a short hex
+/// prefix so it's identifiable in the UI without leaking the full hash to
+/// casual page-source inspectors. Full hash is still server-side.
+function viewPhoneBinding(b: PhoneBindingRow) {
+  return {
+    phone_hash_short: b.phone_hash.slice(0, 10) + '…' + b.phone_hash.slice(-6),
+    first_bound_at: isoFromUnix(b.first_bound_at),
+    latest_verified_at: isoFromUnix(b.latest_verified_at),
+    verification_count: b.verification_count,
   };
 }
 

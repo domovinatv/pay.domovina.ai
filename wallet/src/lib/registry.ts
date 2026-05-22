@@ -1,6 +1,13 @@
 import type { Address } from 'viem';
 import { PAYMENT_INTENT_API_BASE } from './constants';
 
+export type PhoneBindingView = {
+  phone_hash_short: string;
+  first_bound_at: string;
+  latest_verified_at: string;
+  verification_count: number;
+};
+
 export type WalletRegistryView = {
   credential_id: string;
   signer_address: Address;
@@ -9,6 +16,16 @@ export type WalletRegistryView = {
   has_phone: boolean;
   created_at: string;
   phone_bound_at: string | null;
+  verification?: {
+    count: number;
+    first_at: string | null;
+    latest_at: string | null;
+  };
+  phones?: PhoneBindingView[];
+  last_binding?: {
+    is_new_phone: boolean;
+    verification_count: number;
+  };
 };
 
 /**

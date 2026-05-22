@@ -175,7 +175,7 @@ footer {
 
 interface ShellOptions {
   title: string;
-  tab: 'events' | 'orders' | 'forwards' | 'intents' | 'wallets';
+  tab: 'events' | 'orders' | 'forwards' | 'intents' | 'wallets' | 'sybil';
   body: string;
 }
 
@@ -287,6 +287,7 @@ function renderShell({ title, tab, body }: ShellOptions): string {
     : tab === 'orders' ? 'Monerium orders'
     : tab === 'forwards' ? 'Safe forwards'
     : tab === 'wallets' ? 'Self-custody wallets'
+    : tab === 'sybil' ? 'Sybil dashboard'
     : 'Payment intents';
   return `<!doctype html>
 <html lang="hr">
@@ -315,6 +316,7 @@ ${TOAST_JS}
   ${t('forwards', 'Safe forwards', '/admin/forwards')}
   ${t('intents', 'Payment intents', '/admin/intents')}
   ${t('wallets', 'Wallets', '/admin/wallets')}
+  ${t('sybil', 'Sybil', '/admin/sybil')}
 </nav>
 <main>${body}</main>
 <footer>
@@ -1107,6 +1109,98 @@ document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && modal.st
 
 load();
 </script>`;
+
+export function renderSybilPage(): string {
+  const body = `
+<h1>Sybil dashboard</h1>
+<p class="dim" style="margin-top:-.5rem;margin-bottom:1rem;font-size:.9rem">
+  Telefonski hash-evi koje dijeli 2+ različita walleta. Legitiman ali rijedak
+  scenario je migracija wallet-a istog vlasnika (raniji wallet → noviji). Klaster s
+  3+ walleta u kratkom vremenskom prozoru je tipičan sybil signal — provjeri u
+  drill-downu da li djeluje organski.
+</p>
+<div class="controls">
+  <button type="button" id="refresh">↻ Osvježi</button>
+</div>
+<div class="table-wrap">
+  <table>
+    <thead>
+      <tr>
+        <th>Phone hash</th>
+        <th>Walleti</th>
+        <th>Prvo bound</th>
+        <th>Zadnja verifikacija</th>
+      </tr>
+    </thead>
+    <tbody id="rows"><tr><td colspan="4" class="empty">Učitavam…</td></tr></tbody>
+  </table>
+</div>
+<div id="drill" style="margin-top:1.5rem"></div>
+
+<script>
+function esc(s) { return String(s).replace(/[&<>"']/g, c =>
+  ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+function fmt(iso) {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return iso;
+  return d.toISOString().slice(0,19).replace("T"," ");
+}
+function shortHash(h) { return h.slice(0, 10) + "…" + h.slice(-6); }
+
+async function loadClusters() {
+  const res = await fetch('/admin/api/sybil');
+  if (!res.ok) {
+    document.getElementById('rows').innerHTML =
+      '<tr><td colspan="4" class="empty">Greška: ' + res.status + '</td></tr>';
+    return;
+  }
+  const data = await res.json();
+  const tbody = document.getElementById('rows');
+  if (!data.clusters || data.clusters.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="4" class="empty">Nema sybil klastera (svi telefoni su unikatni po walletu).</td></tr>';
+    return;
+  }
+  let html = '';
+  for (const c of data.clusters) {
+    const fb = new Date(c.first_bound_at * 1000).toISOString();
+    const lv = new Date(c.latest_verified_at * 1000).toISOString();
+    html += '<tr style="cursor:pointer" onclick="drill(\\'' + esc(c.phone_hash) + '\\')">' +
+      '<td class="mono">' + esc(shortHash(c.phone_hash)) + '</td>' +
+      '<td><span class="pill warn">' + c.wallet_count + '</span></td>' +
+      '<td class="mono dim">' + esc(fmt(fb)) + '</td>' +
+      '<td class="mono dim">' + esc(fmt(lv)) + '</td>' +
+      '</tr>';
+  }
+  tbody.innerHTML = html;
+}
+
+async function drill(phoneHash) {
+  const res = await fetch('/admin/api/sybil/phone/' + encodeURIComponent(phoneHash));
+  const data = await res.json();
+  const wallets = data.wallets || [];
+  let html = '<h2 style="font-size:1.05rem;color:var(--navy);margin:0 0 .6rem">Walleti dijele ' + esc(shortHash(phoneHash)) + '</h2>';
+  html += '<table><thead><tr><th>Credential</th><th>Prvi bind</th><th>Zadnja verif.</th><th>Count</th></tr></thead><tbody>';
+  for (const w of wallets) {
+    const fb = new Date(w.first_bound_at * 1000).toISOString();
+    const lv = new Date(w.latest_verified_at * 1000).toISOString();
+    html += '<tr>' +
+      '<td class="mono dim">' + esc(w.credential_id.slice(0,10) + '…' + w.credential_id.slice(-6)) + '</td>' +
+      '<td class="mono dim">' + esc(fmt(fb)) + '</td>' +
+      '<td class="mono dim">' + esc(fmt(lv)) + '</td>' +
+      '<td>' + w.verification_count + '</td>' +
+      '</tr>';
+  }
+  html += '</tbody></table>';
+  document.getElementById('drill').innerHTML = html;
+  document.getElementById('drill').scrollIntoView({ behavior: 'smooth' });
+}
+
+document.getElementById('refresh').addEventListener('click', loadClusters);
+loadClusters();
+</script>`;
+  return renderShell({ title: 'Sybil dashboard', tab: 'sybil', body });
+}
 
 export function renderWalletsPage(): string {
   const body = `
