@@ -12,38 +12,65 @@ type Props = {
 type ScanState = 'idle' | 'starting' | 'scanning' | 'denied' | 'no-camera' | 'error';
 
 export function ScannerSheet({ open, onOpenChange, onResult }: Props) {
-  const videoRef = useRef<HTMLVideoElement>(null);
-  const scannerRef = useRef<QrScanner | null>(null);
+  // Stash the result callback in a ref so the effect that owns the scanner
+  // does not re-run every time the parent re-renders (which it does — Send
+  // re-renders on every keystroke, and the parent passes a fresh inline
+  // function each time).
+  const onResultRef = useRef(onResult);
+  useEffect(() => {
+    onResultRef.current = onResult;
+  }, [onResult]);
+
   const [state, setState] = useState<ScanState>('idle');
   const [errMsg, setErrMsg] = useState<string>('');
 
+  // The video element is owned by the Radix portal — use a callback ref so
+  // we get notified the moment it mounts and unmounts. A plain useRef +
+  // [open] effect can fire before the portaled <video> is in the DOM.
+  const videoElRef = useRef<HTMLVideoElement | null>(null);
+  const scannerRef = useRef<QrScanner | null>(null);
+
   useEffect(() => {
     if (!open) {
-      scannerRef.current?.stop();
-      scannerRef.current?.destroy();
+      // Sheet closed → tear scanner down cleanly.
+      const s = scannerRef.current;
       scannerRef.current = null;
+      if (s) {
+        s.stop();
+        s.destroy();
+      }
       setState('idle');
+      setErrMsg('');
       return;
     }
-    if (!videoRef.current) return;
-
+    // Sheet just opened. The video element may or may not be attached yet —
+    // we kick off camera bring-up in a tick so Radix has time to portal the
+    // content into the DOM, and so the slide-up animation does not clash
+    // with iOS Safari's compositing of <video> inside an animated container.
     let cancelled = false;
     setState('starting');
+    setErrMsg('');
 
-    (async () => {
+    const startWhenReady = async (attempts = 0) => {
+      if (cancelled) return;
+      const videoEl = videoElRef.current;
+      if (!videoEl) {
+        if (attempts > 40) return; // ~2s budget, then give up silently
+        setTimeout(() => startWhenReady(attempts + 1), 50);
+        return;
+      }
       try {
         const hasCamera = await QrScanner.hasCamera();
+        if (cancelled) return;
         if (!hasCamera) {
-          if (!cancelled) setState('no-camera');
+          setState('no-camera');
           return;
         }
-        if (!videoRef.current) return;
         const scanner = new QrScanner(
-          videoRef.current,
+          videoEl,
           (result) => {
-            // Stop immediately so we don't fire onResult multiple times.
             scanner.stop();
-            onResult(result.data);
+            onResultRef.current(result.data);
           },
           {
             highlightScanRegion: true,
@@ -54,42 +81,77 @@ export function ScannerSheet({ open, onOpenChange, onResult }: Props) {
         );
         scannerRef.current = scanner;
         await scanner.start();
-        if (!cancelled) setState('scanning');
+        // Some iOS Safari builds need an explicit play() nudge once the
+        // stream is attached, otherwise the <video> stays paused/black even
+        // though the camera is running.
+        try {
+          await videoEl.play();
+        } catch {
+          /* ignore — start() already invoked play() */
+        }
+        if (cancelled) {
+          scanner.stop();
+          scanner.destroy();
+          scannerRef.current = null;
+          return;
+        }
+        setState('scanning');
       } catch (e) {
         if (cancelled) return;
         const msg = e instanceof Error ? e.message : String(e);
-        if (/permission|denied|notallowed/i.test(msg)) {
+        if (/permission|denied|notallowed|not allowed/i.test(msg)) {
           setState('denied');
         } else {
           setState('error');
           setErrMsg(msg);
         }
       }
-    })();
+    };
+
+    startWhenReady();
 
     return () => {
       cancelled = true;
-      scannerRef.current?.stop();
-      scannerRef.current?.destroy();
+      const s = scannerRef.current;
       scannerRef.current = null;
+      if (s) {
+        s.stop();
+        s.destroy();
+      }
     };
-  }, [open, onResult]);
+    // Intentionally only `open` — onResult is stashed in a ref so the
+    // scanner is created exactly once per open/close cycle.
+  }, [open]);
 
   return (
-    <Sheet open={open} onOpenChange={onOpenChange} title="Skeniraj QR" description="Usmjeri kameru na QR drugog wallet-a">
+    <Sheet
+      open={open}
+      onOpenChange={onOpenChange}
+      title="Skeniraj QR"
+      description="Usmjeri kameru na QR drugog wallet-a"
+    >
       <div className="flex flex-col gap-4">
         <div className="relative aspect-square rounded-2xl overflow-hidden bg-black ring-1 ring-surface-border">
-          {/* The qr-scanner lib draws its own scan-region overlay; we just provide
-              the video element + a centered fallback when camera is unavailable. */}
-          <video ref={videoRef} className="absolute inset-0 w-full h-full object-cover" muted playsInline />
+          <video
+            ref={(el) => {
+              videoElRef.current = el;
+            }}
+            className="absolute inset-0 w-full h-full object-cover"
+            muted
+            playsInline
+            autoPlay
+          />
           {state !== 'scanning' && (
-            <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-black/60 text-white px-6 text-center">
-              {state === 'starting' && (
+            <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-black/70 text-white px-6 text-center">
+              {state === 'idle' || state === 'starting' ? (
                 <>
                   <ScanLine className="h-10 w-10 animate-pulse" />
                   <p className="text-sm">Pokrećem kameru…</p>
+                  <p className="text-xs opacity-70 max-w-xs">
+                    Ako se ne pojavi slika, dozvoli kameru kad Safari pita.
+                  </p>
                 </>
-              )}
+              ) : null}
               {state === 'no-camera' && (
                 <>
                   <CameraOff className="h-10 w-10 opacity-80" />
@@ -100,8 +162,8 @@ export function ScannerSheet({ open, onOpenChange, onResult }: Props) {
                 <>
                   <CameraOff className="h-10 w-10 opacity-80" />
                   <p className="text-sm">
-                    Pristup kameri je odbijen. Dozvoli kameru u postavkama preglednika
-                    pa pokušaj ponovno.
+                    Pristup kameri je odbijen. Dozvoli kameru u postavkama Safarija pa
+                    pokušaj ponovno.
                   </p>
                 </>
               )}
