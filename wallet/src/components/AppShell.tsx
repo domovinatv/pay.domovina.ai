@@ -8,8 +8,15 @@ import { useWalletStore } from '../state/store';
 const BACK_LABELS: Record<string, string> = {
   '/receive': 'Primi',
   '/send': 'Pošalji',
+  '/settings': 'Postavke',
   '/settings/phone': 'Telefon',
 };
+
+// /settings/phone goes back to /settings; everything else back to /.
+function backTargetFor(path: string): string {
+  if (path === '/settings/phone') return '/settings';
+  return '/';
+}
 
 type Props = {
   children: ReactNode;
@@ -37,9 +44,7 @@ export function AppShell({ children }: Props) {
           </div>
           <div className="flex items-center gap-1">
             <ThemeToggle />
-            <IconButton aria-label="Postavke" variant="ghost" size="md" disabled title="Postavke (Phase 6)">
-              <Settings />
-            </IconButton>
+            <SettingsLink active={location.startsWith('/settings')} />
           </div>
         </div>
       </header>
@@ -69,13 +74,27 @@ function BackButton({ currentPath }: { currentPath: string }) {
   return (
     <button
       type="button"
-      onClick={() => setLocation('/')}
+      onClick={() => setLocation(backTargetFor(currentPath))}
       className="inline-flex items-center gap-1.5 rounded-pill px-2 py-1.5 text-sm font-medium text-ink-secondary hover:text-ink-primary hover:bg-surface-sunken transition"
     >
       <ArrowLeft className="h-4 w-4" />
       <span className="hidden sm:inline">Natrag</span>
       {label && <span className="text-ink-muted">· {label}</span>}
     </button>
+  );
+}
+
+function SettingsLink({ active }: { active: boolean }) {
+  const [, setLocation] = useLocation();
+  return (
+    <IconButton
+      aria-label="Postavke"
+      variant={active ? 'soft' : 'ghost'}
+      size="md"
+      onClick={() => setLocation('/settings')}
+    >
+      <Settings />
+    </IconButton>
   );
 }
 

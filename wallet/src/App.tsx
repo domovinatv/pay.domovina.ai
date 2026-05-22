@@ -6,6 +6,7 @@ import { Wallet } from './routes/Wallet';
 import { Receive } from './routes/Receive';
 import { Send } from './routes/Send';
 import { BindPhone } from './routes/BindPhone';
+import { Settings } from './routes/Settings';
 import { UiPreview } from './routes/UiPreview';
 import { BuildInfoFooter } from './components/BuildInfoFooter';
 
@@ -29,6 +30,7 @@ export function App() {
               <Route path="/" component={Wallet} />
               <Route path="/receive" component={Receive} />
               <Route path="/send" component={Send} />
+              <Route path="/settings" component={Settings} />
               <Route path="/settings/phone" component={BindPhone} />
               <Route component={Wallet} />
             </Switch>
