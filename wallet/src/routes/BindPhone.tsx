@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
+import { ArrowLeft, MessageSquare, ShieldCheck, RefreshCw } from 'lucide-react';
 import { BrandHeader } from '../components/Brand';
+import { Button, Card, Section, StatusPill } from '../ui';
 import { useWalletStore } from '../state/store';
 import { otpQrUrl, startOtpVerification, subscribeOtp, type OtpPollResponse } from '../lib/otp';
 import {
@@ -54,7 +56,7 @@ export function BindPhone() {
     }
     setStage({ kind: 'binding' });
 
-    // Backward compat: walletovi kreirani prije Phase 3 nisu u registry-u.
+    // Backward compat: pre-Phase 3 walletovi nisu u registry-u.
     // Ensure-aj registraciju prije bind-phone calla — inače backend vraća
     // wallet_not_found i OTP verification je već "consumed".
     const existing = await lookupWallet(credentialId);
@@ -101,23 +103,34 @@ export function BindPhone() {
       <BrandHeader />
 
       <main className="flex-1 flex flex-col gap-6">
-        <button onClick={() => setScreen('wallet')} className="self-start text-sm text-gray-500">
-          ← natrag
-        </button>
+        <Button
+          onClick={() => setScreen('wallet')}
+          variant="ghost"
+          size="sm"
+          className="self-start"
+        >
+          <ArrowLeft className="h-4 w-4" />
+          Natrag
+        </Button>
 
-        <section className="card space-y-4">
-          <h2 className="text-xl font-semibold">Recovery telefon</h2>
-          <p className="text-sm text-gray-500">
-            Poveži broj mobitela kako bi mogao vratiti pristup walletu ako izgubiš ovaj uređaj.
-            Šaljemo ti SMS upute, ali <strong>ti šalješ SMS našem broju</strong> — tako da se
-            dokaže da kontroliraš taj telefon. Mi nikad ne čuvamo tvoj broj u našoj bazi, samo
-            njegov hash.
-          </p>
-
+        <Section
+          title="Recovery telefon"
+          description="Ti šalješ SMS našem broju — tako se dokaže da kontroliraš telefon. Mi čuvamo samo hash, ne broj."
+        >
           {stage.kind === 'idle' && (
-            <button onClick={start} className="btn-primary w-full">
-              Pokreni verifikaciju
-            </button>
+            <Card className="flex flex-col gap-4">
+              <div className="flex items-start gap-3">
+                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-surface-sunken text-brand-navy-500">
+                  <ShieldCheck className="h-5 w-5" />
+                </div>
+                <p className="text-sm text-ink-secondary">
+                  Poveži broj mobitela kako bi mogao vratiti pristup walletu ako izgubiš ovaj uređaj.
+                </p>
+              </div>
+              <Button onClick={start} size="xl" block>
+                Pokreni verifikaciju
+              </Button>
+            </Card>
           )}
 
           {stage.kind === 'sms-sent' && (
@@ -125,51 +138,54 @@ export function BindPhone() {
           )}
 
           {stage.kind === 'verified' && (
-            <div className="text-sm text-green-700 bg-green-50 rounded-xl p-3 text-center">
-              SMS primljen. Spremam…
-            </div>
+            <Card padding="md" className="flex items-center justify-center gap-2">
+              <StatusPill tone="info" dot pulse>SMS primljen</StatusPill>
+              <span className="text-sm text-ink-secondary">spremam…</span>
+            </Card>
           )}
 
           {stage.kind === 'binding' && (
-            <div className="text-sm text-gray-500 bg-gray-50 rounded-xl p-3 text-center">
-              Vezivanje broja za wallet…
-            </div>
+            <Card padding="md" className="flex items-center justify-center gap-2">
+              <RefreshCw className="h-4 w-4 animate-spin text-ink-muted" />
+              <span className="text-sm text-ink-secondary">Vežem broj za wallet…</span>
+            </Card>
           )}
 
           {stage.kind === 'success' && (
-            <div className="space-y-3">
-              <div className="text-sm text-green-700 bg-green-50 rounded-xl p-3 text-center">
-                Telefon povezan ✓<br />
-                <span className="font-mono text-xs">{stage.phone}</span>
+            <Card padding="lg" elevation="elevated" className="flex flex-col items-center gap-4 border-emerald-200 dark:border-emerald-900/40">
+              <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-emerald-50 text-emerald-600 dark:bg-emerald-900/30 dark:text-emerald-300">
+                <ShieldCheck className="h-6 w-6" />
               </div>
-              <button onClick={() => setScreen('wallet')} className="btn-primary w-full">
+              <div className="text-center">
+                <p className="font-semibold text-ink-primary">Telefon povezan</p>
+                <p className="font-mono text-sm text-ink-secondary">{stage.phone}</p>
+              </div>
+              <Button onClick={() => setScreen('wallet')} size="lg" block>
                 Natrag na wallet
-              </button>
-            </div>
+              </Button>
+            </Card>
           )}
 
           {stage.kind === 'expired' && (
-            <div className="space-y-3">
-              <div className="text-sm text-domovina-red bg-red-50 rounded-xl p-3 text-center">
-                Verifikacija je istekla.
-              </div>
-              <button onClick={start} className="btn-primary w-full">
+            <Card className="flex flex-col gap-3">
+              <p className="text-sm text-ink-secondary text-center">Verifikacija je istekla.</p>
+              <Button onClick={start} size="lg" block>
                 Pokušaj ponovno
-              </button>
-            </div>
+              </Button>
+            </Card>
           )}
 
           {stage.kind === 'error' && (
-            <div className="space-y-3">
-              <div className="text-sm text-domovina-red bg-red-50 rounded-xl p-3 text-center">
+            <Card className="flex flex-col gap-3 border-brand-red-500/40">
+              <p className="text-sm text-brand-red-700 text-center" role="alert">
                 {stage.message}
-              </div>
-              <button onClick={start} className="btn-primary w-full">
+              </p>
+              <Button onClick={start} size="lg" block>
                 Pokušaj ponovno
-              </button>
-            </div>
+              </Button>
+            </Card>
           )}
-        </section>
+        </Section>
       </main>
     </div>
   );
@@ -178,30 +194,50 @@ export function BindPhone() {
 function SmsInstructions({ verification }: { verification: OtpPollResponse }) {
   const smsUri = `sms:${verification.gateway_number}?body=${encodeURIComponent(verification.code)}`;
   return (
-    <div className="space-y-4">
-      <div className="rounded-2xl bg-gray-50 p-4 space-y-2">
-        <div className="text-xs uppercase tracking-widest text-gray-400">SMS na broj</div>
-        <div className="font-mono text-lg font-semibold">{verification.gateway_number}</div>
-        <div className="text-xs uppercase tracking-widest text-gray-400 pt-2">Tekst poruke</div>
-        <div className="font-mono text-3xl font-bold tracking-widest text-center py-2">
-          {verification.code}
+    <div className="flex flex-col gap-4">
+      <Card padding="lg" elevation="elevated" className="flex flex-col gap-5">
+        <div className="flex items-center justify-center">
+          <StatusPill tone="warning" dot pulse>
+            Čekam SMS…
+          </StatusPill>
         </div>
-      </div>
 
-      <a href={smsUri} className="btn-primary w-full">
-        Otvori SMS aplikaciju
-      </a>
+        <div className="flex flex-col items-center gap-1">
+          <span className="text-[11px] uppercase tracking-widest text-ink-muted">Pošalji SMS na</span>
+          <a
+            href={`tel:${verification.gateway_number}`}
+            className="font-mono text-xl font-semibold text-ink-primary tabular"
+          >
+            {verification.gateway_number}
+          </a>
+        </div>
 
-      <details className="text-xs text-gray-500">
+        <div className="flex flex-col items-center gap-1">
+          <span className="text-[11px] uppercase tracking-widest text-ink-muted">Tekst poruke</span>
+          <div className="font-mono text-3xl font-bold tracking-[0.2em] text-ink-primary tabular">
+            {verification.code}
+          </div>
+        </div>
+
+        <a
+          href={smsUri}
+          className="inline-flex items-center justify-center gap-2 rounded-2xl bg-brand-navy-700 hover:bg-brand-navy-600 dark:bg-brand-navy-400 dark:text-brand-navy-900 dark:hover:bg-brand-navy-300 text-white font-semibold px-6 py-4 text-base shadow-card active:scale-[0.97] transition"
+        >
+          <MessageSquare className="h-5 w-5" />
+          Otvori SMS aplikaciju
+        </a>
+      </Card>
+
+      <details className="text-xs text-ink-muted">
         <summary className="cursor-pointer text-center">Na desktopu? Skeniraj QR mobitelom</summary>
         <div className="mt-3 flex justify-center">
-          <img src={otpQrUrl(verification.id)} alt="OTP QR" className="w-48 h-48" />
+          <img
+            src={otpQrUrl(verification.id)}
+            alt="OTP QR"
+            className="w-48 h-48 rounded-2xl bg-white p-2"
+          />
         </div>
       </details>
-
-      <div className="text-xs text-center text-gray-400">
-        Čekamo SMS… Status se osvježava automatski.
-      </div>
     </div>
   );
 }

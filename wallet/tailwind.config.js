@@ -41,11 +41,6 @@ export default {
           muted: 'rgb(var(--ink-muted) / <alpha-value>)',
           inverse: 'rgb(var(--ink-inverse) / <alpha-value>)',
         },
-        // Legacy alias kept so existing routes keep building until migrated.
-        domovina: {
-          navy: '#002F6C',
-          red: '#FF0000',
-        },
       },
       fontFamily: {
         sans: ['system-ui', '-apple-system', 'BlinkMacSystemFont', 'Segoe UI', 'sans-serif'],

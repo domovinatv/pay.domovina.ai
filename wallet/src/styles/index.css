@@ -65,21 +65,3 @@
   }
 }
 
-@layer components {
-  /* Legacy classes — still used by existing routes (Landing/Wallet/Receive/Send/BindPhone).
-     Will be removed once each route migrates to <Button>/<Card> primitives. */
-  .btn-primary {
-    @apply inline-flex items-center justify-center gap-2 rounded-2xl bg-domovina-navy text-white
-           font-semibold px-6 py-4 text-lg shadow-md active:scale-[0.98] transition
-           disabled:opacity-50 disabled:cursor-not-allowed;
-  }
-
-  .btn-secondary {
-    @apply inline-flex items-center justify-center gap-2 rounded-2xl border-2 border-domovina-navy
-           text-domovina-navy font-semibold px-6 py-3 active:scale-[0.98] transition;
-  }
-
-  .card {
-    @apply rounded-3xl bg-white border border-gray-200 shadow-sm p-6;
-  }
-}
