@@ -1,7 +1,6 @@
 import { useRef, useState } from 'react';
 import { parseUnits, encodeFunctionData, erc20Abi, isAddress, type Address } from 'viem';
-import { ArrowLeft, ClipboardPaste, ExternalLink, Fingerprint } from 'lucide-react';
-import { BrandHeader } from '../components/Brand';
+import { ClipboardPaste, ExternalLink, Fingerprint } from 'lucide-react';
 import {
   AddressInput,
   Button,
@@ -19,7 +18,7 @@ import { getActivePasskey, signWithPasskey } from '../lib/passkey';
 import { relayTx } from '../lib/relay';
 
 export function Send() {
-  const { safeAddress, credentialId, signerAddress, setScreen } = useWalletStore();
+  const { safeAddress, credentialId, signerAddress } = useWalletStore();
   const { toast } = useToast();
   const [to, setTo] = useState('');
   const [amount, setAmount] = useState('');
@@ -132,96 +131,86 @@ export function Send() {
   }
 
   return (
-    <div className="min-h-full flex flex-col px-6 max-w-md mx-auto">
-      <BrandHeader />
-
-      <main className="flex-1 flex flex-col gap-6">
-        <Button
-          onClick={() => setScreen('wallet')}
-          variant="ghost"
-          size="sm"
-          className="self-start"
-        >
-          <ArrowLeft className="h-4 w-4" />
-          Natrag
-        </Button>
-
-        <Section title="Pošalji EURe" description="Na Gnosis Chain, bez gas-a za tebe">
-          <Card className="flex flex-col gap-5">
-            <Field
-              label="Primatelj"
-              hint="Gnosis Chain · EVM adresa"
-              error={!addressLooksValid ? 'Adresa nije valjana' : undefined}
-            >
-              {() => (
-                <AddressInput
-                  value={to}
-                  onChange={(e) => setTo(e.target.value)}
-                  invalid={!addressLooksValid}
-                  trailing={
-                    <IconButton aria-label="Zalijepi" size="sm" variant="ghost" onClick={paste}>
-                      <ClipboardPaste />
-                    </IconButton>
-                  }
-                />
-              )}
-            </Field>
-
-            <Field
-              label="Iznos (EURe)"
-              error={!amountValid ? 'Iznos mora biti veći od 0' : undefined}
-            >
-              {(id) => (
-                <Input
-                  id={id}
-                  type="number"
-                  inputMode="decimal"
-                  value={amount}
-                  onChange={(e) => setAmount(e.target.value)}
-                  min="0"
-                  step="0.01"
-                  invalid={!amountValid}
-                  className="text-2xl font-semibold tabular text-center"
-                  placeholder="0,00"
-                />
-              )}
-            </Field>
-
-            <Button onClick={send} disabled={!valid || busy} size="xl" block>
-              <Fingerprint className="h-5 w-5" />
-              {busy ? 'Potpisujem & šaljem…' : 'Potpiši s Face ID i pošalji'}
-            </Button>
-
-            {error && (
-              <p className="text-sm text-brand-red-700 text-center" role="alert">
-                {error}
-              </p>
+    <div className="flex flex-col gap-6">
+      <Section title="Pošalji EURe" description="Na Gnosis Chain, bez gas-a za tebe">
+        <Card className="flex flex-col gap-5">
+          <Field
+            label="Primatelj"
+            hint="Gnosis Chain · EVM adresa"
+            error={!addressLooksValid ? 'Adresa nije valjana' : undefined}
+          >
+            {() => (
+              <AddressInput
+                value={to}
+                onChange={(e) => setTo(e.target.value)}
+                invalid={!addressLooksValid}
+                trailing={
+                  <IconButton aria-label="Zalijepi" size="sm" variant="ghost" onClick={paste}>
+                    <ClipboardPaste />
+                  </IconButton>
+                }
+              />
             )}
-          </Card>
-        </Section>
+          </Field>
 
-        {txHash && (
-          <Card padding="md" elevation="elevated" className="flex flex-col gap-3 border-emerald-200 dark:border-emerald-900/40">
-            <div className="text-center">
-              <p className="font-semibold text-ink-primary">Poslano ✓</p>
-              <p className="text-sm text-ink-secondary">{amount} EURe → {shortAddr(to)}</p>
-            </div>
-            <a
-              href={`https://gnosisscan.io/tx/${txHash}`}
-              target="_blank"
-              rel="noreferrer"
-              className="inline-flex items-center justify-center gap-2 rounded-2xl border border-surface-border bg-surface-sunken px-4 py-3 text-sm font-medium text-ink-primary hover:bg-surface-muted transition"
-            >
-              Pogledaj na Gnosisscan
-              <ExternalLink className="h-4 w-4" />
-            </a>
-          </Card>
-        )}
+          <Field
+            label="Iznos (EURe)"
+            error={!amountValid ? 'Iznos mora biti veći od 0' : undefined}
+          >
+            {(id) => (
+              <Input
+                id={id}
+                type="number"
+                inputMode="decimal"
+                value={amount}
+                onChange={(e) => setAmount(e.target.value)}
+                min="0"
+                step="0.01"
+                invalid={!amountValid}
+                className="text-2xl font-semibold tabular text-center"
+                placeholder="0,00"
+              />
+            )}
+          </Field>
 
-        <p className="text-xs text-center text-ink-muted">
-          xDAI gas plaćamo mi · 5 besplatnih transakcija dnevno
-        </p>
-      </main>
+          <Button onClick={send} disabled={!valid || busy} size="xl" block>
+            <Fingerprint className="h-5 w-5" />
+            {busy ? 'Potpisujem & šaljem…' : 'Potpiši s Face ID i pošalji'}
+          </Button>
+
+          {error && (
+            <p className="text-sm text-brand-red-700 text-center" role="alert">
+              {error}
+            </p>
+          )}
+        </Card>
+      </Section>
+
+      {txHash && (
+        <Card
+          padding="md"
+          elevation="elevated"
+          className="flex flex-col gap-3 border-emerald-200 dark:border-emerald-900/40"
+        >
+          <div className="text-center">
+            <p className="font-semibold text-ink-primary">Poslano ✓</p>
+            <p className="text-sm text-ink-secondary">{amount} EURe → {shortAddr(to)}</p>
+          </div>
+          <a
+            href={`https://gnosisscan.io/tx/${txHash}`}
+            target="_blank"
+            rel="noreferrer"
+            className="inline-flex items-center justify-center gap-2 rounded-2xl border border-surface-border bg-surface-sunken px-4 py-3 text-sm font-medium text-ink-primary hover:bg-surface-muted transition"
+          >
+            Pogledaj na Gnosisscan
+            <ExternalLink className="h-4 w-4" />
+          </a>
+        </Card>
+      )}
+
+      <p className="text-xs text-center text-ink-muted">
+        xDAI gas plaćamo mi · 5 besplatnih transakcija dnevno
+      </p>
     </div>
   );
 }

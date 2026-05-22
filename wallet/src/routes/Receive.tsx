@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import QRCodeStyling from 'qr-code-styling';
-import { ArrowLeft, Copy, Check, ScanLine } from 'lucide-react';
-import { BrandHeader } from '../components/Brand';
+import { Copy, Check, ScanLine } from 'lucide-react';
 import {
   Button,
   Card,
@@ -12,6 +11,7 @@ import {
   StatusPill,
   useToast,
 } from '../ui';
+import { useTheme } from '../lib/theme';
 import { useWalletStore } from '../state/store';
 import {
   createPaymentIntent,
@@ -23,8 +23,9 @@ import {
 const AMOUNT_PRESETS = ['10', '25', '50', '100'];
 
 export function Receive() {
-  const { safeAddress, setScreen } = useWalletStore();
+  const { safeAddress } = useWalletStore();
   const { toast } = useToast();
+  const { resolved } = useTheme();
   const [amount, setAmount] = useState('10');
   const [intent, setIntent] = useState<PaymentIntent | null>(null);
   const [busy, setBusy] = useState(false);
@@ -57,6 +58,8 @@ export function Receive() {
   useEffect(() => {
     if (!intent || !qrRef.current) return;
     qrRef.current.innerHTML = '';
+    // QR always rendered on a white card with dark dots — even in dark mode
+    // the QR card stays light so phone scanners read it reliably.
     new QRCodeStyling({
       width: 320,
       height: 320,
@@ -65,110 +68,92 @@ export function Receive() {
       dotsOptions: { color: '#002F6C', type: 'square' },
       backgroundOptions: { color: '#ffffff' },
     }).append(qrRef.current);
-  }, [intent?.epc_qr_data]);
+  }, [intent?.epc_qr_data, resolved]);
 
   return (
-    <div className="min-h-full flex flex-col px-6 max-w-md mx-auto">
-      <BrandHeader />
-
-      <main className="flex-1 flex flex-col gap-6">
-        <Button
-          onClick={() => setScreen('wallet')}
-          variant="ghost"
-          size="sm"
-          className="self-start"
+    <div className="flex flex-col gap-6">
+      {!intent ? (
+        <Section
+          title="Top-up"
+          description="Plati SEPA prijenosom → dobiješ EURe na svoj wallet"
         >
-          <ArrowLeft className="h-4 w-4" />
-          Natrag
-        </Button>
-
-        {!intent ? (
-          <Section
-            title="Top-up"
-            description="Plati SEPA prijenosom → dobiješ EURe na svoj wallet"
-          >
-            <Card className="flex flex-col gap-5">
-              <Field label="Iznos u EUR">
-                {(id) => (
-                  <Input
-                    id={id}
-                    type="number"
-                    inputMode="decimal"
-                    value={amount}
-                    onChange={(e) => setAmount(e.target.value)}
-                    min="1"
-                    step="1"
-                    className="text-2xl font-semibold tabular text-center"
-                  />
-                )}
-              </Field>
-
-              <div className="flex flex-wrap gap-2 justify-center">
-                {AMOUNT_PRESETS.map((preset) => (
-                  <button
-                    key={preset}
-                    type="button"
-                    onClick={() => setAmount(preset)}
-                    className={
-                      'rounded-pill px-3 py-1 text-sm font-medium transition ' +
-                      (amount === preset
-                        ? 'bg-brand-navy-700 text-white'
-                        : 'bg-surface-sunken text-ink-secondary hover:bg-surface-muted')
-                    }
-                  >
-                    {preset} €
-                  </button>
-                ))}
-              </div>
-
-              <Button onClick={createIntent} disabled={busy || !amount} size="xl" block>
-                {busy ? 'Generiram…' : 'Generiraj QR'}
-              </Button>
-
-              {error && (
-                <p className="text-sm text-brand-red-700 text-center" role="alert">
-                  {error}
-                </p>
+          <Card className="flex flex-col gap-5">
+            <Field label="Iznos u EUR">
+              {(id) => (
+                <Input
+                  id={id}
+                  type="number"
+                  inputMode="decimal"
+                  value={amount}
+                  onChange={(e) => setAmount(e.target.value)}
+                  min="1"
+                  step="1"
+                  className="text-2xl font-semibold tabular text-center"
+                />
               )}
-            </Card>
-          </Section>
-        ) : (
-          <div className="flex flex-col gap-4">
-            <div className="flex justify-center">
-              <IntentStatusPill state={intent.state} />
+            </Field>
+
+            <div className="flex flex-wrap gap-2 justify-center">
+              {AMOUNT_PRESETS.map((preset) => (
+                <button
+                  key={preset}
+                  type="button"
+                  onClick={() => setAmount(preset)}
+                  className={
+                    'rounded-pill px-3 py-1 text-sm font-medium transition ' +
+                    (amount === preset
+                      ? 'bg-brand-navy-700 text-white dark:bg-brand-navy-400 dark:text-brand-navy-900'
+                      : 'bg-surface-sunken text-ink-secondary hover:bg-surface-muted')
+                  }
+                >
+                  {preset} €
+                </button>
+              ))}
             </div>
 
-            <Card padding="lg" elevation="elevated" className="flex flex-col items-center gap-4">
-              <div className="flex items-center gap-2 text-sm text-ink-secondary">
-                <ScanLine className="h-4 w-4" />
-                Skeniraj u Revolutu / banci
-              </div>
-              <div ref={qrRef} className="rounded-2xl overflow-hidden bg-white p-2" />
-              <div className="text-4xl font-semibold tabular text-ink-primary">
-                {Number(intent.amount_eur).toFixed(2)} <span className="text-xl text-ink-muted">EUR</span>
-              </div>
-            </Card>
-
-            <Section title="Detalji uplate">
-              <Card padding="md" className="flex flex-col divide-y divide-surface-border">
-                <DetailRow label="Primatelj" value={intent.beneficiary_name} onCopied={toast} />
-                <DetailRow label="IBAN" value={intent.iban} mono onCopied={toast} />
-                <DetailRow label="BIC" value={intent.bic} mono onCopied={toast} />
-                <DetailRow label="Opis plaćanja" value={intent.memo} mono onCopied={toast} />
-              </Card>
-            </Section>
-
-            <Button
-              onClick={() => setIntent(null)}
-              variant="ghost"
-              size="md"
-              block
-            >
-              Kreiraj novi nalog
+            <Button onClick={createIntent} disabled={busy || !amount} size="xl" block>
+              {busy ? 'Generiram…' : 'Generiraj QR'}
             </Button>
+
+            {error && (
+              <p className="text-sm text-brand-red-700 text-center" role="alert">
+                {error}
+              </p>
+            )}
+          </Card>
+        </Section>
+      ) : (
+        <div className="flex flex-col gap-4">
+          <div className="flex justify-center">
+            <IntentStatusPill state={intent.state} />
           </div>
-        )}
-      </main>
+
+          <Card padding="lg" elevation="elevated" className="flex flex-col items-center gap-4">
+            <div className="flex items-center gap-2 text-sm text-ink-secondary">
+              <ScanLine className="h-4 w-4" />
+              Skeniraj u Revolutu / banci
+            </div>
+            <div ref={qrRef} className="rounded-2xl overflow-hidden bg-white p-2" />
+            <div className="text-4xl font-semibold tabular text-ink-primary">
+              {Number(intent.amount_eur).toFixed(2)}{' '}
+              <span className="text-xl text-ink-muted">EUR</span>
+            </div>
+          </Card>
+
+          <Section title="Detalji uplate">
+            <Card padding="md" className="flex flex-col divide-y divide-surface-border">
+              <DetailRow label="Primatelj" value={intent.beneficiary_name} onCopied={toast} />
+              <DetailRow label="IBAN" value={intent.iban} mono onCopied={toast} />
+              <DetailRow label="BIC" value={intent.bic} mono onCopied={toast} />
+              <DetailRow label="Opis plaćanja" value={intent.memo} mono onCopied={toast} />
+            </Card>
+          </Section>
+
+          <Button onClick={() => setIntent(null)} variant="ghost" size="md" block>
+            Kreiraj novi nalog
+          </Button>
+        </div>
+      )}
     </div>
   );
 }
