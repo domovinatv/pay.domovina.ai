@@ -433,6 +433,28 @@ Restated from ADR 0001 to make the boundary crisp:
   sybil-resistance signal. Compromise costs reputation integrity; it
   does not cost users any custody.
 
+## Amendment 2026-05-22 — verifier custody under reconsideration
+
+After this ADR was accepted Matija raised the option of running the
+verifier as a small signing service on a **physical machine in his
+office** (Raspberry Pi-class), with the CF Worker calling out to it
+over a Cloudflare Tunnel to sign each claim authorization. The
+private key would never live in any cloud service.
+
+This is a refinement of section "5c (Backend verifier signing)" only;
+the contract design, claim flow, combinatorics handling, and all
+self-custody hard rules in this ADR are unaffected.
+
+The choice between the two custody paths is to be made at the moment
+Phase 5c implementation begins, not now. The relevant memory entry is
+`[[project-phase5-hardware-verifier-intention]]`, which lists six
+sub-questions that must be resolved before code lands. If the
+hardware path is taken, an ADR 0004 codifying it is to be written
+before any implementation; if the CF Worker path is taken anyway,
+the reasoning must be documented as an amendment here.
+
+Do not skip this re-evaluation at Phase 5c kickoff.
+
 ## References
 
 - ADR 0001 — `docs/decisions/0001-no-server-side-recovery.md`
