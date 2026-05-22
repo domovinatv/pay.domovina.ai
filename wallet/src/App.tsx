@@ -1,4 +1,6 @@
+import { Route, Switch } from 'wouter';
 import { useWalletStore } from './state/store';
+import { AppShell } from './components/AppShell';
 import { Landing } from './routes/Landing';
 import { Wallet } from './routes/Wallet';
 import { Receive } from './routes/Receive';
@@ -7,30 +9,33 @@ import { BindPhone } from './routes/BindPhone';
 import { UiPreview } from './routes/UiPreview';
 import { BuildInfoFooter } from './components/BuildInfoFooter';
 
-// Temporary preview escape hatch — Phase 0 design system gallery.
-// Phase 1 will introduce a real router (wouter); this check goes away then.
-const isPreview =
-  typeof window !== 'undefined' &&
-  (window.location.pathname.startsWith('/ui-preview') ||
-    window.location.search.includes('ui=preview'));
-
 export function App() {
-  const screen = useWalletStore((s) => s.screen);
   const safeAddress = useWalletStore((s) => s.safeAddress);
 
-  if (isPreview) return <UiPreview />;
-
-  let route;
-  if (!safeAddress) route = <Landing />;
-  else if (screen === 'receive') route = <Receive />;
-  else if (screen === 'send') route = <Send />;
-  else if (screen === 'bind-phone') route = <BindPhone />;
-  else route = <Wallet />;
-
   return (
-    <>
-      {route}
-      <BuildInfoFooter />
-    </>
+    <Switch>
+      {/* Design system gallery — always reachable */}
+      <Route path="/ui-preview" component={UiPreview} />
+
+      <Route>
+        {!safeAddress ? (
+          <>
+            <Landing />
+            <BuildInfoFooter />
+          </>
+        ) : (
+          <AppShell>
+            <Switch>
+              <Route path="/" component={Wallet} />
+              <Route path="/receive" component={Receive} />
+              <Route path="/send" component={Send} />
+              <Route path="/settings/phone" component={BindPhone} />
+              <Route component={Wallet} />
+            </Switch>
+            <BuildInfoFooter />
+          </AppShell>
+        )}
+      </Route>
+    </Switch>
   );
 }

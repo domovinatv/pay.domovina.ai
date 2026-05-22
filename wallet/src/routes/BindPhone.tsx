@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
-import { ArrowLeft, MessageSquare, ShieldCheck, RefreshCw } from 'lucide-react';
-import { BrandHeader } from '../components/Brand';
+import { useLocation } from 'wouter';
+import { MessageSquare, ShieldCheck, RefreshCw } from 'lucide-react';
 import { Button, Card, Section, StatusPill } from '../ui';
 import { useWalletStore } from '../state/store';
 import { otpQrUrl, startOtpVerification, subscribeOtp, type OtpPollResponse } from '../lib/otp';
@@ -22,7 +22,8 @@ type Stage =
   | { kind: 'error'; message: string };
 
 export function BindPhone() {
-  const { credentialId, setScreen } = useWalletStore();
+  const { credentialId } = useWalletStore();
+  const [, setLocation] = useLocation();
   const [stage, setStage] = useState<Stage>({ kind: 'idle' });
   const stopRef = useRef<(() => void) | null>(null);
 
@@ -99,95 +100,83 @@ export function BindPhone() {
   }
 
   return (
-    <div className="min-h-full flex flex-col px-6 max-w-md mx-auto">
-      <BrandHeader />
+    <Section
+      title="Recovery telefon"
+      description="Ti šalješ SMS našem broju — tako se dokaže da kontroliraš telefon. Mi čuvamo samo hash, ne broj."
+    >
+      {stage.kind === 'idle' && (
+        <Card className="flex flex-col gap-4">
+          <div className="flex items-start gap-3">
+            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-surface-sunken text-brand-navy-500">
+              <ShieldCheck className="h-5 w-5" />
+            </div>
+            <p className="text-sm text-ink-secondary">
+              Poveži broj mobitela kako bi mogao vratiti pristup walletu ako izgubiš ovaj uređaj.
+            </p>
+          </div>
+          <Button onClick={start} size="xl" block>
+            Pokreni verifikaciju
+          </Button>
+        </Card>
+      )}
 
-      <main className="flex-1 flex flex-col gap-6">
-        <Button
-          onClick={() => setScreen('wallet')}
-          variant="ghost"
-          size="sm"
-          className="self-start"
+      {stage.kind === 'sms-sent' && <SmsInstructions verification={stage.verification} />}
+
+      {stage.kind === 'verified' && (
+        <Card padding="md" className="flex items-center justify-center gap-2">
+          <StatusPill tone="info" dot pulse>
+            SMS primljen
+          </StatusPill>
+          <span className="text-sm text-ink-secondary">spremam…</span>
+        </Card>
+      )}
+
+      {stage.kind === 'binding' && (
+        <Card padding="md" className="flex items-center justify-center gap-2">
+          <RefreshCw className="h-4 w-4 animate-spin text-ink-muted" />
+          <span className="text-sm text-ink-secondary">Vežem broj za wallet…</span>
+        </Card>
+      )}
+
+      {stage.kind === 'success' && (
+        <Card
+          padding="lg"
+          elevation="elevated"
+          className="flex flex-col items-center gap-4 border-emerald-200 dark:border-emerald-900/40"
         >
-          <ArrowLeft className="h-4 w-4" />
-          Natrag
-        </Button>
+          <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-emerald-50 text-emerald-600 dark:bg-emerald-900/30 dark:text-emerald-300">
+            <ShieldCheck className="h-6 w-6" />
+          </div>
+          <div className="text-center">
+            <p className="font-semibold text-ink-primary">Telefon povezan</p>
+            <p className="font-mono text-sm text-ink-secondary">{stage.phone}</p>
+          </div>
+          <Button onClick={() => setLocation('/')} size="lg" block>
+            Natrag na wallet
+          </Button>
+        </Card>
+      )}
 
-        <Section
-          title="Recovery telefon"
-          description="Ti šalješ SMS našem broju — tako se dokaže da kontroliraš telefon. Mi čuvamo samo hash, ne broj."
-        >
-          {stage.kind === 'idle' && (
-            <Card className="flex flex-col gap-4">
-              <div className="flex items-start gap-3">
-                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-surface-sunken text-brand-navy-500">
-                  <ShieldCheck className="h-5 w-5" />
-                </div>
-                <p className="text-sm text-ink-secondary">
-                  Poveži broj mobitela kako bi mogao vratiti pristup walletu ako izgubiš ovaj uređaj.
-                </p>
-              </div>
-              <Button onClick={start} size="xl" block>
-                Pokreni verifikaciju
-              </Button>
-            </Card>
-          )}
+      {stage.kind === 'expired' && (
+        <Card className="flex flex-col gap-3">
+          <p className="text-sm text-ink-secondary text-center">Verifikacija je istekla.</p>
+          <Button onClick={start} size="lg" block>
+            Pokušaj ponovno
+          </Button>
+        </Card>
+      )}
 
-          {stage.kind === 'sms-sent' && (
-            <SmsInstructions verification={stage.verification} />
-          )}
-
-          {stage.kind === 'verified' && (
-            <Card padding="md" className="flex items-center justify-center gap-2">
-              <StatusPill tone="info" dot pulse>SMS primljen</StatusPill>
-              <span className="text-sm text-ink-secondary">spremam…</span>
-            </Card>
-          )}
-
-          {stage.kind === 'binding' && (
-            <Card padding="md" className="flex items-center justify-center gap-2">
-              <RefreshCw className="h-4 w-4 animate-spin text-ink-muted" />
-              <span className="text-sm text-ink-secondary">Vežem broj za wallet…</span>
-            </Card>
-          )}
-
-          {stage.kind === 'success' && (
-            <Card padding="lg" elevation="elevated" className="flex flex-col items-center gap-4 border-emerald-200 dark:border-emerald-900/40">
-              <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-emerald-50 text-emerald-600 dark:bg-emerald-900/30 dark:text-emerald-300">
-                <ShieldCheck className="h-6 w-6" />
-              </div>
-              <div className="text-center">
-                <p className="font-semibold text-ink-primary">Telefon povezan</p>
-                <p className="font-mono text-sm text-ink-secondary">{stage.phone}</p>
-              </div>
-              <Button onClick={() => setScreen('wallet')} size="lg" block>
-                Natrag na wallet
-              </Button>
-            </Card>
-          )}
-
-          {stage.kind === 'expired' && (
-            <Card className="flex flex-col gap-3">
-              <p className="text-sm text-ink-secondary text-center">Verifikacija je istekla.</p>
-              <Button onClick={start} size="lg" block>
-                Pokušaj ponovno
-              </Button>
-            </Card>
-          )}
-
-          {stage.kind === 'error' && (
-            <Card className="flex flex-col gap-3 border-brand-red-500/40">
-              <p className="text-sm text-brand-red-700 text-center" role="alert">
-                {stage.message}
-              </p>
-              <Button onClick={start} size="lg" block>
-                Pokušaj ponovno
-              </Button>
-            </Card>
-          )}
-        </Section>
-      </main>
-    </div>
+      {stage.kind === 'error' && (
+        <Card className="flex flex-col gap-3 border-brand-red-500/40">
+          <p className="text-sm text-brand-red-700 text-center" role="alert">
+            {stage.message}
+          </p>
+          <Button onClick={start} size="lg" block>
+            Pokušaj ponovno
+          </Button>
+        </Card>
+      )}
+    </Section>
   );
 }
 
