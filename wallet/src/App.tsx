@@ -4,14 +4,23 @@ import { Wallet } from './routes/Wallet';
 import { Receive } from './routes/Receive';
 import { Send } from './routes/Send';
 import { BindPhone } from './routes/BindPhone';
+import { BuildInfoFooter } from './components/BuildInfoFooter';
 
 export function App() {
   const screen = useWalletStore((s) => s.screen);
   const safeAddress = useWalletStore((s) => s.safeAddress);
 
-  if (!safeAddress) return <Landing />;
-  if (screen === 'receive') return <Receive />;
-  if (screen === 'send') return <Send />;
-  if (screen === 'bind-phone') return <BindPhone />;
-  return <Wallet />;
+  let route;
+  if (!safeAddress) route = <Landing />;
+  else if (screen === 'receive') route = <Receive />;
+  else if (screen === 'send') route = <Send />;
+  else if (screen === 'bind-phone') route = <BindPhone />;
+  else route = <Wallet />;
+
+  return (
+    <>
+      {route}
+      <BuildInfoFooter />
+    </>
+  );
 }

@@ -3,8 +3,34 @@ import react from '@vitejs/plugin-react';
 import { VitePWA } from 'vite-plugin-pwa';
 import { nodePolyfills } from 'vite-plugin-node-polyfills';
 import path from 'node:path';
+import { execSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
+
+// Resolve build-time identifiers so the deployed PWA can show users which
+// build they're looking at. Helps confirm whether a hard-refresh actually
+// picked up the latest deploy.
+const pkg = JSON.parse(readFileSync(path.resolve(__dirname, 'package.json'), 'utf8')) as {
+  version: string;
+};
+function gitShortHash(): string {
+  try {
+    return execSync('git rev-parse --short=8 HEAD', { stdio: ['ignore', 'pipe', 'ignore'] })
+      .toString()
+      .trim();
+  } catch {
+    return 'unknown';
+  }
+}
+const BUILD_VERSION = pkg.version;
+const BUILD_COMMIT = gitShortHash();
+const BUILD_TIME = new Date().toISOString();
 
 export default defineConfig({
+  define: {
+    __APP_VERSION__: JSON.stringify(BUILD_VERSION),
+    __APP_COMMIT__: JSON.stringify(BUILD_COMMIT),
+    __APP_BUILD_TIME__: JSON.stringify(BUILD_TIME),
+  },
   plugins: [
     react(),
     // @safe-global/protocol-kit pulls in Buffer + process — polyfill for browser.
