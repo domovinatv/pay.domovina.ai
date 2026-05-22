@@ -14,3 +14,5 @@ export { AddressChip } from './AddressChip';
 export type { AddressChipProps } from './AddressChip';
 export { BalanceDisplay } from './BalanceDisplay';
 export type { BalanceDisplayProps } from './BalanceDisplay';
+export { SegmentedControl } from './SegmentedControl';
+export type { SegmentedControlProps, SegmentedOption } from './SegmentedControl';
