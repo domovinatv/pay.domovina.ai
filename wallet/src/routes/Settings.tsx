@@ -27,6 +27,7 @@ const ADR_LINKS = [
   { id: '0001', title: 'Self-custody principle', slug: 'no-server-side-recovery' },
   { id: '0002', title: 'Onchain phone attestation', slug: 'phase-5-onchain-phone-attestation' },
   { id: '0003', title: 'PhoneSBT contract design', slug: 'phase-5-sbt-design' },
+  { id: '0004', title: 'Android verifier custody', slug: 'phase-5c-android-verifier' },
 ];
 
 type PhoneSummary = {

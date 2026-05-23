@@ -205,6 +205,7 @@ Iz `safe-global/safe-modules-deployments` v0.2.1:
 - [0001 — No server-side recovery (self-custody principle)](../docs/decisions/0001-no-server-side-recovery.md)
 - [0002 — Phase 5 onchain phone attestation](../docs/decisions/0002-phase-5-onchain-phone-attestation.md)
 - [0003 — Phase 5 PhoneSBT contract design](../docs/decisions/0003-phase-5-sbt-design.md)
+- [0004 — Phase 5c Android verifier custody](../docs/decisions/0004-phase-5c-android-verifier.md)
 
 ## Roadmap
 
