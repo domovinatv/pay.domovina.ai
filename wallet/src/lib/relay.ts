@@ -34,3 +34,32 @@ export async function relayTx(req: RelayRequest): Promise<RelayResponse> {
   }
   return (await res.json()) as RelayResponse;
 }
+
+export type RelayStatus = {
+  signerAddress: Address;
+  used: number;
+  remaining: number;
+  limit: number;
+  /** UTC midnight ISO when the counter resets. */
+  resetsAt: string;
+  /** Seconds remaining until reset. */
+  resetsInSec: number;
+};
+
+/**
+ * Fetch the current free-tier usage for the given signer. Backed by the
+ * same KV key the POST handler increments, so the answer is authoritative
+ * across tabs and devices. Safe to call on Send mount + a 60s tick.
+ */
+export async function getRelayStatus(signerAddress: Address): Promise<RelayStatus | null> {
+  try {
+    const res = await fetch(
+      `/api/relay/status?signerAddress=${encodeURIComponent(signerAddress)}`,
+      { cache: 'no-store' },
+    );
+    if (!res.ok) return null;
+    return (await res.json()) as RelayStatus;
+  } catch {
+    return null;
+  }
+}
