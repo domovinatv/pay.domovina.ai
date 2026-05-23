@@ -94,10 +94,14 @@ export async function buildReceiptPng(input: ReceiptInput): Promise<Blob> {
   ctx.fillStyle = '#FFFFFF';
   ctx.font = `700 30px ${FONT_DISPLAY}`;
   ctx.textAlign = 'left';
+  // Measure the brand wordmark in its own font BEFORE we switch fonts so we
+  // can place "WALLET" right after it with a fixed visual gap. Previously
+  // hard-coded at PADDING + 145 which overlapped on bolder font fallbacks.
+  const domWidth = ctx.measureText('DOMOVINA').width;
   ctx.fillText('DOMOVINA', PADDING, HEADER_H / 2 - 4);
   ctx.font = `500 14px ${FONT_DISPLAY}`;
   ctx.fillStyle = 'rgba(255,255,255,0.7)';
-  ctx.fillText('WALLET', PADDING + 145, HEADER_H / 2 - 4);
+  ctx.fillText('WALLET', PADDING + domWidth + 14, HEADER_H / 2 - 4);
 
   ctx.fillStyle = 'rgba(255,255,255,0.85)';
   ctx.font = `500 18px ${FONT_DISPLAY}`;
