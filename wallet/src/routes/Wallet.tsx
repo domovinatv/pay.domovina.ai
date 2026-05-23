@@ -29,24 +29,39 @@ export function Wallet() {
     if (!safeAddress) return;
     let cancelled = false;
     let tickCount = 0;
+    // The previous numeric balance from the LAST successful tick. We use it
+    // to detect "money moved" and bump the activity feed immediately —
+    // otherwise activity could lag by up to 20s behind a balance change.
+    let lastNumeric: number | null = null;
     async function tick() {
       try {
         setRefreshing(true);
         const { formatted } = await getEureBalance(safeAddress!);
-        if (!cancelled) {
-          setBalance(formatted);
-          setLastSync(Date.now());
+        if (cancelled) return;
+
+        const nextNumeric = Number(formatted);
+        const balanceChanged =
+          lastNumeric !== null && Math.abs(nextNumeric - lastNumeric) > 0.0001;
+        lastNumeric = nextNumeric;
+
+        setBalance(formatted);
+        setLastSync(Date.now());
+
+        // Sync: if money arrived or left, refetch activity in the same
+        // moment — the user sees the new row appear together with the
+        // animated balance change instead of 20-30s later on the cadence.
+        if (balanceChanged) {
+          setActivityKey((k) => k + 1);
         }
       } catch {
         /* ignore — likely not yet deployed */
       } finally {
         if (!cancelled) setRefreshing(false);
       }
-      // Bump activity refetch every 3rd tick (~30s). On the very first call
-      // (tickCount===0) the ActivityFeed already kicks off its own first
-      // load, so we skip incrementing then.
+      // Slow periodic refresh as a safety net even when balance does not
+      // change (e.g. failed tx — gas was paid but value moved 0).
       tickCount += 1;
-      if (tickCount > 0 && tickCount % 3 === 0 && !cancelled) {
+      if (tickCount > 0 && tickCount % 6 === 0 && !cancelled) {
         setActivityKey((k) => k + 1);
       }
     }
@@ -96,7 +111,7 @@ export function Wallet() {
     <div className="flex flex-col gap-6">
       <Card padding="lg" elevation="elevated" className="flex flex-col gap-6">
         <BalanceDisplay
-          amount={balance === null ? null : formatBalance(balance)}
+          amount={balance === null ? null : Number(balance)}
           currency="EURe"
           lastUpdatedAgo={lastSync ? agoLabel(lastSync) : null}
           refreshing={refreshing}
@@ -193,15 +208,6 @@ export function Wallet() {
       </p>
     </div>
   );
-}
-
-function formatBalance(raw: string): string {
-  const n = Number(raw);
-  if (!isFinite(n)) return raw;
-  return n.toLocaleString('hr-HR', {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  });
 }
 
 function formatDate(iso: string): string {

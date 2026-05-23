@@ -59,7 +59,7 @@ export function UiPreview() {
         {/* Hero balance */}
         <Card padding="lg" elevation="elevated" className="flex flex-col gap-6">
           <BalanceDisplay
-            amount="1 234,56"
+            amount={1234.56}
             currency="EURe"
             lastUpdatedAgo="ažurirano prije 3 s"
           />
