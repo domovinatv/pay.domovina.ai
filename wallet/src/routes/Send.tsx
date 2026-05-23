@@ -23,7 +23,7 @@ import { addRecipient, listRecentRecipients, type Recipient } from '../lib/recip
 import { EURE_ADDRESS, EURE_DECIMALS } from '../lib/constants';
 import { encodeWebAuthnSignature, getSafeTxHash } from '../lib/safe';
 import { getActivePasskey, signWithPasskey } from '../lib/passkey';
-import { relayTx } from '../lib/relay';
+import { relayTx, getRelayStatus, type RelayStatus } from '../lib/relay';
 
 export function Send() {
   const { safeAddress, credentialId, signerAddress } = useWalletStore();
@@ -36,7 +36,34 @@ export function Send() {
   const [scanOpen, setScanOpen] = useState(false);
   const [bookOpen, setBookOpen] = useState(false);
   const [recents, setRecents] = useState<Recipient[]>(() => listRecentRecipients(5));
+  const [relayStatus, setRelayStatus] = useState<RelayStatus | null>(null);
+  const [, setNowTick] = useState(0); // re-render every minute for countdown
   const sendInFlightRef = useRef(false);
+
+  // Fetch relay free-tier counter on mount + every 60s + after each send.
+  useEffect(() => {
+    if (!signerAddress) return;
+    let cancelled = false;
+    async function fetchStatus() {
+      const status = await getRelayStatus(signerAddress!);
+      if (!cancelled && status) setRelayStatus(status);
+    }
+    fetchStatus();
+    const id = setInterval(() => {
+      fetchStatus();
+      setNowTick((t) => t + 1);
+    }, 60_000);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, [signerAddress]);
+
+  async function refreshRelayStatus() {
+    if (!signerAddress) return;
+    const status = await getRelayStatus(signerAddress);
+    if (status) setRelayStatus(status);
+  }
 
   // Filter out the current input value so we don't show "Nedavno" for the
   // address the user is already targeting.
@@ -110,7 +137,10 @@ export function Send() {
   const addressLooksValid = to.length === 0 || isAddress(to);
   const parsedAmount = parseAmount(amount);
   const amountShowsError = isAmountInvalidForDisplay(amount);
-  const valid = isAddress(to) && parsedAmount.ok;
+  // Treat unknown (status not yet loaded) as remaining > 0 so we never block
+  // a user before we even know the real count. Server enforces the hard limit.
+  const quotaExhausted = relayStatus !== null && relayStatus.remaining === 0;
+  const valid = isAddress(to) && parsedAmount.ok && !quotaExhausted;
   const amountErrorMsg = amountShowsError
     ? parsedAmount.ok
       ? undefined
@@ -214,6 +244,7 @@ export function Send() {
       setTxHash(result.txHash);
       addRecipient(to);
       setRecents(listRecentRecipients(5));
+      void refreshRelayStatus();
       toast({ variant: 'success', title: 'Poslano ✓', description: `${parsedAmount.normalized} EURe → ${shortAddr(to)}` });
     } catch (e) {
       console.error('[Send] FAILED', e);
@@ -323,9 +354,7 @@ export function Send() {
         </Card>
       )}
 
-      <p className="text-xs text-center text-ink-muted">
-        xDAI gas plaćamo mi · 5 besplatnih transakcija dnevno
-      </p>
+      <RelayQuotaBadge status={relayStatus} />
 
       <ScannerSheet open={scanOpen} onOpenChange={setScanOpen} onResult={handleScanResult} />
       <AddressBookSheet
@@ -347,4 +376,49 @@ function hexToBytes(hex: string): Uint8Array {
 function shortAddr(addr: string): string {
   if (!addr.startsWith('0x') || addr.length < 12) return addr;
   return `${addr.slice(0, 6)}…${addr.slice(-4)}`;
+}
+
+function RelayQuotaBadge({ status }: { status: RelayStatus | null }) {
+  if (!status) {
+    return (
+      <p className="text-xs text-center text-ink-muted">
+        xDAI gas plaćamo mi · 5 besplatnih transakcija dnevno
+      </p>
+    );
+  }
+  const exhausted = status.remaining === 0;
+  const reset = formatResetIn(status.resetsInSec);
+  return (
+    <div
+      className={
+        'flex flex-col items-center gap-1 text-xs ' +
+        (exhausted ? 'text-brand-red-700' : 'text-ink-muted')
+      }
+      aria-live="polite"
+    >
+      <span className="font-medium tabular">
+        {exhausted ? (
+          <>Iskorišten dnevni limit ({status.used}/{status.limit})</>
+        ) : (
+          <>
+            {status.remaining}/{status.limit} besplatnih danas
+          </>
+        )}
+      </span>
+      <span>
+        {exhausted ? 'Resetira se za ' : 'Resetira se za '}
+        <span className="tabular">{reset}</span> · xDAI gas plaćamo mi
+      </span>
+    </div>
+  );
+}
+
+function formatResetIn(seconds: number): string {
+  if (seconds <= 0) return 'sad';
+  if (seconds < 60) return `${seconds} s`;
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  if (h === 0) return `${m} min`;
+  if (m === 0) return `${h} h`;
+  return `${h} h ${m} min`;
 }
