@@ -149,7 +149,7 @@ function SepaReceive() {
       amountLine: `${Number(intent.amount_eur).toFixed(2)} EUR`,
       rows: [
         { label: 'Primatelj', value: intent.beneficiary_name },
-        { label: 'IBAN', value: intent.iban, mono: true },
+        { label: 'IBAN', value: formatIban(intent.iban), mono: true },
         { label: 'BIC', value: intent.bic, mono: true },
         { label: 'Opis plaćanja', value: intent.memo, mono: true },
         { label: 'Generirano', value: formatReceiptTime(intent.created_at) },
@@ -230,7 +230,13 @@ function SepaReceive() {
         <Section title="Detalji uplate">
           <Card padding="md" className="flex flex-col divide-y divide-surface-border">
             <DetailRow label="Primatelj" value={intent.beneficiary_name} onCopied={toast} />
-            <DetailRow label="IBAN" value={intent.iban} mono onCopied={toast} />
+            <DetailRow
+              label="IBAN"
+              value={intent.iban}
+              display={formatIban(intent.iban)}
+              mono
+              onCopied={toast}
+            />
             <DetailRow label="BIC" value={intent.bic} mono onCopied={toast} />
             <DetailRow label="Opis plaćanja" value={intent.memo} mono onCopied={toast} />
           </Card>
@@ -545,10 +551,21 @@ function IntentStatusPill({ state }: { state: IntentState }) {
 
 type DetailRowProps = {
   label: string;
+  /** Raw value used for clipboard copy. */
   value: string;
+  /** Optional human-readable form for display only (e.g. IBAN with spaces). */
+  display?: string;
   mono?: boolean;
   onCopied: ReturnType<typeof useToast>['toast'];
 };
+
+// Group IBAN digits 4-by-4 (standard IBAN formatting: EE24 7700 0771 0023 ...).
+// We get the raw form from the API and only space it out at display time —
+// the EPC QR payload and the clipboard-copy still use the unspaced form so
+// banks paste it cleanly.
+function formatIban(iban: string): string {
+  return iban.replace(/\s+/g, '').replace(/(.{4})/g, '$1 ').trim();
+}
 
 function downloadBlob(blob: Blob, filename: string): void {
   const url = URL.createObjectURL(blob);
@@ -561,11 +578,12 @@ function downloadBlob(blob: Blob, filename: string): void {
   setTimeout(() => URL.revokeObjectURL(url), 1500);
 }
 
-function DetailRow({ label, value, mono, onCopied }: DetailRowProps) {
+function DetailRow({ label, value, display, mono, onCopied }: DetailRowProps) {
   const [copied, setCopied] = useState(false);
 
   async function copy() {
     try {
+      // Always copy the canonical unspaced form, even when display is grouped.
       await navigator.clipboard.writeText(value);
       setCopied(true);
       onCopied({ variant: 'success', title: `${label} kopirano` });
@@ -584,7 +602,7 @@ function DetailRow({ label, value, mono, onCopied }: DetailRowProps) {
             'truncate text-sm text-ink-primary ' + (mono ? 'font-mono' : 'font-medium')
           }
         >
-          {value}
+          {display ?? value}
         </span>
       </div>
       <IconButton aria-label={`Kopiraj ${label}`} size="sm" variant="ghost" onClick={copy}>
