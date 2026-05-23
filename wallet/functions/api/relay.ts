@@ -188,14 +188,10 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
     const safeAddress = body.safeAddress as Address;
     const signerAddress = body.signerAddress as Address;
 
-    // Check deployment state of Safe + signer proxy. We need both to exist
-    // before execTransaction can verify the WebAuthn signature.
-    const [safeCode, signerCode] = await Promise.all([
-      publicClient.getCode({ address: safeAddress }),
-      publicClient.getCode({ address: signerAddress }),
-    ]);
-    const safeDeployed = !!safeCode && safeCode !== '0x';
-    const signerDeployed = !!signerCode && signerCode !== '0x';
+    // We no longer read getCode here as the primary deploy gate. The
+    // hot-first strategy below tries execTransaction first regardless,
+    // and only re-reads getCode if that fails — see the post-hot fallback
+    // for the reasoning.
 
     const execCalldata = encodeFunctionData({
       abi: SAFE_EXEC_TX_ABI,
@@ -214,7 +210,7 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
       ],
     });
 
-    let txHash: Hex;
+    let txHash: Hex | null = null;
     let deployed = false;
 
     async function sendHotPath(): Promise<Hex> {
@@ -273,46 +269,54 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
       });
     }
 
-    if (safeDeployed && signerDeployed) {
-      // Hot path: just submit the execTransaction directly.
+    // Hot-first strategy. We attempt the hot path (just execTransaction on
+    // the existing Safe) FIRST, regardless of what getCode said. Reasoning:
+    //
+    // - The public Gnosis RPC gateway fronts a fleet of nodes with eventual
+    //   consistency. getCode for an address can return empty while the
+    //   contract is in fact deployed and active. Picking the cold path
+    //   based on that empty reading then deploys-into-existing-CREATE2 and
+    //   the whole multiSend reverts with no decodable reason.
+    // - The hot path is cheap to fail: viem's sendTransaction estimates gas
+    //   first, which simulates the call. If the Safe truly does not exist
+    //   the simulation reverts fast and we fall through to the cold path
+    //   with confidence (now driven by a fresh getCode read).
+    // - The hot path is the steady-state branch anyway. Letting it lead
+    //   means a single stale getCode never traps a user.
+    let hotErr: unknown = null;
+    try {
       txHash = await sendHotPath();
-    } else {
-      // Cold path: batch what is missing (createSigner / createProxyWithNonce /
-      // execTransaction) through MultiSendCallOnly. Relayer pays gas for the
-      // whole batch.
-      try {
-        txHash = await sendColdPath(signerDeployed, safeDeployed);
-        deployed = true;
-      } catch (coldErr) {
-        // Cold-path revert often means the RPC returned stale empty code for
-        // an address that is actually deployed (eventual-consistency across
-        // gateway nodes). CREATE2 inside multiSend then collides and reverts.
-        // Re-poll code; if both ARE deployed now, retry as a clean hot path.
-        const [safeCode2, signerCode2] = await Promise.all([
-          publicClient.getCode({ address: safeAddress }),
-          publicClient.getCode({ address: signerAddress }),
-        ]);
-        const safeNow = !!safeCode2 && safeCode2 !== '0x';
-        const signerNow = !!signerCode2 && signerCode2 !== '0x';
-        if (safeNow && signerNow) {
-          console.warn(
-            '[relay] cold-path reverted but Safe + signer ARE deployed; retrying hot path',
-          );
-          txHash = await sendHotPath();
-        } else if (safeNow !== safeDeployed || signerNow !== signerDeployed) {
-          // Partial deploy state changed between the two reads — re-run cold
-          // path skipping whatever is now confirmed deployed.
-          console.warn(
-            `[relay] deployment state changed mid-flight (safe ${safeDeployed} -> ${safeNow}, signer ${signerDeployed} -> ${signerNow}); retrying cold path with refreshed skip flags`,
-          );
-          txHash = await sendColdPath(signerNow, safeNow);
-          deployed = true;
-        } else {
-          throw coldErr;
-        }
-      }
+    } catch (e) {
+      hotErr = e;
     }
 
+    if (hotErr) {
+      // Hot path failed. Re-check deployment with a fresh read; if both
+      // ARE deployed the failure is something other than missing-code
+      // (signature, calldata, nonce) and we must surface the hot error.
+      const [safeCode2, signerCode2] = await Promise.all([
+        publicClient.getCode({ address: safeAddress }),
+        publicClient.getCode({ address: signerAddress }),
+      ]);
+      const safeNow = !!safeCode2 && safeCode2 !== '0x';
+      const signerNow = !!signerCode2 && signerCode2 !== '0x';
+      if (safeNow && signerNow) {
+        // Both deployed; hot SHOULD have worked. Propagate.
+        throw hotErr;
+      }
+      // Genuinely missing deploy. Cold-path with the actually-missing pieces.
+      console.warn(
+        `[relay] hot failed and deployment incomplete (safe=${safeNow}, signer=${signerNow}); routing to cold path`,
+      );
+      txHash = await sendColdPath(signerNow, safeNow);
+      deployed = true;
+    }
+
+    if (!txHash) {
+      // Should be unreachable — either hot or cold assigns it before we get
+      // here. Defensive return in case the control flow ever changes.
+      return json({ ok: false, error: 'No transaction was submitted' }, 500);
+    }
     await env.RELAY_KV.put(rateKey, String(used + 1), { expirationTtl: 60 * 60 * 36 });
     return json({ ok: true, txHash, deployed });
   } catch (e) {
