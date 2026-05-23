@@ -386,6 +386,11 @@ function RelayQuotaBadge({ status }: { status: RelayStatus | null }) {
       </p>
     );
   }
+  // Bug previously: the label showed "5/5 besplatnih danas" for BOTH the
+  // fresh state (5 remaining of 5) and the exhausted state (5 used of 5),
+  // which read identically while meaning opposite things. The fix is to
+  // make the framing explicit: "Preostalo X od 5" when active, "Iskorišten
+  // dnevni limit · 5 od 5" when exhausted. Different words, no ambiguity.
   const exhausted = status.remaining === 0;
   const reset = formatResetIn(status.resetsInSec);
   return (
@@ -398,16 +403,13 @@ function RelayQuotaBadge({ status }: { status: RelayStatus | null }) {
     >
       <span className="font-medium tabular">
         {exhausted ? (
-          <>Iskorišten dnevni limit ({status.used}/{status.limit})</>
+          <>Iskorišten dnevni limit · {status.used} od {status.limit}</>
         ) : (
-          <>
-            {status.remaining}/{status.limit} besplatnih danas
-          </>
+          <>Preostalo {status.remaining} od {status.limit} besplatnih</>
         )}
       </span>
       <span>
-        {exhausted ? 'Resetira se za ' : 'Resetira se za '}
-        <span className="tabular">{reset}</span> · xDAI gas plaćamo mi
+        Resetira se za <span className="tabular">{reset}</span> · xDAI gas plaćamo mi
       </span>
     </div>
   );
