@@ -136,6 +136,26 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
   if (!isAddress(body.safeAddress) || !isAddress(body.signerAddress) || !isAddress(body.to)) {
     return json({ ok: false, error: 'Invalid address' }, 400);
   }
+  if (body.safeAddress.toLowerCase() === body.signerAddress.toLowerCase()) {
+    return json(
+      { ok: false, error: 'safeAddress === signerAddress (identity bug — re-open passkey)' },
+      400,
+    );
+  }
+  // Reject stub pubkeys early — cross-device-restored passkey records store
+  // ('0','0') until the next signing event refreshes them, and sending with
+  // stubs would deploy a wrong signer at a CREATE2-derived address that does
+  // not own the Safe.
+  if (body.pubKeyX === '0' || body.pubKeyY === '0') {
+    return json(
+      {
+        ok: false,
+        error:
+          'Passkey pubkey nije poznat na ovom uređaju (stub 0). Otvori wallet na uređaju gdje je passkey originalno kreiran, ili kreiraj novi wallet.',
+      },
+      400,
+    );
+  }
 
   // Rate limit: 5 free per (signerAddress, UTC day).
   const today = new Date().toISOString().slice(0, 10);
@@ -197,19 +217,14 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
     let txHash: Hex;
     let deployed = false;
 
-    if (safeDeployed && signerDeployed) {
-      // Hot path: just submit the execTransaction directly.
-      txHash = await wallet.sendTransaction({
-        to: safeAddress,
-        data: execCalldata,
-      });
-    } else {
-      // Cold path: batch (createSigner + createProxyWithNonce + execTransaction)
-      // through MultiSendCallOnly. Relayer pays gas for the whole batch.
+    async function sendHotPath(): Promise<Hex> {
+      return await wallet.sendTransaction({ to: safeAddress, data: execCalldata });
+    }
+
+    async function sendColdPath(skipSigner: boolean, skipSafe: boolean): Promise<Hex> {
       const verifiers = encodeVerifiers();
       const ops: PackedCall[] = [];
-
-      if (!signerDeployed) {
+      if (!skipSigner) {
         ops.push({
           to: SAFE_WEBAUTHN_SIGNER_FACTORY,
           value: 0n,
@@ -220,7 +235,7 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
           }),
         });
       }
-      if (!safeDeployed) {
+      if (!skipSafe) {
         const initializer = encodeFunctionData({
           abi: SAFE_SETUP_ABI,
           functionName: 'setup',
@@ -252,11 +267,50 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
         functionName: 'multiSend',
         args: [packMultiSend(ops)],
       });
-      txHash = await wallet.sendTransaction({
+      return await wallet.sendTransaction({
         to: MULTISEND_CALL_ONLY,
         data: multiSendCalldata,
       });
-      deployed = true;
+    }
+
+    if (safeDeployed && signerDeployed) {
+      // Hot path: just submit the execTransaction directly.
+      txHash = await sendHotPath();
+    } else {
+      // Cold path: batch what is missing (createSigner / createProxyWithNonce /
+      // execTransaction) through MultiSendCallOnly. Relayer pays gas for the
+      // whole batch.
+      try {
+        txHash = await sendColdPath(signerDeployed, safeDeployed);
+        deployed = true;
+      } catch (coldErr) {
+        // Cold-path revert often means the RPC returned stale empty code for
+        // an address that is actually deployed (eventual-consistency across
+        // gateway nodes). CREATE2 inside multiSend then collides and reverts.
+        // Re-poll code; if both ARE deployed now, retry as a clean hot path.
+        const [safeCode2, signerCode2] = await Promise.all([
+          publicClient.getCode({ address: safeAddress }),
+          publicClient.getCode({ address: signerAddress }),
+        ]);
+        const safeNow = !!safeCode2 && safeCode2 !== '0x';
+        const signerNow = !!signerCode2 && signerCode2 !== '0x';
+        if (safeNow && signerNow) {
+          console.warn(
+            '[relay] cold-path reverted but Safe + signer ARE deployed; retrying hot path',
+          );
+          txHash = await sendHotPath();
+        } else if (safeNow !== safeDeployed || signerNow !== signerDeployed) {
+          // Partial deploy state changed between the two reads — re-run cold
+          // path skipping whatever is now confirmed deployed.
+          console.warn(
+            `[relay] deployment state changed mid-flight (safe ${safeDeployed} -> ${safeNow}, signer ${signerDeployed} -> ${signerNow}); retrying cold path with refreshed skip flags`,
+          );
+          txHash = await sendColdPath(signerNow, safeNow);
+          deployed = true;
+        } else {
+          throw coldErr;
+        }
+      }
     }
 
     await env.RELAY_KV.put(rateKey, String(used + 1), { expirationTtl: 60 * 60 * 36 });
