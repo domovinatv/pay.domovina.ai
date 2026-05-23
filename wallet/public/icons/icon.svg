@@ -1,0 +1,22 @@
+<svg width="512" height="512" viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg">
+<defs>
+<linearGradient id="croFlagVertical" x1="0" y1="0" x2="0" y2="1">
+<stop offset="0%" stop-color="#FF0000"/> <stop offset="33.3%" stop-color="#FF0000"/>
+<stop offset="33.3%" stop-color="#FFFFFF"/> <stop offset="66.6%" stop-color="#FFFFFF"/>
+<stop offset="66.6%" stop-color="#002F6C"/> <stop offset="100%" stop-color="#002F6C"/>
+</linearGradient>
+</defs>
+
+<rect width="512" height="512" rx="32" fill="white"/>
+
+<path d="M72 64H248C354.071 64 440 149.929 440 256C440 362.071 354.071 448 248 448H72V64Z" fill="url(#croFlagVertical)"/>
+
+<path d="M168 160H248C301.019 160 344 202.981 344 256C344 309.019 301.019 352 248 352H168V160Z" fill="white"/>
+
+<g>
+    <rect x="180" y="200" width="152" height="112" rx="14" fill="#002F6C"/>
+    <line x1="194" y1="228" x2="318" y2="228" stroke="white" stroke-width="3"/>
+    <circle cx="302" cy="270" r="14" fill="white"/>
+    <circle cx="302" cy="270" r="6" fill="#002F6C"/>
+</g>
+</svg>
