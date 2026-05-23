@@ -93,7 +93,9 @@ function WalletRow({
       />
       <div className="flex flex-col leading-tight min-w-0 flex-1">
         <div className="flex items-center gap-2">
-          <span className="text-xs uppercase tracking-widest text-ink-muted">Safe</span>
+          <span className="text-xs uppercase tracking-widest text-ink-muted">
+            {record.nameSuffix ? `wa_${record.nameSuffix}` : 'Safe'}
+          </span>
           {active && (
             <Badge tone="info" className="text-[10px]">
               <Check className="h-2.5 w-2.5" /> aktivan

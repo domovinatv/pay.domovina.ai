@@ -20,7 +20,7 @@ import { WalletSwitcherSheet } from '../components/WalletSwitcherSheet';
 import { useTheme, type ThemeMode } from '../lib/theme';
 import { useWalletStore } from '../state/store';
 import { lookupWallet } from '../lib/registry';
-import { listKnownPasskeys } from '../lib/passkey';
+import { listKnownPasskeys, getActivePasskey } from '../lib/passkey';
 
 const REPO_URL = 'https://github.com/domovinatv/pay.domovina.ai';
 const ADR_LINKS = [
@@ -42,9 +42,11 @@ export function Settings() {
   const [phoneSummary, setPhoneSummary] = useState<PhoneSummary | null>(null);
   const [switcherOpen, setSwitcherOpen] = useState(false);
   const [knownCount, setKnownCount] = useState(0);
+  const [nameSuffix, setNameSuffix] = useState<string | undefined>();
 
   useEffect(() => {
     setKnownCount(listKnownPasskeys().length);
+    setNameSuffix(getActivePasskey()?.nameSuffix);
   }, [credentialId]);
 
   useEffect(() => {
@@ -107,6 +109,21 @@ export function Settings() {
               address={signerAddress}
               onCopied={(t) => toast({ variant: 'success', title: t })}
             />
+          )}
+          {nameSuffix && (
+            <div className="flex items-start justify-between gap-3 py-3 first:pt-1 last:pb-1">
+              <div className="flex flex-col leading-tight min-w-0 flex-1">
+                <span className="text-[11px] uppercase tracking-widest text-ink-muted">
+                  Passkey ime
+                </span>
+                <span className="font-mono text-sm text-ink-primary">
+                  DOMOVINA wa_{nameSuffix}
+                </span>
+                <span className="text-[11px] text-ink-muted leading-snug">
+                  Pod ovim imenom passkey postoji u Apple Passwords / iCloud Keychain / Google Password Manageru.
+                </span>
+              </div>
+            </div>
           )}
           <div className="flex items-center justify-between gap-3 py-3 first:pt-1 last:pb-1">
             <div className="flex flex-col leading-tight">
