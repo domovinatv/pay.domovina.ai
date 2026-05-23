@@ -12,6 +12,13 @@ export type PasskeyRecord = {
   signerAddress: `0x${string}`;
   safeAddress: `0x${string}`;
   createdAt: string;
+  /**
+   * 4-char identifier shown in the passkey name in iCloud Keychain /
+   * Google Password Manager (e.g. "wa_a827"). Derived from the random
+   * userId we passed to navigator.credentials.create at enrollment time.
+   * Optional for backward compatibility with pre-suffix records.
+   */
+  nameSuffix?: string;
 };
 
 const STORAGE_KEY_V1 = 'domovina_wallet_v1';
@@ -142,16 +149,21 @@ function clearAbortIfCurrent(signal: AbortSignal, id: number, label: string): vo
   }
 }
 
-export async function createPasskey(label?: string): Promise<{ credentialId: string; pubKey: P256PublicKey }> {
+export async function createPasskey(
+  label?: string,
+): Promise<{ credentialId: string; pubKey: P256PublicKey; nameSuffix: string }> {
   const challenge = crypto.getRandomValues(new Uint8Array(32));
   const userId = crypto.getRandomValues(new Uint8Array(16));
 
-  // Disambiguate name when adding additional wallets so iCloud/1Password etc.
-  // show distinct entries instead of a pile of identical "DOMOVINA Wallet"s.
-  const existingCount = Object.keys(loadRegistry()).length;
-  const friendlyLabel =
-    label ??
-    (existingCount === 0 ? 'DOMOVINA Wallet' : `DOMOVINA Wallet ${existingCount + 1}`);
+  // 4-char suffix derived from the random userId we chose. It is NOT the
+  // Safe address (chicken-and-egg — the Safe address derives from the
+  // passkey pubkey which the authenticator only mints inside this create()
+  // call), but it IS a stable identifier we can put in user.name BEFORE
+  // calling create. The user sees it in iCloud Keychain / Google Password
+  // Manager + inside the app, so they can correlate which passkey owns
+  // which Safe across many devices.
+  const nameSuffix = bufToHex(userId.buffer).slice(0, 4);
+  const friendlyLabel = label ?? `DOMOVINA wa_${nameSuffix}`;
 
   const { signal, id: __callId } = nextWebAuthnSignal('signWithPasskey/create/pick');
   let cred: PublicKeyCredential | null;
@@ -190,6 +202,7 @@ export async function createPasskey(label?: string): Promise<{ credentialId: str
   return {
     credentialId,
     pubKey: { x: BigInt(data.coordinates.x), y: BigInt(data.coordinates.y) },
+    nameSuffix,
   };
 }
 

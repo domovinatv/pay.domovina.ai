@@ -51,7 +51,7 @@ export function Landing() {
     setStage({ kind: 'creating' });
     haptic('tap');
     try {
-      const { credentialId, pubKey } = await createPasskey();
+      const { credentialId, pubKey, nameSuffix } = await createPasskey();
       const signerAddress = await predictSignerAddress(pubKey);
       const safeAddress = await predictSafeAddress(signerAddress);
 
@@ -61,6 +61,7 @@ export function Landing() {
         signerAddress,
         safeAddress,
         createdAt: new Date().toISOString(),
+        nameSuffix,
       };
       savePasskey(record);
 
@@ -282,7 +283,9 @@ function WalletCard({ record, onClick }: { record: PasskeyRecord; onClick: () =>
         style={{ background: gradientFor(record.safeAddress) }}
       />
       <div className="flex flex-col leading-tight min-w-0 flex-1">
-        <span className="text-xs uppercase tracking-widest text-ink-muted">Safe</span>
+        <span className="text-xs uppercase tracking-widest text-ink-muted">
+          {record.nameSuffix ? `wa_${record.nameSuffix}` : 'Safe'}
+        </span>
         <span className="font-mono text-sm text-ink-primary truncate">
           {shorten(record.safeAddress)}
         </span>
@@ -344,6 +347,12 @@ function CreatedView({ record, onEnter }: { record: PasskeyRecord; onEnter: () =
       <Card padding="md" className="flex flex-col items-center gap-3">
         <span className="text-[11px] uppercase tracking-widest text-ink-muted">Tvoja adresa</span>
         <AddressChip address={record.safeAddress} truncate={false} className="max-w-full" />
+        {record.nameSuffix && (
+          <p className="text-xs text-ink-muted text-center max-w-xs">
+            U Apple Passwords / Google Password Manageru ovaj passkey vidiš kao{' '}
+            <span className="font-mono text-ink-secondary">DOMOVINA wa_{record.nameSuffix}</span>.
+          </p>
+        )}
       </Card>
 
       <Button onClick={onEnter} size="xl" block>
