@@ -455,6 +455,35 @@ the reasoning must be documented as an amendment here.
 
 Do not skip this re-evaluation at Phase 5c kickoff.
 
+## Amendment 2026-05-23 — verifier custody resolved (ADR 0004)
+
+The re-evaluation called for above happened in the 2026-05-23 session.
+The chosen path is **neither** the original CF Worker secret nor a
+single Linux+HSM rig. The decision is an **M-of-N quorum of Android
+devices**, each holding a non-extractable EC P-256 key in hardware-
+backed StrongBox / Titan M2, exposed to the orchestrator via
+Cloudflare Tunnel. See [`docs/decisions/0004-phase-5c-android-verifier.md`](0004-phase-5c-android-verifier.md)
+for the full rationale, hard rules, contract deltas, and
+operational plan.
+
+Sections of ADR 0003 superseded by ADR 0004:
+
+- **§ Trust model and blast radius → Mitigations**, third bullet
+  ("The verifier private key lives only in CF Worker Secrets…")
+  is replaced by ADR 0004's hardware-binding and multi-device rules.
+- **§ Resolutions for the five open questions**, question 1
+  ("Verifier key custody and rotation. Resolved above: CF Worker
+  Secrets for the hot key…") is replaced by ADR 0004's resolution
+  block.
+- The single-verifier `claim(...)` signature in the reference
+  contract sketch is replaced by ADR 0004's `claim(..., bytes[]
+  signatures)` form with M-of-N quorum verification.
+
+Everything else in ADR 0003 — uniqueness primitive, EIP-5484
+soulbound semantics, slot bookkeeping, third-party consumption
+posture, blast-radius envelope (sybil integrity vs custody), v2
+recovery procedure — is unchanged.
+
 ## References
 
 - ADR 0001 — `docs/decisions/0001-no-server-side-recovery.md`
