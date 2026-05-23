@@ -1,6 +1,16 @@
 import { useEffect, useRef, useState } from 'react';
 import QRCodeStyling from 'qr-code-styling';
-import { Copy, Check, ScanLine, Landmark, Wallet as WalletIcon, Share2, Link as LinkIcon, Download } from 'lucide-react';
+import {
+  Copy,
+  Check,
+  ScanLine,
+  Landmark,
+  Wallet as WalletIcon,
+  Share2,
+  Link as LinkIcon,
+  Download,
+  FileImage,
+} from 'lucide-react';
 import {
   Button,
   Card,
@@ -17,6 +27,7 @@ import { useWalletStore } from '../state/store';
 import { parseAmount, isAmountInvalidForDisplay } from '../lib/amount';
 import { humanizeError } from '../lib/errors';
 import { encodeEureTransferUri } from '../lib/eip681';
+import { buildReceiptPng, formatReceiptTime } from '../lib/paymentReceipt';
 import {
   createPaymentIntent,
   subscribePaymentIntent,
@@ -62,6 +73,7 @@ function SepaReceive() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const qrRef = useRef<HTMLDivElement>(null);
+  const qrInstanceRef = useRef<QRCodeStyling | null>(null);
 
   const parsedAmount = parseAmount(amount);
   const amountShowsError = isAmountInvalidForDisplay(amount);
@@ -103,15 +115,88 @@ function SepaReceive() {
   useEffect(() => {
     if (!intent || !qrRef.current) return;
     qrRef.current.innerHTML = '';
-    new QRCodeStyling({
+    const instance = new QRCodeStyling({
       width: 320,
       height: 320,
       data: intent.epc_qr_data,
       qrOptions: { errorCorrectionLevel: 'M' },
       dotsOptions: { color: '#002F6C', type: 'square' },
       backgroundOptions: { color: '#ffffff' },
-    }).append(qrRef.current);
+    });
+    instance.append(qrRef.current);
+    qrInstanceRef.current = instance;
   }, [intent?.epc_qr_data, resolved]);
+
+  async function buildSepaReceiptBlob(): Promise<Blob | null> {
+    if (!intent) return null;
+    // Re-render the QR at a larger size for the export so the image stays
+    // crisp when shared at full screen. The on-screen 320px instance stays
+    // unchanged.
+    const exportQr = new QRCodeStyling({
+      width: 640,
+      height: 640,
+      data: intent.epc_qr_data,
+      qrOptions: { errorCorrectionLevel: 'M' },
+      dotsOptions: { color: '#002F6C', type: 'square' },
+      backgroundOptions: { color: '#ffffff' },
+    });
+    const qrBlob = await exportQr.getRawData('png');
+    if (!(qrBlob instanceof Blob)) return null;
+
+    return buildReceiptPng({
+      qrBlob,
+      title: 'EURe top-up · SEPA',
+      amountLine: `${Number(intent.amount_eur).toFixed(2)} EUR`,
+      rows: [
+        { label: 'Primatelj', value: intent.beneficiary_name },
+        { label: 'IBAN', value: intent.iban, mono: true },
+        { label: 'BIC', value: intent.bic, mono: true },
+        { label: 'Opis plaćanja', value: intent.memo, mono: true },
+        { label: 'Generirano', value: formatReceiptTime(intent.created_at) },
+      ],
+      footer: 'Skeniraj u Revolutu / banci',
+    });
+  }
+
+  async function shareReceipt() {
+    try {
+      const blob = await buildSepaReceiptBlob();
+      if (!blob) return;
+      const file = new File([blob], `domovina-eure-topup-${intent?.sid ?? 'qr'}.png`, {
+        type: 'image/png',
+      });
+      const text = `Plaćanje ${Number(intent?.amount_eur ?? 0).toFixed(2)} EUR na DOMOVINA Wallet`;
+      const payload: ShareData = { title: 'EURe top-up', text };
+      if (typeof navigator.canShare === 'function' && navigator.canShare({ files: [file] })) {
+        payload.files = [file];
+      }
+      if (typeof navigator.share === 'function') {
+        try {
+          await navigator.share(payload);
+          return;
+        } catch (e) {
+          if (e instanceof Error && e.name === 'AbortError') return;
+          // Fall through to download as fallback.
+        }
+      }
+      downloadBlob(blob, file.name);
+      toast({ variant: 'success', title: 'QR spremljen' });
+    } catch (e) {
+      toast({ variant: 'error', title: 'Dijeljenje neuspješno', description: humanizeError(e) });
+    }
+  }
+
+  async function downloadReceipt() {
+    try {
+      const blob = await buildSepaReceiptBlob();
+      if (!blob) return;
+      const name = `domovina-eure-topup-${intent?.sid ?? 'qr'}.png`;
+      downloadBlob(blob, name);
+      toast({ variant: 'success', title: 'QR spremljen', description: name });
+    } catch (e) {
+      toast({ variant: 'error', title: 'Spremanje neuspješno', description: humanizeError(e) });
+    }
+  }
 
   if (intent) {
     return (
@@ -130,6 +215,17 @@ function SepaReceive() {
             {Number(intent.amount_eur).toFixed(2)} <span className="text-xl text-ink-muted">EUR</span>
           </div>
         </Card>
+
+        <div className="grid grid-cols-2 gap-2">
+          <Button onClick={shareReceipt} size="lg" block>
+            <Share2 className="h-4 w-4" />
+            Podijeli
+          </Button>
+          <Button onClick={downloadReceipt} variant="secondary" size="lg" block>
+            <FileImage className="h-4 w-4" />
+            Spremi sliku
+          </Button>
+        </div>
 
         <Section title="Detalji uplate">
           <Card padding="md" className="flex flex-col divide-y divide-surface-border">
@@ -265,18 +361,49 @@ function P2PReceive({ safeAddress }: { safeAddress: `0x${string}` }) {
     }
   }
 
+  async function buildP2PReceiptBlob(): Promise<Blob | null> {
+    // Re-render the QR at 640 for export crispness — on-screen 320 unchanged.
+    const exportQr = new QRCodeStyling({
+      width: 640,
+      height: 640,
+      data: uri,
+      qrOptions: { errorCorrectionLevel: 'M' },
+      dotsOptions: { color: '#002F6C', type: 'square' },
+      backgroundOptions: { color: '#ffffff' },
+    });
+    const qrBlob = await exportQr.getRawData('png');
+    if (!(qrBlob instanceof Blob)) return null;
+
+    return buildReceiptPng({
+      qrBlob,
+      title: 'EURe izravno · Gnosis',
+      amountLine: parsedAmount.ok
+        ? `${Number(parsedAmount.normalized).toLocaleString('hr-HR', {
+            minimumFractionDigits: 2,
+            maximumFractionDigits: 2,
+          })} EURe`
+        : undefined,
+      rows: [
+        { label: 'Primatelj', value: safeAddress, mono: true },
+        { label: 'Mreža', value: 'Gnosis Chain · ID 100' },
+        { label: 'Token', value: 'EURe (Monerium)' },
+        { label: 'Format', value: 'EIP-681' },
+        { label: 'Generirano', value: formatReceiptTime(null) },
+      ],
+      footer: 'Skeniraj u bilo kojem EVM wallet-u',
+    });
+  }
+
   async function shareReceive() {
     const shareTitle = 'Pošalji mi EURe';
     const amountSuffix = parsedAmount.ok ? ` ${parsedAmount.normalized} EURe` : '';
     const shareText = `Pošalji${amountSuffix} na moj DOMOVINA wallet`;
 
-    // Best path: native share sheet with both the QR image and the deep link.
-    // iOS Safari 15+ supports files; Android Chrome PWA does too.
-    let qrFile: File | null = null;
+    let receiptFile: File | null = null;
     try {
-      const blob = await qrInstanceRef.current?.getRawData('png');
-      if (blob instanceof Blob) {
-        qrFile = new File([blob], 'domovina-eure-qr.png', { type: 'image/png' });
+      const blob = await buildP2PReceiptBlob();
+      if (blob) {
+        receiptFile = new File([blob], 'domovina-eure-qr.png', { type: 'image/png' });
       }
     } catch {
       /* fall through to URL-only share */
@@ -287,8 +414,12 @@ function P2PReceive({ safeAddress }: { safeAddress: `0x${string}` }) {
       text: shareText,
       url: deepLink,
     };
-    if (qrFile && typeof navigator.canShare === 'function' && navigator.canShare({ files: [qrFile] })) {
-      sharePayload.files = [qrFile];
+    if (
+      receiptFile &&
+      typeof navigator.canShare === 'function' &&
+      navigator.canShare({ files: [receiptFile] })
+    ) {
+      sharePayload.files = [receiptFile];
     }
 
     if (typeof navigator.share === 'function') {
@@ -296,25 +427,18 @@ function P2PReceive({ safeAddress }: { safeAddress: `0x${string}` }) {
         await navigator.share(sharePayload);
         return;
       } catch (e) {
-        // AbortError = user dismissed the share sheet — silent.
-        if (e instanceof Error && e.name !== 'AbortError') {
-          // Fall through to clipboard fallback below.
-        } else {
-          return;
-        }
+        if (e instanceof Error && e.name === 'AbortError') return;
+        // Fall through to clipboard fallback.
       }
     }
-    // Final fallback: copy link to clipboard.
     await copyDeepLink();
   }
 
   async function downloadQr() {
-    if (!qrInstanceRef.current) return;
     try {
-      await qrInstanceRef.current.download({
-        name: 'domovina-eure-qr',
-        extension: 'png',
-      });
+      const blob = await buildP2PReceiptBlob();
+      if (!blob) return;
+      downloadBlob(blob, 'domovina-eure-qr.png');
       toast({ variant: 'success', title: 'QR spremljen' });
     } catch (e) {
       toast({ variant: 'error', title: 'Spremanje neuspješno', description: humanizeError(e) });
@@ -425,6 +549,17 @@ type DetailRowProps = {
   mono?: boolean;
   onCopied: ReturnType<typeof useToast>['toast'];
 };
+
+function downloadBlob(blob: Blob, filename: string): void {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 1500);
+}
 
 function DetailRow({ label, value, mono, onCopied }: DetailRowProps) {
   const [copied, setCopied] = useState(false);
