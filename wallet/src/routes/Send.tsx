@@ -24,9 +24,10 @@ import { EURE_ADDRESS, EURE_DECIMALS } from '../lib/constants';
 import { encodeWebAuthnSignature, getSafeTxHash } from '../lib/safe';
 import { getActivePasskey, signWithPasskey } from '../lib/passkey';
 import { relayTx, getRelayStatus, type RelayStatus } from '../lib/relay';
+import { getEureBalance } from '../lib/balance';
 
 export function Send() {
-  const { safeAddress, credentialId, signerAddress } = useWalletStore();
+  const { safeAddress, credentialId, signerAddress, balance, setBalance } = useWalletStore();
   const { toast } = useToast();
   const [to, setTo] = useState('');
   const [amount, setAmount] = useState('');
@@ -39,6 +40,26 @@ export function Send() {
   const [relayStatus, setRelayStatus] = useState<RelayStatus | null>(null);
   const [, setNowTick] = useState(0); // re-render every minute for countdown
   const sendInFlightRef = useRef(false);
+
+  // Pull a fresh balance on mount when the store is empty (deep-link to /send
+  // without going through Home first). The store is populated by Wallet.tsx
+  // when the user goes home, but a direct /send open would otherwise show "—"
+  // next to the Max chip until the user navigates back.
+  useEffect(() => {
+    if (!safeAddress || balance !== null) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const { formatted } = await getEureBalance(safeAddress);
+        if (!cancelled) setBalance(formatted);
+      } catch {
+        /* ignore — balance label will just show "—" */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [safeAddress, balance, setBalance]);
 
   // Fetch relay free-tier counter on mount + every 60s + after each send.
   useEffect(() => {
@@ -58,6 +79,20 @@ export function Send() {
       clearInterval(id);
     };
   }, [signerAddress]);
+
+  const numericBalance = balance === null ? null : Number(balance);
+  const hasBalance = numericBalance !== null && isFinite(numericBalance) && numericBalance > 0;
+
+  function fillMaxAmount() {
+    if (!hasBalance || numericBalance === null) return;
+    // Use the canonical decimal form (no thousands grouping) and swap dot →
+    // comma so the input renders in hr-locale form the user is typing in.
+    // Trim trailing zeros for sub-1 amounts so "0,5" reads naturally instead
+    // of "0,500000000000000000".
+    const raw = numericBalance.toString();
+    setAmount(raw.replace('.', ','));
+    haptic('tap');
+  }
 
   async function refreshRelayStatus() {
     if (!signerAddress) return;
@@ -301,6 +336,33 @@ export function Send() {
             )}
           </Field>
 
+          <div className="flex items-center justify-between gap-2 px-1">
+            <span className="text-xs text-ink-muted">
+              Stanje:{' '}
+              <span className="font-semibold tabular text-ink-secondary">
+                {numericBalance === null
+                  ? '—'
+                  : numericBalance.toLocaleString('hr-HR', {
+                      minimumFractionDigits: 2,
+                      maximumFractionDigits: 2,
+                    })}
+              </span>{' '}
+              EURe
+            </span>
+            <button
+              type="button"
+              onClick={fillMaxAmount}
+              disabled={!hasBalance}
+              className={
+                'rounded-pill px-2.5 py-1 text-[11px] font-semibold uppercase tracking-widest transition active:scale-[0.95] ' +
+                (hasBalance
+                  ? 'bg-brand-navy-700 text-white hover:bg-brand-navy-600 dark:bg-brand-navy-400 dark:text-brand-navy-900 dark:hover:bg-brand-navy-300'
+                  : 'bg-surface-sunken text-ink-muted cursor-not-allowed')
+              }
+            >
+              Max
+            </button>
+          </div>
           <Field label="Iznos (EURe)" error={amountErrorMsg}>
             {(id) => (
               <Input
