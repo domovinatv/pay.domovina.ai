@@ -147,6 +147,34 @@ export function clearAllPasskeys(): void {
   localStorage.removeItem(ACTIVE_KEY);
 }
 
+/**
+ * Soft-delete: remove the record from the local registry so it stops showing
+ * up in the wallet picker. The underlying passkey in iCloud Keychain / Google
+ * Password Manager is untouched, and the Safe / signer onchain are untouched
+ * — the user can always re-discover this wallet via "Otvori postojeći passkey"
+ * (OS picker → lookupWallet from backend → savePasskey restores it).
+ *
+ * If the archived wallet was the active one, falls active over to the most
+ * recently created remaining wallet, or clears active if none remain.
+ */
+export function archivePasskey(credentialId: string): void {
+  const reg = loadRegistry();
+  if (!reg[credentialId]) return;
+  delete reg[credentialId];
+  saveRegistry(reg);
+  const wasActive = localStorage.getItem(ACTIVE_KEY) === credentialId;
+  if (wasActive) {
+    const remaining = Object.values(reg).sort((a, b) =>
+      b.createdAt.localeCompare(a.createdAt),
+    );
+    if (remaining[0]) {
+      localStorage.setItem(ACTIVE_KEY, remaining[0].credentialId);
+    } else {
+      localStorage.removeItem(ACTIVE_KEY);
+    }
+  }
+}
+
 // Track the currently-in-flight WebAuthn call so a stale one (e.g. iOS Safari
 // not releasing its "pending" state after dismiss) doesn't block a fresh
 // request with `NotAllowedError: A request is already pending`.

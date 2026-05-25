@@ -1,5 +1,17 @@
-import { useEffect, useState } from 'react';
-import { KeyRound, ShieldCheck, Zap, Plus, RefreshCw, Sparkles, Fingerprint, ChevronRight } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
+import {
+  KeyRound,
+  ShieldCheck,
+  Zap,
+  Plus,
+  RefreshCw,
+  Sparkles,
+  Fingerprint,
+  ChevronRight,
+  Archive,
+  AlertTriangle,
+  Check,
+} from 'lucide-react';
 import type { Address } from 'viem';
 import { BrandHeader } from '../components/Brand';
 import { AddressChip, Button, Card, Field, Input } from '../ui';
@@ -7,6 +19,7 @@ import { useWalletStore } from '../state/store';
 import { haptic } from '../lib/haptic';
 import { humanizeError } from '../lib/errors';
 import {
+  archivePasskey,
   createPasskey,
   listKnownPasskeys,
   lookupPasskey,
@@ -16,12 +29,21 @@ import {
   suggestPasskeyName,
   type PasskeyRecord,
 } from '../lib/passkey';
+import { fetchEureBalances, formatEureShort } from '../lib/balances';
 import { predictSignerAddress, predictSafeAddress } from '../lib/safe';
 import { lookupWallet, registerWalletWithBackend } from '../lib/registry';
+
+/** Above this count we surface a discouragement hint inline and gate
+ * creation behind an explicit confirmation step. Three is the threshold
+ * where the wallet list stops feeling intentional and starts feeling
+ * like the user is accidentally accumulating fragments. */
+const MANY_WALLETS_THRESHOLD = 3;
 
 type Stage =
   | { kind: 'welcome' }
   | { kind: 'welcome-known'; known: PasskeyRecord[] }
+  | { kind: 'confirm-create-many'; existingCount: number }
+  | { kind: 'confirm-archive'; record: PasskeyRecord }
   | { kind: 'naming'; suggestedName: string }
   | { kind: 'creating' }
   | { kind: 'opening' }
@@ -50,7 +72,31 @@ export function Landing() {
 
   function startCreate() {
     haptic('tap');
+    const known = listKnownPasskeys();
+    if (known.length >= MANY_WALLETS_THRESHOLD) {
+      // User already has a pile of wallets; pause and explain before the
+      // Face ID prompt fires. They can still create — just with intent.
+      setStage({ kind: 'confirm-create-many', existingCount: known.length });
+      return;
+    }
     setStage({ kind: 'naming', suggestedName: suggestPasskeyName() });
+  }
+
+  function proceedToNaming() {
+    haptic('tap');
+    setStage({ kind: 'naming', suggestedName: suggestPasskeyName() });
+  }
+
+  function requestArchive(record: PasskeyRecord) {
+    haptic('tap');
+    setStage({ kind: 'confirm-archive', record });
+  }
+
+  function confirmArchive(record: PasskeyRecord) {
+    haptic('success');
+    archivePasskey(record.credentialId);
+    const known = listKnownPasskeys();
+    setStage(known.length > 0 ? { kind: 'welcome-known', known } : { kind: 'welcome' });
   }
 
   async function confirmCreate(chosenName: string) {
@@ -187,6 +233,23 @@ export function Landing() {
             onCreate={startCreate}
             onCrossDevice={() => openExisting()}
             onLegacy={openLegacy}
+            onRequestArchive={requestArchive}
+          />
+        )}
+
+        {stage.kind === 'confirm-create-many' && (
+          <ConfirmCreateManyView
+            existingCount={stage.existingCount}
+            onCancel={resetToWelcome}
+            onConfirm={proceedToNaming}
+          />
+        )}
+
+        {stage.kind === 'confirm-archive' && (
+          <ConfirmArchiveView
+            record={stage.record}
+            onCancel={resetToWelcome}
+            onConfirm={() => confirmArchive(stage.record)}
           />
         )}
 
@@ -303,29 +366,69 @@ function WelcomeKnownView({
   onCreate,
   onCrossDevice,
   onLegacy,
+  onRequestArchive,
 }: {
   known: PasskeyRecord[];
   onOpenKnown: (record: PasskeyRecord) => void;
   onCreate: () => void;
   onCrossDevice: () => void;
   onLegacy: () => void;
+  onRequestArchive: (record: PasskeyRecord) => void;
 }) {
+  const activeCred = useWalletStore((s) => s.credentialId);
+  const balances = useEureBalances(known);
+
+  // Sort: active wallet pinned to top, then by balance desc, then by
+  // createdAt desc so newer wallets are above older ones at equal balance.
+  const sorted = useMemo(() => {
+    const list = [...known];
+    list.sort((a, b) => {
+      if (a.credentialId === activeCred) return -1;
+      if (b.credentialId === activeCred) return 1;
+      const ba = balances.get(a.safeAddress.toLowerCase()) ?? 0n;
+      const bb = balances.get(b.safeAddress.toLowerCase()) ?? 0n;
+      if (ba !== bb) return bb > ba ? 1 : -1;
+      return b.createdAt.localeCompare(a.createdAt);
+    });
+    return list;
+  }, [known, activeCred, balances]);
+
+  const tooManyHint =
+    known.length >= MANY_WALLETS_THRESHOLD ? (
+      <p className="text-xs text-ink-muted text-center px-2 pb-1">
+        Imaš {known.length} waleta na ovom uređaju. Za većinu ljudi jedan je dovoljan —{' '}
+        koristi <span className="font-medium text-ink-secondary">Arhiviraj</span> da skineš nepotrebne s liste
+        (passkey i novci ostaju netaknuti).
+      </p>
+    ) : null;
+
   return (
-    <div className="flex flex-col gap-6 animate-route-enter">
+    <div className="flex flex-col gap-5 animate-route-enter">
       <div className="text-center flex flex-col gap-1">
         <h2 className="text-2xl font-semibold text-ink-primary">Dobrodošao natrag</h2>
         <p className="text-sm text-ink-secondary">
-          {known.length === 1 ? 'Wallet je spreman za otvaranje.' : 'Odaberi wallet koji želiš otvoriti.'}
+          {known.length === 1
+            ? 'Wallet je spreman za otvaranje.'
+            : 'Odaberi wallet koji želiš otvoriti.'}
         </p>
       </div>
 
       <div className="flex flex-col gap-2">
-        {known.map((record) => (
-          <WalletCard key={record.credentialId} record={record} onClick={() => onOpenKnown(record)} />
+        {sorted.map((record) => (
+          <WalletCard
+            key={record.credentialId}
+            record={record}
+            balance={balances.get(record.safeAddress.toLowerCase())}
+            active={record.credentialId === activeCred}
+            onOpen={() => onOpenKnown(record)}
+            onArchive={() => onRequestArchive(record)}
+          />
         ))}
       </div>
 
-      <div className="flex flex-col gap-2 pt-2">
+      {tooManyHint}
+
+      <div className="flex flex-col gap-2 pt-1">
         <Button onClick={onCreate} variant="ghost" size="md" block>
           <Plus className="h-4 w-4" />
           Kreiraj novi wallet
@@ -342,31 +445,218 @@ function WelcomeKnownView({
   );
 }
 
-function WalletCard({ record, onClick }: { record: PasskeyRecord; onClick: () => void }) {
+/**
+ * Fetch EURe balances for the given passkey records via Multicall3. Returns
+ * a map keyed by lowercased safeAddress so callers can render the value
+ * inline. Refetches whenever the list of addresses changes (e.g. user
+ * archives one).
+ */
+function useEureBalances(known: PasskeyRecord[]): Map<string, bigint> {
+  const [balances, setBalances] = useState<Map<string, bigint>>(new Map());
+  const addressKey = known.map((r) => r.safeAddress.toLowerCase()).sort().join(',');
+  useEffect(() => {
+    let cancelled = false;
+    if (known.length === 0) {
+      setBalances(new Map());
+      return;
+    }
+    fetchEureBalances(known.map((r) => r.safeAddress))
+      .then((m) => {
+        if (!cancelled) setBalances(m);
+      })
+      .catch((e) => {
+        console.warn('[Landing] balance fetch failed', e);
+      });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [addressKey]);
+  return balances;
+}
+
+function WalletCard({
+  record,
+  balance,
+  active,
+  onOpen,
+  onArchive,
+}: {
+  record: PasskeyRecord;
+  balance: bigint | undefined;
+  active: boolean;
+  onOpen: () => void;
+  onArchive: () => void;
+}) {
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      className="text-left rounded-3xl bg-surface-raised border border-surface-border shadow-card hover:bg-surface-sunken active:scale-[0.99] transition flex items-center gap-3 p-4"
+    <div
+      className={
+        'group relative rounded-3xl border shadow-card transition ' +
+        (active
+          ? 'bg-brand-navy-50 border-brand-navy-200 dark:bg-brand-navy-900/30 dark:border-brand-navy-700'
+          : 'bg-surface-raised border-surface-border hover:bg-surface-sunken')
+      }
     >
-      <div
-        aria-hidden
-        className="h-12 w-12 rounded-2xl shrink-0 ring-1 ring-black/5"
-        style={{ background: gradientFor(record.safeAddress) }}
-      />
-      <div className="flex flex-col leading-tight min-w-0 flex-1">
-        <span className="text-xs uppercase tracking-widest text-ink-muted truncate">
-          {displayPasskeyLabel(record)}
-        </span>
-        <span className="font-mono text-sm text-ink-primary truncate">
-          {shorten(record.safeAddress)}
-        </span>
-        <span className="text-[11px] text-ink-muted">
-          kreiran {formatDate(record.createdAt)}
-        </span>
+      <button
+        type="button"
+        onClick={onOpen}
+        className="w-full text-left flex items-center gap-3 p-4 active:scale-[0.99] transition"
+      >
+        <div
+          aria-hidden
+          className="h-12 w-12 rounded-2xl shrink-0 ring-1 ring-black/5"
+          style={{ background: gradientFor(record.safeAddress) }}
+        />
+        <div className="flex flex-col leading-tight min-w-0 flex-1">
+          <div className="flex items-center gap-2 min-w-0">
+            <span className="text-xs uppercase tracking-widest text-ink-muted truncate">
+              {displayPasskeyLabel(record)}
+            </span>
+            {active && (
+              <span className="inline-flex items-center gap-0.5 rounded-full bg-brand-navy-100 text-brand-navy-700 text-[10px] px-1.5 py-0.5 dark:bg-brand-navy-800 dark:text-brand-navy-100 shrink-0">
+                <Check className="h-2.5 w-2.5" /> aktivan
+              </span>
+            )}
+          </div>
+          <span className="font-mono text-sm text-ink-primary truncate">
+            {shorten(record.safeAddress)}
+          </span>
+          <div className="flex items-baseline gap-2">
+            <span
+              className={
+                'text-sm tabular-nums ' +
+                (balance === undefined
+                  ? 'text-ink-muted'
+                  : balance === 0n
+                    ? 'text-ink-muted'
+                    : 'text-ink-primary font-medium')
+              }
+            >
+              {balance === undefined ? '…' : `${formatEureShort(balance)} EURe`}
+            </span>
+            <span className="text-[11px] text-ink-muted">
+              · {formatDate(record.createdAt)}
+            </span>
+          </div>
+        </div>
+        <ChevronRight className="h-5 w-5 text-ink-muted shrink-0" />
+      </button>
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation();
+          onArchive();
+        }}
+        aria-label="Arhiviraj wallet"
+        className="absolute top-2 right-2 h-8 w-8 inline-flex items-center justify-center rounded-full text-ink-muted hover:text-ink-primary hover:bg-surface-sunken/80 active:scale-95 transition"
+      >
+        <Archive className="h-4 w-4" />
+      </button>
+    </div>
+  );
+}
+
+function ConfirmCreateManyView({
+  existingCount,
+  onCancel,
+  onConfirm,
+}: {
+  existingCount: number;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  return (
+    <div className="flex flex-col gap-6 animate-route-enter">
+      <div className="text-center flex flex-col gap-2">
+        <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-amber-50 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300">
+          <AlertTriangle className="h-7 w-7" />
+        </div>
+        <h2 className="text-2xl font-semibold text-ink-primary">
+          Stvarno još jedan wallet?
+        </h2>
+        <p className="text-sm text-ink-secondary max-w-sm mx-auto">
+          Već imaš <span className="font-semibold text-ink-primary">{existingCount}</span>{' '}
+          waleta na ovom uređaju. Svaki novi wallet znači novu adresu, novi
+          passkey u Keychainu, i poseban balans — kasnije je teško pratiti
+          koji je za što.
+        </p>
       </div>
-      <ChevronRight className="h-5 w-5 text-ink-muted shrink-0" />
-    </button>
+
+      <Card padding="md" className="flex flex-col gap-3 text-sm text-ink-secondary">
+        <p>
+          Za većinu ljudi <span className="font-semibold text-ink-primary">jedan wallet je dovoljan</span>.
+          Dobri razlozi za drugi:
+        </p>
+        <ul className="list-disc list-inside flex flex-col gap-1 text-ink-secondary">
+          <li>Odvojeni hot wallet od ušteđevine</li>
+          <li>Wallet za firmu odvojen od privatnog</li>
+          <li>Testni wallet koji ne miješaš s pravim novcima</li>
+        </ul>
+        <p>
+          Ako samo zaboravljaš koji je koji — prvo{' '}
+          <span className="font-medium text-ink-primary">arhiviraj</span> stare iz liste,
+          pa onda kreiraj novi.
+        </p>
+      </Card>
+
+      <div className="flex flex-col gap-2">
+        <Button onClick={onConfirm} size="xl" block>
+          <Plus className="h-5 w-5" />
+          Ipak želim novi wallet
+        </Button>
+        <Button onClick={onCancel} variant="ghost" size="md" block>
+          Otkaži — vrati me na popis
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+function ConfirmArchiveView({
+  record,
+  onCancel,
+  onConfirm,
+}: {
+  record: PasskeyRecord;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  return (
+    <div className="flex flex-col gap-6 animate-route-enter">
+      <div className="text-center flex flex-col gap-2">
+        <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-surface-sunken text-ink-secondary">
+          <Archive className="h-7 w-7" />
+        </div>
+        <h2 className="text-2xl font-semibold text-ink-primary">Sakrij wallet s liste?</h2>
+        <p className="text-sm text-ink-secondary max-w-sm mx-auto">
+          <span className="font-mono text-ink-primary">{shorten(record.safeAddress)}</span>{' '}
+          ({displayPasskeyLabel(record)}) izlazi iz lokalnog popisa.
+        </p>
+      </div>
+
+      <Card padding="md" className="flex flex-col gap-2 text-sm text-ink-secondary">
+        <p>
+          <span className="font-medium text-ink-primary">Novci ostaju netaknuti</span> na adresi i u
+          Safe-u na blockchainu. Passkey ostaje u iCloud Keychain / Google Password
+          Manageru.
+        </p>
+        <p>
+          Možeš ga uvijek vratiti preko{' '}
+          <span className="font-medium text-ink-primary">Otvori drugi passkey</span> ili{' '}
+          <span className="font-medium text-ink-primary">Stari passkey</span> na sljedećem ekranu.
+        </p>
+      </Card>
+
+      <div className="flex flex-col gap-2">
+        <Button onClick={onConfirm} size="xl" block>
+          <Archive className="h-5 w-5" />
+          Da, sakrij s liste
+        </Button>
+        <Button onClick={onCancel} variant="ghost" size="md" block>
+          Otkaži
+        </Button>
+      </div>
+    </div>
   );
 }
 

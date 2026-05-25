@@ -1,7 +1,8 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Check, ChevronRight } from 'lucide-react';
 import { Sheet, Badge, EmptyState } from '../ui';
 import { listKnownPasskeys, setActivePasskey, type PasskeyRecord } from '../lib/passkey';
+import { fetchEureBalances, formatEureShort } from '../lib/balances';
 import { useWalletStore } from '../state/store';
 import { haptic } from '../lib/haptic';
 
@@ -14,12 +15,45 @@ type Props = {
 
 export function WalletSwitcherSheet({ open, onOpenChange, onSwitched }: Props) {
   const [known, setKnown] = useState<PasskeyRecord[]>([]);
+  const [balances, setBalances] = useState<Map<string, bigint>>(new Map());
   const activeCred = useWalletStore((s) => s.credentialId);
   const setIdentity = useWalletStore((s) => s.setIdentity);
 
   useEffect(() => {
-    if (open) setKnown(listKnownPasskeys());
+    if (!open) return;
+    const list = listKnownPasskeys();
+    setKnown(list);
+    if (list.length === 0) {
+      setBalances(new Map());
+      return;
+    }
+    let cancelled = false;
+    fetchEureBalances(list.map((r) => r.safeAddress))
+      .then((m) => {
+        if (!cancelled) setBalances(m);
+      })
+      .catch((e) => {
+        console.warn('[WalletSwitcher] balance fetch failed', e);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [open]);
+
+  // Same ordering as Landing's WelcomeKnownView so users build one mental
+  // model: active pinned, then balance desc, then createdAt desc.
+  const sorted = useMemo(() => {
+    const list = [...known];
+    list.sort((a, b) => {
+      if (a.credentialId === activeCred) return -1;
+      if (b.credentialId === activeCred) return 1;
+      const ba = balances.get(a.safeAddress.toLowerCase()) ?? 0n;
+      const bb = balances.get(b.safeAddress.toLowerCase()) ?? 0n;
+      if (ba !== bb) return bb > ba ? 1 : -1;
+      return b.createdAt.localeCompare(a.createdAt);
+    });
+    return list;
+  }, [known, activeCred, balances]);
 
   function pick(record: PasskeyRecord) {
     if (record.credentialId === activeCred) {
@@ -51,10 +85,11 @@ export function WalletSwitcherSheet({ open, onOpenChange, onSwitched }: Props) {
         />
       ) : (
         <ul className="flex flex-col gap-2">
-          {known.map((record) => (
+          {sorted.map((record) => (
             <li key={record.credentialId}>
               <WalletRow
                 record={record}
+                balance={balances.get(record.safeAddress.toLowerCase())}
                 active={record.credentialId === activeCred}
                 onClick={() => pick(record)}
               />
@@ -68,10 +103,12 @@ export function WalletSwitcherSheet({ open, onOpenChange, onSwitched }: Props) {
 
 function WalletRow({
   record,
+  balance,
   active,
   onClick,
 }: {
   record: PasskeyRecord;
+  balance: bigint | undefined;
   active: boolean;
   onClick: () => void;
 }) {
@@ -105,9 +142,19 @@ function WalletRow({
         <span className="font-mono text-sm text-ink-primary truncate">
           {shorten(record.safeAddress)}
         </span>
-        <span className="text-[11px] text-ink-muted">
-          kreiran {formatDate(record.createdAt)}
-        </span>
+        <div className="flex items-baseline gap-2">
+          <span
+            className={
+              'text-sm tabular-nums ' +
+              (balance === undefined || balance === 0n
+                ? 'text-ink-muted'
+                : 'text-ink-primary font-medium')
+            }
+          >
+            {balance === undefined ? '…' : `${formatEureShort(balance)} EURe`}
+          </span>
+          <span className="text-[11px] text-ink-muted">· {formatDate(record.createdAt)}</span>
+        </div>
       </div>
       {!active && <ChevronRight className="h-5 w-5 text-ink-muted shrink-0" />}
     </button>
