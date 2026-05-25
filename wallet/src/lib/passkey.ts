@@ -13,12 +13,18 @@ export type PasskeyRecord = {
   safeAddress: `0x${string}`;
   createdAt: string;
   /**
-   * 4-char identifier shown in the passkey name in iCloud Keychain /
-   * Google Password Manager (e.g. "wa_a827"). Derived from the random
-   * userId we passed to navigator.credentials.create at enrollment time.
-   * Optional for backward compatibility with pre-suffix records.
+   * 4-char identifier (legacy field, pre-rename UX). Older records have
+   * this; newer records use `keychainName` instead. Kept for back-compat
+   * so existing wallets keep rendering after the schema change.
    */
   nameSuffix?: string;
+  /**
+   * Full label the user sees in Apple Passwords / iCloud Keychain /
+   * Google Password Manager — exactly what we passed as user.name /
+   * user.displayName at navigator.credentials.create time. Empty / absent
+   * on older records; UI must fall back to nameSuffix → 'Safe'.
+   */
+  keychainName?: string;
 };
 
 const STORAGE_KEY_V1 = 'domovina_wallet_v1';
@@ -149,21 +155,26 @@ function clearAbortIfCurrent(signal: AbortSignal, id: number, label: string): vo
   }
 }
 
+/** Suggest a default passkey label for a fresh enrollment. The caller
+ * (Landing.tsx) prefills its input with this so the user sees a sensible
+ * default but can rename before the Face ID prompt fires. */
+export function suggestPasskeyName(): string {
+  const rnd = crypto.getRandomValues(new Uint8Array(2));
+  const suffix = Array.from(rnd, (b) => b.toString(16).padStart(2, '0')).join('');
+  return `DOMOVINA wa_${suffix}`;
+}
+
 export async function createPasskey(
   label?: string,
-): Promise<{ credentialId: string; pubKey: P256PublicKey; nameSuffix: string }> {
+): Promise<{ credentialId: string; pubKey: P256PublicKey; keychainName: string }> {
   const challenge = crypto.getRandomValues(new Uint8Array(32));
   const userId = crypto.getRandomValues(new Uint8Array(16));
 
-  // 4-char suffix derived from the random userId we chose. It is NOT the
-  // Safe address (chicken-and-egg — the Safe address derives from the
-  // passkey pubkey which the authenticator only mints inside this create()
-  // call), but it IS a stable identifier we can put in user.name BEFORE
-  // calling create. The user sees it in iCloud Keychain / Google Password
-  // Manager + inside the app, so they can correlate which passkey owns
-  // which Safe across many devices.
-  const nameSuffix = bufToHex(userId.buffer).slice(0, 4);
-  const friendlyLabel = label ?? `DOMOVINA wa_${nameSuffix}`;
+  // The label is what the user sees in iCloud Keychain / Google Password
+  // Manager and in our own UI. If the caller didn't pass one (e.g. legacy
+  // call site), fall back to a randomized DOMOVINA wa_xxxx so the entry
+  // is still distinguishable from other passkeys.
+  const friendlyLabel = (label?.trim() || suggestPasskeyName()).slice(0, 64);
 
   const { signal, id: __callId } = nextWebAuthnSignal('signWithPasskey/create/pick');
   let cred: PublicKeyCredential | null;
@@ -202,7 +213,7 @@ export async function createPasskey(
   return {
     credentialId,
     pubKey: { x: BigInt(data.coordinates.x), y: BigInt(data.coordinates.y) },
-    nameSuffix,
+    keychainName: friendlyLabel,
   };
 }
 
