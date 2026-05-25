@@ -6,8 +6,7 @@ import { ActivityFeed } from '../components/ActivityFeed';
 import { useWalletStore } from '../state/store';
 import { getEureBalance } from '../lib/balance';
 import { lookupWallet, registerWalletWithBackend } from '../lib/registry';
-import { getActivePasskey } from '../lib/passkey';
-import { RP_ID } from '../lib/constants';
+import { getActivePasskey, recordRpId } from '../lib/passkey';
 
 type PhoneVerification = {
   phone_hash_short: string;
@@ -91,7 +90,7 @@ export function Wallet() {
             pubKeyY: y,
             signerAddress: passkey.signerAddress,
             safeAddress: passkey.safeAddress,
-            rpId: RP_ID,
+            rpId: recordRpId(passkey),
           });
         }
       }

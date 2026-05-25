@@ -25,7 +25,18 @@ export const SAFE_WEBAUTHN_SHARED_SIGNER = '0x94a4F6affBd8975951142c3999aEAB7ece
 export const DAIMO_P256_VERIFIER = '0xc2b78104907F722DABAc4C69f826a522B2754De4' as const;
 export const P256_PRECOMPILE_ADDRESS = '0x0000000000000000000000000000000000000100' as const;
 
-export const RP_ID = (typeof window !== 'undefined' && window.location.hostname) || 'wallet.domovina.ai';
+// Parent-domain RP ID so the same passkey can be surfaced to any
+// *.domovina.ai page natively. Without this, a passkey bound to
+// wallet.domovina.ai is invisible to e.g. donate.domovina.ai. See
+// docs/plans/cross-domain-wallet-passkey.md Phase B.
+function deriveRpId(): string {
+  if (typeof window === 'undefined') return 'wallet.domovina.ai';
+  const host = window.location.hostname;
+  if (host === 'domovina.ai' || host.endsWith('.domovina.ai')) return 'domovina.ai';
+  return host;
+}
+
+export const RP_ID = deriveRpId();
 export const RP_NAME = 'DOMOVINA Wallet';
 
 // Backend Worker lives at mpt.domovina.ai (and monerium.domovina.ai — same Worker,

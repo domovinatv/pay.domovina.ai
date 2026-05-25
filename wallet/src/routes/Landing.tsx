@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { KeyRound, ShieldCheck, Zap, Plus, RefreshCw, Sparkles, Fingerprint, ChevronRight } from 'lucide-react';
 import type { Address } from 'viem';
 import { BrandHeader } from '../components/Brand';
-import { AddressChip, Button, Card } from '../ui';
+import { AddressChip, Button, Card, Field, Input } from '../ui';
 import { useWalletStore } from '../state/store';
 import { haptic } from '../lib/haptic';
 import { humanizeError } from '../lib/errors';
@@ -13,15 +13,16 @@ import {
   pickExistingPasskey,
   savePasskey,
   setActivePasskey,
+  suggestPasskeyName,
   type PasskeyRecord,
 } from '../lib/passkey';
 import { predictSignerAddress, predictSafeAddress } from '../lib/safe';
 import { lookupWallet, registerWalletWithBackend } from '../lib/registry';
-import { RP_ID } from '../lib/constants';
 
 type Stage =
   | { kind: 'welcome' }
   | { kind: 'welcome-known'; known: PasskeyRecord[] }
+  | { kind: 'naming'; suggestedName: string }
   | { kind: 'creating' }
   | { kind: 'opening' }
   | { kind: 'created'; record: PasskeyRecord }
@@ -47,11 +48,16 @@ export function Landing() {
     }
   }, [stage.kind]);
 
-  async function createNew() {
+  function startCreate() {
+    haptic('tap');
+    setStage({ kind: 'naming', suggestedName: suggestPasskeyName() });
+  }
+
+  async function confirmCreate(chosenName: string) {
     setStage({ kind: 'creating' });
     haptic('tap');
     try {
-      const { credentialId, pubKey, nameSuffix } = await createPasskey();
+      const { credentialId, pubKey, keychainName, rpId } = await createPasskey(chosenName);
       const signerAddress = await predictSignerAddress(pubKey);
       const safeAddress = await predictSafeAddress(signerAddress);
 
@@ -61,7 +67,8 @@ export function Landing() {
         signerAddress,
         safeAddress,
         createdAt: new Date().toISOString(),
-        nameSuffix,
+        keychainName,
+        rpId,
       };
       savePasskey(record);
 
@@ -71,7 +78,7 @@ export function Landing() {
         pubKeyY: pubKey.y.toString(),
         signerAddress,
         safeAddress,
-        rpId: RP_ID,
+        rpId,
       });
 
       haptic('success');
@@ -154,15 +161,23 @@ export function Landing() {
 
       <main className="flex-1 flex flex-col justify-center gap-8 pb-12">
         {stage.kind === 'welcome' && (
-          <WelcomeView onCreate={createNew} onCrossDevice={openExisting} />
+          <WelcomeView onCreate={startCreate} onCrossDevice={openExisting} />
         )}
 
         {stage.kind === 'welcome-known' && (
           <WelcomeKnownView
             known={stage.known}
             onOpenKnown={openKnown}
-            onCreate={createNew}
+            onCreate={startCreate}
             onCrossDevice={openExisting}
+          />
+        )}
+
+        {stage.kind === 'naming' && (
+          <NamingView
+            suggestedName={stage.suggestedName}
+            onCancel={resetToWelcome}
+            onConfirm={confirmCreate}
           />
         )}
 
@@ -283,8 +298,8 @@ function WalletCard({ record, onClick }: { record: PasskeyRecord; onClick: () =>
         style={{ background: gradientFor(record.safeAddress) }}
       />
       <div className="flex flex-col leading-tight min-w-0 flex-1">
-        <span className="text-xs uppercase tracking-widest text-ink-muted">
-          {record.nameSuffix ? `wa_${record.nameSuffix}` : 'Safe'}
+        <span className="text-xs uppercase tracking-widest text-ink-muted truncate">
+          {displayPasskeyLabel(record)}
         </span>
         <span className="font-mono text-sm text-ink-primary truncate">
           {shorten(record.safeAddress)}
@@ -296,6 +311,85 @@ function WalletCard({ record, onClick }: { record: PasskeyRecord; onClick: () =>
       <ChevronRight className="h-5 w-5 text-ink-muted shrink-0" />
     </button>
   );
+}
+
+function NamingView({
+  suggestedName,
+  onCancel,
+  onConfirm,
+}: {
+  suggestedName: string;
+  onCancel: () => void;
+  onConfirm: (name: string) => void;
+}) {
+  const [name, setName] = useState(suggestedName);
+  const trimmed = name.trim();
+  const tooShort = trimmed.length === 0;
+  const tooLong = trimmed.length > 64;
+  const invalid = tooShort || tooLong;
+
+  return (
+    <div className="flex flex-col gap-6 animate-route-enter">
+      <div className="text-center flex flex-col gap-2">
+        <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-surface-sunken text-brand-navy-500">
+          <KeyRound className="h-7 w-7" />
+        </div>
+        <h2 className="text-2xl font-semibold text-ink-primary">Naziv passkeya</h2>
+        <p className="text-sm text-ink-secondary max-w-sm mx-auto">
+          Pod ovim imenom passkey će biti spremljen u Apple Passwords / iCloud Keychain
+          / Google Password Manager. Tako ga razlikuješ od ostalih passkeyeva.
+        </p>
+      </div>
+
+      <Card padding="md">
+        <Field
+          label="Ime passkeya"
+          hint={'Možeš ostaviti predloženo ime ili upiši svoje (npr. „Moj DOMOVINA wallet").'}
+          error={tooLong ? 'Maksimalno 64 znaka.' : undefined}
+        >
+          {(id) => (
+            <Input
+              id={id}
+              type="text"
+              autoFocus
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && !invalid) onConfirm(trimmed);
+              }}
+              maxLength={80}
+              invalid={tooLong}
+              autoComplete="off"
+              autoCorrect="off"
+              autoCapitalize="off"
+              spellCheck={false}
+            />
+          )}
+        </Field>
+      </Card>
+
+      <div className="flex flex-col gap-2">
+        <Button
+          onClick={() => onConfirm(trimmed)}
+          size="xl"
+          block
+          disabled={invalid}
+        >
+          <Fingerprint className="h-5 w-5" />
+          Otvori Face ID i kreiraj
+        </Button>
+        <Button onClick={onCancel} variant="ghost" size="md" block>
+          Odustani
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+function displayPasskeyLabel(record: PasskeyRecord): string {
+  if (record.keychainName) return record.keychainName;
+  if (record.nameSuffix) return `wa_${record.nameSuffix}`;
+  return 'Safe';
 }
 
 function CreatingView() {
@@ -347,10 +441,12 @@ function CreatedView({ record, onEnter }: { record: PasskeyRecord; onEnter: () =
       <Card padding="md" className="flex flex-col items-center gap-3">
         <span className="text-[11px] uppercase tracking-widest text-ink-muted">Tvoja adresa</span>
         <AddressChip address={record.safeAddress} truncate={false} className="max-w-full" />
-        {record.nameSuffix && (
+        {(record.keychainName || record.nameSuffix) && (
           <p className="text-xs text-ink-muted text-center max-w-xs">
             U Apple Passwords / Google Password Manageru ovaj passkey vidiš kao{' '}
-            <span className="font-mono text-ink-secondary">DOMOVINA wa_{record.nameSuffix}</span>.
+            <span className="font-mono text-ink-secondary break-all">
+              {record.keychainName ?? `DOMOVINA wa_${record.nameSuffix}`}
+            </span>.
           </p>
         )}
       </Card>
