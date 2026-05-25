@@ -287,10 +287,10 @@ function WelcomeView({
         </Button>
         <Button onClick={onCrossDevice} variant="secondary" size="lg" block>
           <RefreshCw className="h-4 w-4" />
-          Imam passkey na drugom uređaju
+          Otvori postojeći passkey
         </Button>
         <Button onClick={onLegacy} variant="ghost" size="sm" block>
-          Stari wallet (kreiran prije 25.5.)
+          Ne vidim ga — stari passkey (wallet.domovina.ai)
         </Button>
       </div>
     </div>
@@ -332,10 +332,10 @@ function WelcomeKnownView({
         </Button>
         <Button onClick={onCrossDevice} variant="ghost" size="sm" block>
           <RefreshCw className="h-4 w-4" />
-          Sinkroniziraj passkey s drugog uređaja
+          Otvori drugi passkey (iCloud / Google sync)
         </Button>
         <Button onClick={onLegacy} variant="ghost" size="sm" block>
-          Stari wallet (kreiran prije 25.5.)
+          Ne vidim ga — stari passkey (wallet.domovina.ai)
         </Button>
       </div>
     </div>
