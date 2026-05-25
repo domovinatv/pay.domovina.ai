@@ -34,6 +34,7 @@ import {
   type PaymentIntent,
   type IntentState,
 } from '../lib/paymentIntent';
+import { brand } from '../app/brand';
 
 type Mode = 'sepa' | 'p2p';
 
@@ -179,14 +180,14 @@ function SepaReceive() {
       // BIC + memo are embedded in the text body so they can copy-paste
       // each field directly into their bank's manual transfer form.
       const amountStr = Number(intent?.amount_eur ?? 0).toFixed(2);
-      const textLines = [`Plaćanje ${amountStr} EUR na DOMOVINA Wallet`];
+      const textLines = [`Plaćanje ${amountStr} EUR na ${brand.name}`];
       if (intent?.iban) textLines.push(`IBAN: ${formatIban(intent.iban)}`);
       if (intent?.bic) textLines.push(`BIC: ${intent.bic}`);
       if (intent?.memo) textLines.push(`Opis plaćanja: ${intent.memo}`);
       const payload: ShareData = {
         title: 'EURe top-up',
         text: textLines.join('\n'),
-        url: 'https://wallet.domovina.ai',
+        url: `https://${brand.domain}`,
       };
       if (typeof navigator.canShare === 'function' && navigator.canShare({ files: [file] })) {
         payload.files = [file];
@@ -433,7 +434,7 @@ function P2PReceive({ safeAddress }: { safeAddress: `0x${string}` }) {
     // caption when the deep link is not useful to them. DOMOVINA users tap
     // the url chip and land on Send with everything pre-filled.
     const textLines = [
-      `Pošalji${amountSuffix} na moj DOMOVINA wallet`,
+      `Pošalji${amountSuffix} na moj ${brand.name}`,
       `Adresa: ${safeAddress}`,
       `Mreža: Gnosis Chain (EURe)`,
     ];

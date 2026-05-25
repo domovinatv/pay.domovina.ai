@@ -34,6 +34,7 @@ import {
 import { fetchEureBalances, formatEureShort } from '../lib/balances';
 import { predictSignerAddress, predictSafeAddress } from '../lib/safe';
 import { lookupWallet, registerWalletWithBackend } from '../lib/registry';
+import { brand } from '../app/brand';
 
 /** Above this count we surface a discouragement hint inline and gate
  * creation behind an explicit confirmation step. Three is the threshold
@@ -321,10 +322,8 @@ function WelcomeView({
   return (
     <div className="flex flex-col gap-8 animate-route-enter">
       <div className="text-center flex flex-col gap-2">
-        <h2 className="text-2xl font-semibold text-ink-primary">Self-custody EURe wallet</h2>
-        <p className="text-ink-secondary">
-          Bez seed phrase-a. Bez password-a. Samo Face&nbsp;ID i Keychain.
-        </p>
+        <h2 className="text-2xl font-semibold text-ink-primary">{brand.copy.welcomeTitle}</h2>
+        <p className="text-ink-secondary">{brand.copy.welcomeSubtitle}</p>
       </div>
 
       <Card padding="md" className="flex flex-col gap-3">
