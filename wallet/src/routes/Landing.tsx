@@ -94,19 +94,20 @@ export function Landing() {
     // No WebAuthn re-auth on open — Send requires Face ID anyway, and skipping
     // it avoids an iOS race where Keychain leaves credentials in a "pending"
     // state. See [[feedback-webauthn-ios-pending-race]].
-    setActivePasskey(record.credentialId);
+    const healed = await healStubPubKey(record);
+    setActivePasskey(healed.credentialId);
     setIdentity({
-      credentialId: record.credentialId,
-      signerAddress: record.signerAddress,
-      safeAddress: record.safeAddress,
+      credentialId: healed.credentialId,
+      signerAddress: healed.signerAddress,
+      safeAddress: healed.safeAddress,
     });
   }
 
-  async function openExisting() {
+  async function openExisting(opts: { legacyOnly?: boolean } = {}) {
     setStage({ kind: 'opening' });
     haptic('tap');
     try {
-      const { credentialId } = await pickExistingPasskey();
+      const { credentialId } = await pickExistingPasskey(opts);
       let record = lookupPasskey(credentialId);
       if (!record) {
         // Cross-device fallback: passkey synced via iCloud/Google but no
@@ -130,6 +131,11 @@ export function Landing() {
         };
         savePasskey(restored);
         record = restored;
+      } else {
+        // Existing record may carry a stub pubKey from a pre-fix cross-device
+        // restore (when publicWalletView did not yet return pub_key_x/y).
+        // Heal it now so Send works without the user needing to clear data.
+        record = await healStubPubKey(record);
       }
       setActivePasskey(record.credentialId);
       setIdentity({
@@ -157,13 +163,21 @@ export function Landing() {
     setStage(known.length > 0 ? { kind: 'welcome-known', known } : { kind: 'welcome' });
   }
 
+  async function openLegacy() {
+    await openExisting({ legacyOnly: true });
+  }
+
   return (
     <div className="min-h-full flex flex-col px-6 max-w-md mx-auto pt-safe pb-safe">
       <BrandHeader />
 
       <main className="flex-1 flex flex-col justify-center gap-8 pb-12">
         {stage.kind === 'welcome' && (
-          <WelcomeView onCreate={startCreate} onCrossDevice={openExisting} />
+          <WelcomeView
+            onCreate={startCreate}
+            onCrossDevice={() => openExisting()}
+            onLegacy={openLegacy}
+          />
         )}
 
         {stage.kind === 'welcome-known' && (
@@ -171,7 +185,8 @@ export function Landing() {
             known={stage.known}
             onOpenKnown={openKnown}
             onCreate={startCreate}
-            onCrossDevice={openExisting}
+            onCrossDevice={() => openExisting()}
+            onLegacy={openLegacy}
           />
         )}
 
@@ -199,12 +214,44 @@ export function Landing() {
   );
 }
 
+/**
+ * If a PasskeyRecord still carries the ('0','0') stub from a pre-publicWalletView
+ * cross-device restore, hit the backend, populate the real pubKey + rpId, and
+ * persist. Idempotent; bails out cleanly if the backend is unreachable so we
+ * never block wallet open on a transient network error.
+ */
+async function healStubPubKey(record: PasskeyRecord): Promise<PasskeyRecord> {
+  if (record.pubKey.x !== '0' && record.pubKey.y !== '0') return record;
+  console.log('[Landing] stub pubKey detected — refetching from backend', {
+    credentialId: record.credentialId.slice(0, 14) + '…',
+  });
+  try {
+    const remote = await lookupWallet(record.credentialId);
+    if (!remote || remote.pub_key_x === '0' || remote.pub_key_y === '0') {
+      console.warn('[Landing] backend lookup did not yield a real pubKey; leaving stub');
+      return record;
+    }
+    const healed: PasskeyRecord = {
+      ...record,
+      pubKey: { x: remote.pub_key_x, y: remote.pub_key_y },
+      rpId: record.rpId ?? remote.rp_id,
+    };
+    savePasskey(healed);
+    return healed;
+  } catch (e) {
+    console.warn('[Landing] stub pubKey heal failed', e);
+    return record;
+  }
+}
+
 function WelcomeView({
   onCreate,
   onCrossDevice,
+  onLegacy,
 }: {
   onCreate: () => void;
   onCrossDevice: () => void;
+  onLegacy: () => void;
 }) {
   return (
     <div className="flex flex-col gap-8 animate-route-enter">
@@ -242,6 +289,9 @@ function WelcomeView({
           <RefreshCw className="h-4 w-4" />
           Imam passkey na drugom uređaju
         </Button>
+        <Button onClick={onLegacy} variant="ghost" size="sm" block>
+          Stari wallet (kreiran prije 25.5.)
+        </Button>
       </div>
     </div>
   );
@@ -252,11 +302,13 @@ function WelcomeKnownView({
   onOpenKnown,
   onCreate,
   onCrossDevice,
+  onLegacy,
 }: {
   known: PasskeyRecord[];
   onOpenKnown: (record: PasskeyRecord) => void;
   onCreate: () => void;
   onCrossDevice: () => void;
+  onLegacy: () => void;
 }) {
   return (
     <div className="flex flex-col gap-6 animate-route-enter">
@@ -281,6 +333,9 @@ function WelcomeKnownView({
         <Button onClick={onCrossDevice} variant="ghost" size="sm" block>
           <RefreshCw className="h-4 w-4" />
           Sinkroniziraj passkey s drugog uređaja
+        </Button>
+        <Button onClick={onLegacy} variant="ghost" size="sm" block>
+          Stari wallet (kreiran prije 25.5.)
         </Button>
       </div>
     </div>
