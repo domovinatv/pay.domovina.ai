@@ -41,7 +41,11 @@ const AMOUNT_PRESETS = ['10', '25', '50', '100'];
 
 export function Receive() {
   const { safeAddress } = useWalletStore();
-  const [mode, setMode] = useState<Mode>('sepa');
+  // Onchain (P2P EURe direct on Gnosis) is the default — fastest path,
+  // no third-party rail in the loop, no minimum amount constraint.
+  // SEPA top-up via Monerium stays available as a secondary option for
+  // users moving in from a fiat bank account.
+  const [mode, setMode] = useState<Mode>('p2p');
 
   if (!safeAddress) return null;
 
@@ -52,8 +56,8 @@ export function Receive() {
         value={mode}
         onChange={setMode}
         options={[
-          { value: 'sepa', label: 'Iz banke', icon: <Landmark /> },
           { value: 'p2p', label: 'Drugi wallet', icon: <WalletIcon /> },
+          { value: 'sepa', label: 'Iz banke', icon: <Landmark /> },
         ]}
       />
 
@@ -68,11 +72,11 @@ function SepaReceive() {
   const { safeAddress } = useWalletStore();
   const { toast } = useToast();
   const { resolved } = useTheme();
-  // 1.01 is the testing default: small enough to validate the full SEPA →
-  // EURe rail with real money, large enough that Monerium accepts the
-  // intent (rejects 0/sub-cent amounts). Round presets below remain for
-  // anyone topping up real value.
-  const [amount, setAmount] = useState('1.01');
+  // 1.07 is the shared testing default across both Receive modes — small
+  // enough not to commit meaningful funds, large enough that Monerium
+  // accepts the SEPA intent (sub-cent / zero amounts are rejected). Round
+  // presets below remain for anyone topping up real value.
+  const [amount, setAmount] = useState('1.07');
   const [intent, setIntent] = useState<PaymentIntent | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -312,7 +316,11 @@ function SepaReceive() {
 function P2PReceive({ safeAddress }: { safeAddress: `0x${string}` }) {
   const { toast } = useToast();
   const { resolved } = useTheme();
-  const [amount, setAmount] = useState('');
+  // Pre-fill 1.07 so the QR + deep link include an amount immediately on
+  // mount; users who want address-only sharing clear the field. Matches
+  // SepaReceive's testing default so the value is muscle-memory across
+  // modes.
+  const [amount, setAmount] = useState('1.07');
   const qrRef = useRef<HTMLDivElement>(null);
   const qrInstanceRef = useRef<QRCodeStyling | null>(null);
 
