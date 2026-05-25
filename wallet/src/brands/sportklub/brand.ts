@@ -7,11 +7,11 @@ import type { BrandConfig } from '../_shared/types';
  * yields a visually distinct app from the default DOMOVINA build.
  */
 export const brand: BrandConfig = {
-  id: 'sportkluba',
+  id: 'sportklub',
   name: 'SK Wallet',
-  shortName: 'SportKluba',
+  shortName: 'SportKlub',
   productSubtitle: 'EURe za navijače i sponzore',
-  domain: 'sportkluba.domovina.ai',
+  domain: 'sportklub.domovina.ai',
   pageTitle: 'SK Wallet · EURe za navijače',
   colors: {
     primary: '#1A4B8A', // SofaScore-style deep blue

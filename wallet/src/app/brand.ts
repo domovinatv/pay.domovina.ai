@@ -1,6 +1,6 @@
 import type { BrandConfig } from '../brands/_shared/types';
 import { brand as defaultBrand } from '../brands/default/brand';
-import { brand as sportklubaBrand } from '../brands/sportkluba/brand';
+import { brand as sportklubBrand } from '../brands/sportklub/brand';
 import { brand as zupaBrand } from '../brands/zupa/brand';
 
 /**
@@ -15,7 +15,7 @@ import { brand as zupaBrand } from '../brands/zupa/brand';
  */
 const REGISTRY: Record<string, BrandConfig> = {
   default: defaultBrand,
-  sportkluba: sportklubaBrand,
+  sportklub: sportklubBrand,
   zupa: zupaBrand,
 };
 
