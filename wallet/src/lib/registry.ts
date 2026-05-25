@@ -10,6 +10,8 @@ export type PhoneBindingView = {
 
 export type WalletRegistryView = {
   credential_id: string;
+  pub_key_x: string;
+  pub_key_y: string;
   signer_address: Address;
   safe_address: Address;
   rp_id: string;

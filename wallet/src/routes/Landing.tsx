@@ -117,14 +117,16 @@ export function Landing() {
             'Ovaj passkey nije registriran ni lokalno ni na serveru. Otvori na izvornom uređaju ili kreiraj novi wallet.',
           );
         }
-        // pubKey ('0','0') is a stub — Safe is already deployed so we don't
-        // need it for Open. Future Send recovers pubKey from the assertion.
+        // pubKey + rpId come from the backend registry — without them Send
+        // would deploy the wrong signer (stub-0 guard in functions/api/relay.ts)
+        // and signWithPasskey would call get() under the wrong RP scope.
         const restored: PasskeyRecord = {
           credentialId,
-          pubKey: { x: '0', y: '0' },
+          pubKey: { x: remote.pub_key_x, y: remote.pub_key_y },
           signerAddress: remote.signer_address,
           safeAddress: remote.safe_address,
           createdAt: remote.created_at,
+          rpId: remote.rp_id,
         };
         savePasskey(restored);
         record = restored;
