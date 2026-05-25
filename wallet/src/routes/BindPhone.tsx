@@ -9,8 +9,7 @@ import {
   lookupWallet,
   registerWalletWithBackend,
 } from '../lib/registry';
-import { getActivePasskey } from '../lib/passkey';
-import { RP_ID } from '../lib/constants';
+import { getActivePasskey, recordRpId } from '../lib/passkey';
 
 type Stage =
   | { kind: 'idle' }
@@ -80,7 +79,7 @@ export function BindPhone() {
         pubKeyY: y,
         signerAddress: passkey.signerAddress,
         safeAddress: passkey.safeAddress,
-        rpId: RP_ID,
+        rpId: recordRpId(passkey),
       });
       if (!registered) {
         setStage({

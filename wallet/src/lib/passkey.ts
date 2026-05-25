@@ -6,6 +6,11 @@ export type P256PublicKey = {
   y: bigint;
 };
 
+/** Pre-Phase B (parent-RP) wallets were created with the subdomain as RP ID.
+ * Records from that era don't carry an `rpId` field; we assume this value
+ * for any record where rpId is missing. */
+export const LEGACY_RP_ID = 'wallet.domovina.ai' as const;
+
 export type PasskeyRecord = {
   credentialId: string;
   pubKey: { x: string; y: string };
@@ -25,7 +30,19 @@ export type PasskeyRecord = {
    * on older records; UI must fall back to nameSuffix → 'Safe'.
    */
   keychainName?: string;
+  /**
+   * The WebAuthn Relying Party ID this credential was created under. WebAuthn
+   * `get()` calls MUST pass a matching rpId; the browser does not do implicit
+   * parent/child fall-through. Missing on legacy records, which all used
+   * LEGACY_RP_ID. New records record whatever RP_ID derived to at create time
+   * (currently `domovina.ai` for any *.domovina.ai page — see constants.ts).
+   */
+  rpId?: string;
 };
+
+export function recordRpId(record: PasskeyRecord): string {
+  return record.rpId ?? LEGACY_RP_ID;
+}
 
 const STORAGE_KEY_V1 = 'domovina_wallet_v1';
 const STORAGE_KEY_V2 = 'domovina_wallets_v2';
@@ -166,7 +183,12 @@ export function suggestPasskeyName(): string {
 
 export async function createPasskey(
   label?: string,
-): Promise<{ credentialId: string; pubKey: P256PublicKey; keychainName: string }> {
+): Promise<{
+  credentialId: string;
+  pubKey: P256PublicKey;
+  keychainName: string;
+  rpId: string;
+}> {
   const challenge = crypto.getRandomValues(new Uint8Array(32));
   const userId = crypto.getRandomValues(new Uint8Array(16));
 
@@ -214,42 +236,65 @@ export async function createPasskey(
     credentialId,
     pubKey: { x: BigInt(data.coordinates.x), y: BigInt(data.coordinates.y) },
     keychainName: friendlyLabel,
+    rpId: RP_ID,
   };
 }
 
-/**
- * Discoverable-credential get: shows OS picker with ALL passkeys for our RP ID
- * (across iCloud Keychain, LastPass, 1Password, Google PM, …). User picks one,
- * we return the credentialId from the assertion. Caller then looks it up in
- * the local registry to find pubKey + safeAddress.
- */
-export async function pickExistingPasskey(): Promise<{ credentialId: string }> {
+/** Run a discoverable-credential get() under a specific RP ID. Returns the
+ * picked credentialId, or null if the user dismisses or no credentials exist
+ * for that scope. */
+async function pickForRpId(rpId: string, label: string): Promise<string | null> {
   const challenge = crypto.getRandomValues(new Uint8Array(32));
-  const { signal, id: __callId } = nextWebAuthnSignal('signWithPasskey/create/pick');
-  let assertion: PublicKeyCredential | null;
+  const { signal, id: __callId } = nextWebAuthnSignal(`pickExistingPasskey/${label}`);
   try {
-    assertion = (await navigator.credentials.get({
+    const assertion = (await navigator.credentials.get({
       publicKey: {
+        rpId,
         challenge: challenge.buffer as ArrayBuffer,
-        // No allowCredentials = discoverable mode → picker shows everything.
         userVerification: 'required',
         timeout: 60_000,
       },
       signal,
     })) as PublicKeyCredential | null;
+    if (!assertion) return null;
+    return '0x' + bufToHex(assertion.rawId);
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    if (/NotAllowed|cancelled|abort|timed out/i.test(msg)) return null;
+    throw e;
   } finally {
     clearAbortIfCurrent(signal, __callId, 'WebAuthn op');
   }
-  if (!assertion) throw new Error('Passkey selection cancelled');
-  // assertion.id is base64url-encoded credentialId; our registry uses
-  // protocol-kit's hex-string format ("0x…"). Convert.
-  const credentialId = '0x' + bufToHex(assertion.rawId);
-  return { credentialId };
+}
+
+/**
+ * Discoverable-credential get: shows OS picker with passkeys for our RP ID
+ * (across iCloud Keychain, LastPass, 1Password, Google PM, …). User picks one,
+ * we return the credentialId from the assertion. Caller then looks it up in
+ * the local registry to find pubKey + safeAddress.
+ *
+ * We try the current RP_ID first (e.g. `domovina.ai` post-Phase B). If the
+ * user only has a legacy `wallet.domovina.ai`-scoped passkey, that picker
+ * shows nothing and they dismiss; we then offer the legacy scope. The
+ * sequence keeps the common path single-prompt while still surfacing
+ * pre-Phase-B credentials.
+ */
+export async function pickExistingPasskey(): Promise<{ credentialId: string }> {
+  const primary = await pickForRpId(RP_ID, 'primary');
+  if (primary) return { credentialId: primary };
+
+  if (RP_ID !== LEGACY_RP_ID) {
+    const legacy = await pickForRpId(LEGACY_RP_ID, 'legacy');
+    if (legacy) return { credentialId: legacy };
+  }
+
+  throw new Error('Passkey selection cancelled');
 }
 
 export async function signWithPasskey(
   credentialId: string,
   challenge: Uint8Array,
+  rpId: string,
 ): Promise<{
   authenticatorData: Uint8Array;
   clientDataJSON: Uint8Array;
@@ -262,6 +307,11 @@ export async function signWithPasskey(
     try {
       assertion = (await navigator.credentials.get({
         publicKey: {
+          // rpId is required per-record: legacy passkeys are scoped to
+          // wallet.domovina.ai, parent-scoped ones to domovina.ai. The browser
+          // does not fall through between them; callers must pass the rpId
+          // recorded at create time (see PasskeyRecord.rpId).
+          rpId,
           challenge: challenge.buffer as ArrayBuffer,
           allowCredentials: [{ id: hexToBuf(credentialId), type: 'public-key' }],
           userVerification: 'required',

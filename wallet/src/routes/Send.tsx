@@ -22,7 +22,7 @@ import { parseAmount, isAmountInvalidForDisplay } from '../lib/amount';
 import { addRecipient, listRecentRecipients, type Recipient } from '../lib/recipients';
 import { EURE_ADDRESS, EURE_DECIMALS } from '../lib/constants';
 import { encodeWebAuthnSignature, getSafeTxHash } from '../lib/safe';
-import { getActivePasskey, signWithPasskey } from '../lib/passkey';
+import { getActivePasskey, recordRpId, signWithPasskey } from '../lib/passkey';
 import { relayTx, getRelayStatus, type RelayStatus } from '../lib/relay';
 import { getEureBalance } from '../lib/balance';
 
@@ -249,7 +249,7 @@ export function Send() {
       console.log('[Send] step 5: got safeTxHash', { safeTxHash, nonce: fields.nonce.toString() });
 
       console.log('[Send] step 6: calling signWithPasskey (will open FaceID)…');
-      const assertion = await signWithPasskey(credentialId, hexToBytes(safeTxHash));
+      const assertion = await signWithPasskey(credentialId, hexToBytes(safeTxHash), recordRpId(passkey));
       console.log('[Send] step 7: got passkey assertion', {
         authenticatorDataLen: assertion.authenticatorData.length,
         clientDataJSONLen: assertion.clientDataJSON.length,

@@ -18,7 +18,6 @@ import {
 } from '../lib/passkey';
 import { predictSignerAddress, predictSafeAddress } from '../lib/safe';
 import { lookupWallet, registerWalletWithBackend } from '../lib/registry';
-import { RP_ID } from '../lib/constants';
 
 type Stage =
   | { kind: 'welcome' }
@@ -58,7 +57,7 @@ export function Landing() {
     setStage({ kind: 'creating' });
     haptic('tap');
     try {
-      const { credentialId, pubKey, keychainName } = await createPasskey(chosenName);
+      const { credentialId, pubKey, keychainName, rpId } = await createPasskey(chosenName);
       const signerAddress = await predictSignerAddress(pubKey);
       const safeAddress = await predictSafeAddress(signerAddress);
 
@@ -69,6 +68,7 @@ export function Landing() {
         safeAddress,
         createdAt: new Date().toISOString(),
         keychainName,
+        rpId,
       };
       savePasskey(record);
 
@@ -78,7 +78,7 @@ export function Landing() {
         pubKeyY: pubKey.y.toString(),
         signerAddress,
         safeAddress,
-        rpId: RP_ID,
+        rpId,
       });
 
       haptic('success');
