@@ -168,12 +168,21 @@ export function buildWalletApi(): Hono<{ Bindings: Env }> {
 /// admin HTML dashboard JSON endpoints in src/admin/app.ts. Phone numbers
 /// are never returned in any view (only `has_phone` boolean); only the
 /// `phone_hash` column exists on the row, and even that stays server-side.
+///
+/// pub_key_x/y ARE returned: cross-device passkey recovery (Landing.tsx
+/// "Imam passkey na drugom uređaju") needs them to rebuild the local
+/// PasskeyRecord, otherwise Send hits the relay's stub-0 guard and the
+/// user's funds become unreachable from any device with cleared
+/// localStorage. The P-256 public key is not sensitive — it is already
+/// onchain as the Safe owner's WebAuthnSigner proxy input.
 export function publicWalletView(
   row: import('./db').WalletRow | null,
 ): Record<string, unknown> | null {
   if (!row) return null;
   return {
     credential_id: row.credential_id,
+    pub_key_x: row.pub_key_x,
+    pub_key_y: row.pub_key_y,
     signer_address: row.signer_address,
     safe_address: row.safe_address,
     rp_id: row.rp_id,
