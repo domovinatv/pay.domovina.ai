@@ -24,9 +24,11 @@ import {
   listKnownPasskeys,
   lookupPasskey,
   pickExistingPasskey,
+  purposeToKeychainName,
   savePasskey,
   setActivePasskey,
   suggestPasskeyName,
+  PASSKEY_PURPOSE_SUGGESTIONS,
   type PasskeyRecord,
 } from '../lib/passkey';
 import { fetchEureBalances, formatEureShort } from '../lib/balances';
@@ -675,24 +677,53 @@ function NamingView({
   const tooLong = trimmed.length > 64;
   const invalid = tooShort || tooLong;
 
+  // Existing wallet labels — surfaced so the user picks something distinct
+  // from "Glavni" if they already have a Glavni. Read once on mount; the
+  // user is heading into a destination they cannot easily back out of.
+  const existingLabels = useMemo(() => {
+    return listKnownPasskeys()
+      .map((r) => r.keychainName ?? (r.nameSuffix ? `wa_${r.nameSuffix}` : null))
+      .filter((s): s is string => !!s);
+  }, []);
+
+  const collides = existingLabels.some(
+    (l) => l.localeCompare(trimmed, 'hr', { sensitivity: 'base' }) === 0,
+  );
+
+  function applyPurpose(purpose: string) {
+    setName(purposeToKeychainName(purpose));
+  }
+
   return (
     <div className="flex flex-col gap-6 animate-route-enter">
       <div className="text-center flex flex-col gap-2">
         <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-surface-sunken text-brand-navy-500">
           <KeyRound className="h-7 w-7" />
         </div>
-        <h2 className="text-2xl font-semibold text-ink-primary">Naziv passkeya</h2>
+        <h2 className="text-2xl font-semibold text-ink-primary">
+          Kako ćeš zvati ovaj wallet?
+        </h2>
         <p className="text-sm text-ink-secondary max-w-sm mx-auto">
-          Pod ovim imenom passkey će biti spremljen u Apple Passwords / iCloud Keychain
-          / Google Password Manager. Tako ga razlikuješ od ostalih passkeyeva.
+          Ovaj naziv ostaje{' '}
+          <span className="font-semibold text-ink-primary">trajno spremljen</span> u
+          Apple Passwords / iCloud Keychain / Google Password Manageru.
+          Vidjet ćeš ga svaki put kad ti OS ponudi Face ID na bilo kojoj
+          <span className="whitespace-nowrap"> *.domovina.ai</span> stranici, pa odaberi nešto što ćeš{' '}
+          <span className="font-semibold text-ink-primary">prepoznati za 6 mjeseci</span>.
         </p>
       </div>
 
-      <Card padding="md">
+      <Card padding="md" className="flex flex-col gap-4">
         <Field
-          label="Ime passkeya"
-          hint={'Možeš ostaviti predloženo ime ili upiši svoje (npr. „Moj DOMOVINA wallet").'}
-          error={tooLong ? 'Maksimalno 64 znaka.' : undefined}
+          label="Naziv passkeya"
+          hint="Tap na predložak ispod ili upiši svoj. Naziv ostaje u OS Keychainu kako ga sada upišeš."
+          error={
+            tooLong
+              ? 'Maksimalno 64 znaka.'
+              : collides
+                ? 'Već imaš passkey s istim nazivom — odaberi drugi da se kasnije ne pomiješaju.'
+                : undefined
+          }
         >
           {(id) => (
             <Input
@@ -705,7 +736,7 @@ function NamingView({
                 if (e.key === 'Enter' && !invalid) onConfirm(trimmed);
               }}
               maxLength={80}
-              invalid={tooLong}
+              invalid={tooLong || collides}
               autoComplete="off"
               autoCorrect="off"
               autoCapitalize="off"
@@ -713,6 +744,66 @@ function NamingView({
             />
           )}
         </Field>
+
+        <div className="flex flex-col gap-1.5">
+          <span className="text-[11px] uppercase tracking-widest text-ink-muted">
+            Brzi predlošci
+          </span>
+          <div className="flex flex-wrap gap-1.5">
+            {PASSKEY_PURPOSE_SUGGESTIONS.map((p) => {
+              const candidate = purposeToKeychainName(p);
+              const taken = existingLabels.some(
+                (l) => l.localeCompare(candidate, 'hr', { sensitivity: 'base' }) === 0,
+              );
+              return (
+                <button
+                  key={p}
+                  type="button"
+                  onClick={() => applyPurpose(p)}
+                  disabled={taken}
+                  className={
+                    'rounded-full text-xs px-3 py-1 transition active:scale-95 ' +
+                    (taken
+                      ? 'bg-surface-sunken/60 text-ink-muted line-through cursor-not-allowed'
+                      : 'bg-surface-sunken hover:bg-surface-border text-ink-secondary')
+                  }
+                  title={taken ? 'Već postoji wallet s tim nazivom' : undefined}
+                >
+                  {p}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      </Card>
+
+      <Card
+        padding="md"
+        className="flex flex-col gap-2 border-dashed bg-surface-sunken/40"
+      >
+        <div className="flex items-center gap-1.5 text-[11px] uppercase tracking-widest text-ink-muted">
+          <KeyRound className="h-3 w-3" />
+          U OS Keychainu izgleda ovako
+        </div>
+        <div
+          className={
+            'font-mono text-base break-all leading-snug ' +
+            (trimmed ? 'text-ink-primary' : 'text-ink-muted')
+          }
+        >
+          {trimmed || 'upiši naziv…'}
+        </div>
+        {existingLabels.length > 0 && (
+          <div className="pt-1 flex flex-col gap-1 text-[11px] text-ink-muted leading-snug">
+            <span className="uppercase tracking-widest">
+              Već postoje na ovom uređaju
+            </span>
+            <span className="font-mono break-all">
+              {existingLabels.slice(0, 5).join(' · ')}
+              {existingLabels.length > 5 && ` · +${existingLabels.length - 5}`}
+            </span>
+          </div>
+        )}
       </Card>
 
       <div className="flex flex-col gap-2">
@@ -720,7 +811,7 @@ function NamingView({
           onClick={() => onConfirm(trimmed)}
           size="xl"
           block
-          disabled={invalid}
+          disabled={invalid || collides}
         >
           <Fingerprint className="h-5 w-5" />
           Otvori Face ID i kreiraj
