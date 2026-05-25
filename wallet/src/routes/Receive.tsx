@@ -68,7 +68,11 @@ function SepaReceive() {
   const { safeAddress } = useWalletStore();
   const { toast } = useToast();
   const { resolved } = useTheme();
-  const [amount, setAmount] = useState('10');
+  // 1.01 is the testing default: small enough to validate the full SEPA →
+  // EURe rail with real money, large enough that Monerium accepts the
+  // intent (rejects 0/sub-cent amounts). Round presets below remain for
+  // anyone topping up real value.
+  const [amount, setAmount] = useState('1.01');
   const [intent, setIntent] = useState<PaymentIntent | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
