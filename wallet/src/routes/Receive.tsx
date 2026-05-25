@@ -173,8 +173,21 @@ function SepaReceive() {
       const file = new File([blob], `domovina-eure-topup-${intent?.sid ?? 'qr'}.png`, {
         type: 'image/png',
       });
-      const text = `Plaćanje ${Number(intent?.amount_eur ?? 0).toFixed(2)} EUR na DOMOVINA Wallet`;
-      const payload: ShareData = { title: 'EURe top-up', text };
+      // WhatsApp / iMessage / Telegram render { files, text, url } together:
+      // image as attachment, text as caption, url as a clickable chip.
+      // For payers who cannot scan the QR (older banking apps), the IBAN +
+      // BIC + memo are embedded in the text body so they can copy-paste
+      // each field directly into their bank's manual transfer form.
+      const amountStr = Number(intent?.amount_eur ?? 0).toFixed(2);
+      const textLines = [`Plaćanje ${amountStr} EUR na DOMOVINA Wallet`];
+      if (intent?.iban) textLines.push(`IBAN: ${formatIban(intent.iban)}`);
+      if (intent?.bic) textLines.push(`BIC: ${intent.bic}`);
+      if (intent?.memo) textLines.push(`Opis plaćanja: ${intent.memo}`);
+      const payload: ShareData = {
+        title: 'EURe top-up',
+        text: textLines.join('\n'),
+        url: 'https://wallet.domovina.ai',
+      };
       if (typeof navigator.canShare === 'function' && navigator.canShare({ files: [file] })) {
         payload.files = [file];
       }
@@ -415,7 +428,16 @@ function P2PReceive({ safeAddress }: { safeAddress: `0x${string}` }) {
   async function shareReceive() {
     const shareTitle = 'Pošalji mi EURe';
     const amountSuffix = parsedAmount.ok ? ` ${parsedAmount.normalized} EURe` : '';
-    const shareText = `Pošalji${amountSuffix} na moj DOMOVINA wallet`;
+    // Multi-line text body so receivers using a non-DOMOVINA wallet (MetaMask,
+    // Rabby, …) can copy the raw recipient address + network out of the
+    // caption when the deep link is not useful to them. DOMOVINA users tap
+    // the url chip and land on Send with everything pre-filled.
+    const textLines = [
+      `Pošalji${amountSuffix} na moj DOMOVINA wallet`,
+      `Adresa: ${safeAddress}`,
+      `Mreža: Gnosis Chain (EURe)`,
+    ];
+    const shareText = textLines.join('\n');
 
     let receiptFile: File | null = null;
     try {
