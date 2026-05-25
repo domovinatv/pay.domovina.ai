@@ -22,7 +22,8 @@ import { parseAmount, isAmountInvalidForDisplay } from '../lib/amount';
 import { addRecipient, listRecentRecipients, type Recipient } from '../lib/recipients';
 import { EURE_ADDRESS, EURE_DECIMALS } from '../lib/constants';
 import { encodeWebAuthnSignature, getSafeTxHash } from '../lib/safe';
-import { getActivePasskey, recordRpId, signWithPasskey } from '../lib/passkey';
+import { getActivePasskey, recordRpId, savePasskey, signWithPasskey, type PasskeyRecord } from '../lib/passkey';
+import { lookupWallet } from '../lib/registry';
 import { relayTx, getRelayStatus, type RelayStatus } from '../lib/relay';
 import { getEureBalance } from '../lib/balance';
 
@@ -211,12 +212,29 @@ export function Send() {
       console.warn('[Send] missing identity, abort');
       return;
     }
-    const passkey = getActivePasskey();
+    let passkey = getActivePasskey();
     if (!passkey) {
       console.warn('[Send] no active passkey');
       sendInFlightRef.current = false;
       setError('No active passkey on this device — re-open wallet.');
       return;
+    }
+    // Belt-and-suspenders: Landing.openKnown should have already healed any
+    // stub pubKey, but a session that started before that landed (e.g. the
+    // app was just upgraded and the user is mid-flow) could still carry the
+    // stub. Refetch from backend so the relay's stub-0 guard doesn't fire.
+    if (passkey.pubKey.x === '0' || passkey.pubKey.y === '0') {
+      console.warn('[Send] stub pubKey at send time — refetching');
+      const remote = await lookupWallet(passkey.credentialId);
+      if (remote && remote.pub_key_x !== '0' && remote.pub_key_y !== '0') {
+        const healed: PasskeyRecord = {
+          ...passkey,
+          pubKey: { x: remote.pub_key_x, y: remote.pub_key_y },
+          rpId: passkey.rpId ?? remote.rp_id,
+        };
+        savePasskey(healed);
+        passkey = healed;
+      }
     }
     console.log('[Send] step 2: loaded active passkey', {
       credentialId: passkey.credentialId,

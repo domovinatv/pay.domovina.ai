@@ -273,13 +273,22 @@ async function pickForRpId(rpId: string, label: string): Promise<string | null> 
  * we return the credentialId from the assertion. Caller then looks it up in
  * the local registry to find pubKey + safeAddress.
  *
- * We try the current RP_ID first (e.g. `domovina.ai` post-Phase B). If the
- * user only has a legacy `wallet.domovina.ai`-scoped passkey, that picker
- * shows nothing and they dismiss; we then offer the legacy scope. The
- * sequence keeps the common path single-prompt while still surfacing
- * pre-Phase-B credentials.
+ * Default flow: try the current RP_ID first (e.g. `domovina.ai` post-Phase B),
+ * then fall back to LEGACY_RP_ID on dismiss. The fallback is invisible to
+ * users who picked something in the primary picker — they never see a
+ * second prompt, and never reach their legacy passkeys this way. For that
+ * case, callers pass { legacyOnly: true } to force the LEGACY_RP_ID picker
+ * directly (wired to the "Stari wallet (prije svibnja 2026)" UI button).
  */
-export async function pickExistingPasskey(): Promise<{ credentialId: string }> {
+export async function pickExistingPasskey(
+  opts: { legacyOnly?: boolean } = {},
+): Promise<{ credentialId: string }> {
+  if (opts.legacyOnly) {
+    const legacy = await pickForRpId(LEGACY_RP_ID, 'legacy-only');
+    if (legacy) return { credentialId: legacy };
+    throw new Error('Passkey selection cancelled');
+  }
+
   const primary = await pickForRpId(RP_ID, 'primary');
   if (primary) return { credentialId: primary };
 
