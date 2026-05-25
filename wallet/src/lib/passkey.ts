@@ -1,5 +1,6 @@
 import { extractPasskeyData } from '@safe-global/protocol-kit';
-import { RP_ID, RP_NAME } from './constants';
+import { RP_ID } from './constants';
+import { brand } from '../app/brand';
 
 export type P256PublicKey = {
   x: bigint;
@@ -204,14 +205,14 @@ function clearAbortIfCurrent(signal: AbortSignal, id: number, label: string): vo
  * (Landing.tsx) prefills its input with this so the user sees a sensible
  * default but can rename before the Face ID prompt fires.
  *
- * Format: `DOMOVINA Wallet · DD.M.YYYY`. Date suffix gives every default
- * label uniqueness without exposing a meaningless hex blob; the
- * `DOMOVINA Wallet` prefix anchors the entry visually in OS keychain
- * lists across all *.domovina.ai sites (Phase B RP = domovina.ai). */
+ * Format: `<brand productName> · DD.M.YYYY`. The brand prefix anchors
+ * the entry visually in OS keychain lists across all *.domovina.ai
+ * sites (Phase B RP = domovina.ai); date suffix keeps every default
+ * label unique without exposing a meaningless hex blob. */
 export function suggestPasskeyName(): string {
   const d = new Date();
   const datePart = `${d.getDate()}.${d.getMonth() + 1}.${d.getFullYear()}`;
-  return `DOMOVINA Wallet · ${datePart}`;
+  return `${brand.copy.productName} · ${datePart}`;
 }
 
 /** Common purpose suggestions surfaced as one-tap chips in the naming
@@ -227,9 +228,9 @@ export const PASSKEY_PURPOSE_SUGGESTIONS: readonly string[] = [
 ];
 
 /** Build the full keychain label from a short purpose tag.
- * Returns the prefixed string the OS keychain will display. */
+ * Returns the brand-prefixed string the OS keychain will display. */
 export function purposeToKeychainName(purpose: string): string {
-  return `DOMOVINA Wallet · ${purpose}`;
+  return `${brand.copy.productName} · ${purpose}`;
 }
 
 export async function createPasskey(
@@ -254,7 +255,7 @@ export async function createPasskey(
   try {
     cred = (await navigator.credentials.create({
       publicKey: {
-        rp: { id: RP_ID, name: RP_NAME },
+        rp: { id: RP_ID, name: brand.name },
         user: { id: userId, name: friendlyLabel, displayName: friendlyLabel },
         challenge,
         pubKeyCredParams: [

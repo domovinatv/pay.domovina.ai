@@ -35,6 +35,15 @@ export default {
           muted: 'rgb(var(--surface-muted) / <alpha-value>)',
           border: 'rgb(var(--surface-border) / <alpha-value>)',
         },
+        // Brand-scoped tokens — values come from CSS variables set by
+        // `applyBrandCss()` at app boot. The default-brand DOMOVINA palette
+        // is identical to brand.navy / brand.red above; per-tenant builds
+        // override these vars and the same Tailwind classes pick up the
+        // new colors automatically.
+        'brand-primary': 'rgb(var(--brand-primary) / <alpha-value>)',
+        'brand-primary-fg': 'rgb(var(--brand-primary-fg) / <alpha-value>)',
+        'brand-accent': 'rgb(var(--brand-accent) / <alpha-value>)',
+        'brand-accent-fg': 'rgb(var(--brand-accent-fg) / <alpha-value>)',
         ink: {
           primary: 'rgb(var(--ink-primary) / <alpha-value>)',
           secondary: 'rgb(var(--ink-secondary) / <alpha-value>)',
