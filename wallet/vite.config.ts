@@ -1,10 +1,14 @@
-import { defineConfig } from 'vite';
+import { defineConfig, type Plugin } from 'vite';
 import react from '@vitejs/plugin-react';
 import { VitePWA } from 'vite-plugin-pwa';
 import { nodePolyfills } from 'vite-plugin-node-polyfills';
 import path from 'node:path';
 import { execSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
+import { brand as defaultBrand } from './src/brands/default/brand';
+import { brand as sportklubBrand } from './src/brands/sportklub/brand';
+import { brand as zupaBrand } from './src/brands/zupa/brand';
+import type { BrandConfig } from './src/brands/_shared/types';
 
 // Resolve build-time identifiers so the deployed PWA can show users which
 // build they're looking at. Helps confirm whether a hard-refresh actually
@@ -25,6 +29,37 @@ const BUILD_VERSION = pkg.version;
 const BUILD_COMMIT = gitShortHash();
 const BUILD_TIME = new Date().toISOString();
 
+// Resolve the active brand at config time. Same registry the runtime uses
+// in `src/app/brand.ts`; duplicated here so HTML head + PWA manifest can
+// be tenant-correct in the initial response (before any JS runs).
+const BRAND_REGISTRY: Record<string, BrandConfig> = {
+  default: defaultBrand,
+  sportklub: sportklubBrand,
+  zupa: zupaBrand,
+};
+const activeBrandId = (process.env.VITE_BRAND ?? '').trim() || 'default';
+const activeBrand: BrandConfig = BRAND_REGISTRY[activeBrandId] ?? defaultBrand;
+if (!BRAND_REGISTRY[activeBrandId]) {
+  console.warn(`[vite.config] unknown VITE_BRAND="${activeBrandId}", using default`);
+} else {
+  console.log(`[vite.config] building for brand: ${activeBrand.id} (${activeBrand.name})`);
+}
+
+/** Replace %BRAND_*% placeholders in index.html so search crawlers, share
+ * scrapers, and the first paint all see the tenant-correct title +
+ * theme color, without waiting for JS to swap document.title. */
+function htmlBrandSubstitution(): Plugin {
+  return {
+    name: 'html-brand-substitution',
+    transformIndexHtml(html) {
+      return html
+        .replace(/%BRAND_TITLE%/g, activeBrand.pageTitle)
+        .replace(/%BRAND_APPLE_TITLE%/g, activeBrand.shortName)
+        .replace(/%BRAND_THEME_COLOR%/g, activeBrand.colors.primary);
+    },
+  };
+}
+
 export default defineConfig({
   define: {
     __APP_VERSION__: JSON.stringify(BUILD_VERSION),
@@ -33,6 +68,7 @@ export default defineConfig({
   },
   plugins: [
     react(),
+    htmlBrandSubstitution(),
     // @safe-global/protocol-kit pulls in Buffer + process — polyfill for browser.
     nodePolyfills({
       include: ['buffer', 'process', 'util', 'stream', 'events'],
@@ -46,10 +82,10 @@ export default defineConfig({
       registerType: 'prompt',
       includeAssets: ['icons/*.png'],
       manifest: {
-        name: 'DOMOVINA Wallet',
-        short_name: 'DOMOVINA',
-        description: 'Self-custody EURe wallet on Gnosis Chain — passkey signing, no seed phrase',
-        theme_color: '#002F6C',
+        name: activeBrand.name,
+        short_name: activeBrand.shortName,
+        description: activeBrand.productSubtitle,
+        theme_color: activeBrand.colors.primary,
         background_color: '#ffffff',
         display: 'standalone',
         start_url: '/',
