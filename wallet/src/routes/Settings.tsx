@@ -14,13 +14,14 @@ import {
   Copy,
   Check,
   Wallet as WalletIcon,
+  Globe2,
 } from 'lucide-react';
 import { Badge, Button, Card, IconButton, Section, SegmentedControl, useToast } from '../ui';
 import { WalletSwitcherSheet } from '../components/WalletSwitcherSheet';
 import { useTheme, type ThemeMode } from '../lib/theme';
 import { useWalletStore } from '../state/store';
 import { lookupWallet } from '../lib/registry';
-import { listKnownPasskeys, getActivePasskey } from '../lib/passkey';
+import { listKnownPasskeys, getActivePasskey, recordRpId, LEGACY_RP_ID } from '../lib/passkey';
 
 const REPO_URL = 'https://github.com/domovinatv/pay.domovina.ai';
 const ADR_LINKS = [
@@ -44,13 +45,25 @@ export function Settings() {
   const [switcherOpen, setSwitcherOpen] = useState(false);
   const [knownCount, setKnownCount] = useState(0);
   const [passkeyLabel, setPasskeyLabel] = useState<string | undefined>();
+  const [canExpand, setCanExpand] = useState(false);
 
   useEffect(() => {
-    setKnownCount(listKnownPasskeys().length);
+    const known = listKnownPasskeys();
+    setKnownCount(known.length);
     const active = getActivePasskey();
     if (active?.keychainName) setPasskeyLabel(active.keychainName);
     else if (active?.nameSuffix) setPasskeyLabel(`DOMOVINA wa_${active.nameSuffix}`);
     else setPasskeyLabel(undefined);
+
+    // Show the expand affordance only if (a) the active record is legacy
+    // (RP=wallet.domovina.ai) AND (b) no other known passkey for the same
+    // Safe is already parent-scoped. Once expanded, the row disappears.
+    if (active && recordRpId(active) === LEGACY_RP_ID) {
+      const sameSafe = known.filter((r) => r.safeAddress === active.safeAddress);
+      setCanExpand(!sameSafe.some((r) => r.rpId && r.rpId !== LEGACY_RP_ID));
+    } else {
+      setCanExpand(false);
+    }
   }, [credentialId]);
 
   useEffect(() => {
@@ -140,30 +153,51 @@ export function Settings() {
       </Section>
 
       <Section title="Sigurnost">
-        <button
-          type="button"
-          onClick={() => setLocation('/settings/phone')}
-          className="text-left rounded-3xl bg-surface-raised border border-surface-border shadow-card p-5 hover:bg-surface-sunken transition flex items-center gap-3"
-        >
-          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-surface-sunken text-brand-navy-500">
-            {phoneSummary && phoneSummary.count > 0 ? (
-              <ShieldCheck className="h-5 w-5 text-emerald-500" />
-            ) : (
-              <Phone className="h-5 w-5" />
-            )}
-          </div>
-          <div className="flex-1 flex flex-col leading-tight">
-            <span className="font-medium text-ink-primary">Recovery telefon</span>
-            <span className="text-sm text-ink-secondary">
-              {phoneSummary === null
-                ? 'učitavam…'
-                : phoneSummary.count === 0
-                  ? 'Nije postavljeno'
-                  : `${phoneSummary.count} ${phoneSummary.count === 1 ? 'broj' : 'broja'} · ${phoneSummary.totalVerifications}× ukupno`}
-            </span>
-          </div>
-          <ChevronRight className="h-4 w-4 text-ink-muted" />
-        </button>
+        <div className="flex flex-col gap-3">
+          <button
+            type="button"
+            onClick={() => setLocation('/settings/phone')}
+            className="text-left rounded-3xl bg-surface-raised border border-surface-border shadow-card p-5 hover:bg-surface-sunken transition flex items-center gap-3"
+          >
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-surface-sunken text-brand-navy-500">
+              {phoneSummary && phoneSummary.count > 0 ? (
+                <ShieldCheck className="h-5 w-5 text-emerald-500" />
+              ) : (
+                <Phone className="h-5 w-5" />
+              )}
+            </div>
+            <div className="flex-1 flex flex-col leading-tight">
+              <span className="font-medium text-ink-primary">Recovery telefon</span>
+              <span className="text-sm text-ink-secondary">
+                {phoneSummary === null
+                  ? 'učitavam…'
+                  : phoneSummary.count === 0
+                    ? 'Nije postavljeno'
+                    : `${phoneSummary.count} ${phoneSummary.count === 1 ? 'broj' : 'broja'} · ${phoneSummary.totalVerifications}× ukupno`}
+              </span>
+            </div>
+            <ChevronRight className="h-4 w-4 text-ink-muted" />
+          </button>
+
+          {canExpand && (
+            <button
+              type="button"
+              onClick={() => setLocation('/settings/expand-access')}
+              className="text-left rounded-3xl bg-surface-raised border border-surface-border shadow-card p-5 hover:bg-surface-sunken transition flex items-center gap-3"
+            >
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-surface-sunken text-brand-navy-500">
+                <Globe2 className="h-5 w-5" />
+              </div>
+              <div className="flex-1 flex flex-col leading-tight">
+                <span className="font-medium text-ink-primary">Proširi pristup</span>
+                <span className="text-sm text-ink-secondary">
+                  Dodaj passkey koji radi na svim *.domovina.ai aplikacijama.
+                </span>
+              </div>
+              <ChevronRight className="h-4 w-4 text-ink-muted" />
+            </button>
+          )}
+        </div>
       </Section>
 
       <Section title="Izgled" description="Pamti se na ovom uređaju.">
