@@ -16,30 +16,43 @@ const TRANSFER_EVENT = parseAbiItem(
 );
 
 // Gnosis Chain produces ~17 blocks/min (~5s/block). 200k blocks ≈ 8.2 days,
-// which is a sane recent-activity window without paginating.
-const LOOKBACK_BLOCKS = 200_000n;
+// which is a sane page size for the dedicated /activity infinite-scroll view
+// AND the home-screen recency window.
+export const ACTIVITY_PAGE_BLOCK_RANGE = 200_000n;
 
 type TransferLog = Log<bigint, number, false, typeof TRANSFER_EVENT, true>;
 
-export async function fetchActivity(safeAddress: Address, limit = 20): Promise<ActivityItem[]> {
-  const latest = await publicClient.getBlockNumber();
-  const fromBlock = latest > LOOKBACK_BLOCKS ? latest - LOOKBACK_BLOCKS : 0n;
+/**
+ * Fetch all EURe transfers touching `safeAddress` within an explicit block
+ * range, with timestamps resolved. Sorted blockNumber desc. The caller can
+ * stitch pages by walking the range cursor downward — see the /activity
+ * route for the infinite-scroll wiring.
+ *
+ * Two indexed-topic queries (one for `from = safe`, one for `to = safe`);
+ * the second is filtered for self-transfers so the merged list never
+ * double-counts them.
+ */
+export async function fetchActivityRange(
+  safeAddress: Address,
+  fromBlock: bigint,
+  toBlock: bigint,
+): Promise<ActivityItem[]> {
+  if (fromBlock > toBlock) return [];
 
-  // Two indexed-topic queries; cheaper than scanning all Transfer events.
   const [outgoing, incoming] = await Promise.all([
     publicClient.getLogs({
       address: EURE_ADDRESS,
       event: TRANSFER_EVENT,
       args: { from: safeAddress },
       fromBlock,
-      toBlock: 'latest',
+      toBlock,
     }) as Promise<TransferLog[]>,
     publicClient.getLogs({
       address: EURE_ADDRESS,
       event: TRANSFER_EVENT,
       args: { to: safeAddress },
       fromBlock,
-      toBlock: 'latest',
+      toBlock,
     }) as Promise<TransferLog[]>,
   ]);
 
@@ -70,11 +83,11 @@ export async function fetchActivity(safeAddress: Address, limit = 20): Promise<A
   }
 
   merged.sort((a, b) => Number(b.blockNumber - a.blockNumber));
-  const top = merged.slice(0, limit);
 
-  // Resolve block timestamps for the items we are about to show — one RPC
-  // call per *unique* block in the result set keeps the cost bounded.
-  const uniqueBlocks = Array.from(new Set(top.map((i) => i.blockNumber)));
+  // Resolve block timestamps for the whole batch — one RPC call per unique
+  // block. Bounded cost: dense activity in a 200k window typically maps to
+  // at most a few dozen unique blocks.
+  const uniqueBlocks = Array.from(new Set(merged.map((i) => i.blockNumber)));
   const blockTimestamps = new Map<bigint, number>();
   await Promise.all(
     uniqueBlocks.map(async (bn) => {
@@ -82,15 +95,26 @@ export async function fetchActivity(safeAddress: Address, limit = 20): Promise<A
         const block = await publicClient.getBlock({ blockNumber: bn });
         blockTimestamps.set(bn, Number(block.timestamp));
       } catch {
-        /* ignore — row will show without time */
+        /* ignore — row will render without time */
       }
     }),
   );
-  for (const item of top) {
+  for (const item of merged) {
     item.timestamp = blockTimestamps.get(item.blockNumber) ?? 0;
   }
 
-  return top;
+  return merged;
+}
+
+/**
+ * Recent-activity convenience wrapper used by the home-screen ActivityFeed.
+ * Always looks at just the latest page-sized window and trims to `limit`.
+ */
+export async function fetchActivity(safeAddress: Address, limit = 20): Promise<ActivityItem[]> {
+  const latest = await publicClient.getBlockNumber();
+  const fromBlock = latest > ACTIVITY_PAGE_BLOCK_RANGE ? latest - ACTIVITY_PAGE_BLOCK_RANGE : 0n;
+  const items = await fetchActivityRange(safeAddress, fromBlock, latest);
+  return items.slice(0, limit);
 }
 
 export function formatAmount(decimalStr: string): string {
@@ -112,4 +136,24 @@ export function timeAgo(unixSeconds: number, nowMs: number = Date.now()): string
   if (deltaSec < 7 * 86400) return `prije ${Math.floor(deltaSec / 86400)} d`;
   // Beyond a week show a fixed date.
   return new Date(unixSeconds * 1000).toISOString().slice(0, 10);
+}
+
+/** Same input as timeAgo but always returns a date label, never relative.
+ * Used in the /activity day-grouping headers. */
+export function dayLabel(unixSeconds: number, nowMs: number = Date.now()): string {
+  if (!unixSeconds) return 'Nepoznat datum';
+  const d = new Date(unixSeconds * 1000);
+  const now = new Date(nowMs);
+  const sameDay = (a: Date, b: Date) =>
+    a.getFullYear() === b.getFullYear() &&
+    a.getMonth() === b.getMonth() &&
+    a.getDate() === b.getDate();
+  if (sameDay(d, now)) return 'Danas';
+  const yesterday = new Date(nowMs - 86_400_000);
+  if (sameDay(d, yesterday)) return 'Jučer';
+  return d.toLocaleDateString('hr-HR', {
+    day: 'numeric',
+    month: 'long',
+    year: d.getFullYear() === now.getFullYear() ? undefined : 'numeric',
+  });
 }

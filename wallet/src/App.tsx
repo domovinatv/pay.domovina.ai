@@ -5,6 +5,7 @@ import { Landing } from './routes/Landing';
 import { Wallet } from './routes/Wallet';
 import { Receive } from './routes/Receive';
 import { Send } from './routes/Send';
+import { Activity } from './routes/Activity';
 import { BindPhone } from './routes/BindPhone';
 import { ExpandAccess } from './routes/ExpandAccess';
 import { Settings } from './routes/Settings';
@@ -37,6 +38,7 @@ export function App() {
               <Route path="/" component={Wallet} />
               <Route path="/receive" component={Receive} />
               <Route path="/send" component={Send} />
+              <Route path="/activity" component={Activity} />
               <Route path="/settings" component={Settings} />
               <Route path="/settings/phone" component={BindPhone} />
               <Route path="/settings/expand-access" component={ExpandAccess} />
