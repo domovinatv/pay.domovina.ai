@@ -180,14 +180,21 @@ function SepaReceive() {
       // BIC + memo are embedded in the text body so they can copy-paste
       // each field directly into their bank's manual transfer form.
       const amountStr = Number(intent?.amount_eur ?? 0).toFixed(2);
+      const brandUrl = `https://${brand.domain}`;
       const textLines = [`Plaćanje ${amountStr} EUR na ${brand.name}`];
       if (intent?.iban) textLines.push(`IBAN: ${formatIban(intent.iban)}`);
       if (intent?.bic) textLines.push(`BIC: ${intent.bic}`);
       if (intent?.memo) textLines.push(`Opis plaćanja: ${intent.memo}`);
+      // WhatsApp drops the `url` field when `files` is present (file →
+      // attachment, text → caption, `url` ignored). Append the link to
+      // the text body too so it always reaches the recipient. Apps that
+      // render `url` separately (iMessage, Telegram) may show it twice;
+      // mild duplication is much better than a missing link.
+      textLines.push('', brandUrl);
       const payload: ShareData = {
         title: 'EURe top-up',
         text: textLines.join('\n'),
-        url: `https://${brand.domain}`,
+        url: brandUrl,
       };
       if (typeof navigator.canShare === 'function' && navigator.canShare({ files: [file] })) {
         payload.files = [file];
@@ -432,11 +439,19 @@ function P2PReceive({ safeAddress }: { safeAddress: `0x${string}` }) {
     // Multi-line text body so receivers using a non-DOMOVINA wallet (MetaMask,
     // Rabby, …) can copy the raw recipient address + network out of the
     // caption when the deep link is not useful to them. DOMOVINA users tap
-    // the url chip and land on Send with everything pre-filled.
+    // the deep link at the bottom of the text (or the `url` chip on apps
+    // that render it) and land on Send with everything pre-filled.
+    //
+    // The deep link is appended to the text too: WhatsApp drops the `url`
+    // ShareData field when `files` is present, so without this the link
+    // silently disappears for the most common share target. Mild
+    // duplication on iMessage/Telegram is preferable to a missing link.
     const textLines = [
       `Pošalji${amountSuffix} na moj ${brand.name}`,
       `Adresa: ${safeAddress}`,
       `Mreža: Gnosis Chain (EURe)`,
+      '',
+      deepLink,
     ];
     const shareText = textLines.join('\n');
 
