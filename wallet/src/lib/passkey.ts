@@ -202,11 +202,34 @@ function clearAbortIfCurrent(signal: AbortSignal, id: number, label: string): vo
 
 /** Suggest a default passkey label for a fresh enrollment. The caller
  * (Landing.tsx) prefills its input with this so the user sees a sensible
- * default but can rename before the Face ID prompt fires. */
+ * default but can rename before the Face ID prompt fires.
+ *
+ * Format: `DOMOVINA Wallet · DD.M.YYYY`. Date suffix gives every default
+ * label uniqueness without exposing a meaningless hex blob; the
+ * `DOMOVINA Wallet` prefix anchors the entry visually in OS keychain
+ * lists across all *.domovina.ai sites (Phase B RP = domovina.ai). */
 export function suggestPasskeyName(): string {
-  const rnd = crypto.getRandomValues(new Uint8Array(2));
-  const suffix = Array.from(rnd, (b) => b.toString(16).padStart(2, '0')).join('');
-  return `DOMOVINA wa_${suffix}`;
+  const d = new Date();
+  const datePart = `${d.getDate()}.${d.getMonth() + 1}.${d.getFullYear()}`;
+  return `DOMOVINA Wallet · ${datePart}`;
+}
+
+/** Common purpose suggestions surfaced as one-tap chips in the naming
+ * step. Tapping a chip replaces the input with `DOMOVINA Wallet · X`,
+ * so the user gets a semantic name without typing. Order matters —
+ * "Glavni" first because it is by far the common case. */
+export const PASSKEY_PURPOSE_SUGGESTIONS: readonly string[] = [
+  'Glavni',
+  'Ušteđevina',
+  'Firma',
+  'Test',
+  'Pokloni',
+];
+
+/** Build the full keychain label from a short purpose tag.
+ * Returns the prefixed string the OS keychain will display. */
+export function purposeToKeychainName(purpose: string): string {
+  return `DOMOVINA Wallet · ${purpose}`;
 }
 
 export async function createPasskey(
