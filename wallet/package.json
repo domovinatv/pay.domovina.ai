@@ -10,15 +10,15 @@
     "typecheck": "tsc --noEmit",
     "deploy": "wrangler pages deploy dist --project-name=${BRAND_PROJECT:-wallet-domovina}",
     "build:default": "VITE_BRAND=default npm run build",
-    "build:sportkluba": "VITE_BRAND=sportkluba npm run build",
+    "build:sportklub": "VITE_BRAND=sportklub npm run build",
     "build:zupa": "VITE_BRAND=zupa npm run build",
     "deploy:default": "BRAND_PROJECT=wallet-domovina npm run deploy",
-    "deploy:sportkluba": "BRAND_PROJECT=wallet-sportkluba npm run deploy",
+    "deploy:sportklub": "BRAND_PROJECT=wallet-sportklub npm run deploy",
     "deploy:zupa": "BRAND_PROJECT=wallet-zupa npm run deploy",
     "ship:default": "npm run build:default && npm run deploy:default",
-    "ship:sportkluba": "npm run build:sportkluba && npm run deploy:sportkluba",
+    "ship:sportklub": "npm run build:sportklub && npm run deploy:sportklub",
     "ship:zupa": "npm run build:zupa && npm run deploy:zupa",
-    "ship:all": "npm run ship:default && npm run ship:sportkluba && npm run ship:zupa"
+    "ship:all": "npm run ship:default && npm run ship:sportklub && npm run ship:zupa"
   },
   "dependencies": {
     "@radix-ui/react-dialog": "^1.1.15",
