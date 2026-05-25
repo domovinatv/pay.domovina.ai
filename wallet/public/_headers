@@ -21,3 +21,17 @@
 /manifest.webmanifest
   Cache-Control: public, max-age=3600
   Content-Type: application/manifest+json
+
+# SDK loader: short-cache for fast updates while still hitting the CDN.
+/sdk.js
+  Cache-Control: public, max-age=300, must-revalidate
+  Content-Type: application/javascript; charset=utf-8
+  Access-Control-Allow-Origin: *
+
+# Embed surface: must be loadable as an iframe from any origin (that's the
+# whole point), and must delegate WebAuthn permissions. Other pages keep
+# default same-origin framing — set X-Frame-Options on / and /index.html
+# elsewhere if it ever matters.
+/embed
+  Permissions-Policy: publickey-credentials-get=*, publickey-credentials-create=*
+  Content-Security-Policy: frame-ancestors *

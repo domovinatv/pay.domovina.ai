@@ -9,6 +9,7 @@ import { BindPhone } from './routes/BindPhone';
 import { ExpandAccess } from './routes/ExpandAccess';
 import { Settings } from './routes/Settings';
 import { UiPreview } from './routes/UiPreview';
+import { Embed } from './routes/Embed';
 import { BuildInfoFooter } from './components/BuildInfoFooter';
 
 export function App() {
@@ -18,6 +19,11 @@ export function App() {
     <Switch>
       {/* Design system gallery — always reachable */}
       <Route path="/ui-preview" component={UiPreview} />
+
+      {/* Embedded SDK surface: served as a third-party iframe by community
+          dApps; runs the wallet under our origin so the user's existing
+          passkey + Safe registry remain native. See /sdk.js + Embed.tsx. */}
+      <Route path="/embed" component={Embed} />
 
       <Route>
         {!safeAddress ? (
