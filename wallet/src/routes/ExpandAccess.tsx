@@ -263,24 +263,24 @@ export function ExpandAccess() {
 function IntroView({ onContinue }: { onContinue: () => void }) {
   return (
     <Section
-      title="Proširi pristup"
-      description="Dodaj drugi passkey koji radi na svim *.domovina.ai aplikacijama (donate, mpt, …). Isti Safe, isti balans, dva passkeya."
+      title="Dodaj passkey"
+      description="Drugi uređaj, iCloud + Google PM istovremeno, 1Password vault, YubiKey — svaki novi passkey postaje co-owner istog Safe-a. Threshold ostaje 1, bilo koji od njih sam može potpisati transakciju."
     >
       <Card padding="md" className="flex flex-col gap-4">
         <Step
           icon={<KeyRound />}
-          title="Novi passkey pod scope-om domovina.ai"
-          description="Stari passkey ostaje i nastavlja raditi na wallet.domovina.ai. Novi je vidljiv svuda na *.domovina.ai."
+          title="Kad je korisno"
+          description="iPhone + MacBook redundantno · Apple ekosistem + Android istovremeno · YubiKey kao backup · 1Password ako ne želiš ovisiti samo o iCloud Keychainu."
         />
         <Step
           icon={<ShieldCheck />}
-          title="Isti Safe, prag = 1"
-          description="Oba passkeya neovisno potpisuju. Threshold ostaje 1 — bilo koji od dva potpisa je dovoljan."
+          title="Isti Safe, threshold = 1"
+          description="Postojeći passkey ostaje i radi kao prije. Novi je dodatan vlasnik istog Safe-a. Bilo koji od njih neovisno potpisuje — ako jedan izgubiš, drugi i dalje daje pristup."
         />
         <Step
           icon={<Globe2 />}
           title="Dva Face ID prompta"
-          description="Prvi za kreiranje novog passkeya. Drugi za potpis transakcije koja ga dodaje kao vlasnika tvog Safea."
+          description="Prvi za kreiranje novog passkeya pod istom domenom. Drugi za potpis transakcije koja ga dodaje kao Safe ownera onchain."
         />
       </Card>
       <Button onClick={onContinue} size="xl" block className="mt-2">
