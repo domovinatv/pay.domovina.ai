@@ -24,43 +24,44 @@ export function isSafariLike(): boolean {
   return /Safari/i.test(ua) && !/Chrome|CriOS|FxiOS|Edg/i.test(ua);
 }
 
-/**
- * Master wallet domain. Tenants reach the linking authorize page at
- * `https://<masterDomain>/link`. Currently fixed to the default brand's
- * domain — if a partner ever runs their own master (custom IdP), this
- * becomes a per-tenant config field on BrandConfig.
- */
-export const MASTER_WALLET_DOMAIN = 'wallet.domovina.ai';
-
-/** URL-encoded payload the tenant passes to the master authorize page. */
+/** URL-encoded payload the requester passes to the authorizer's
+ * `/link` page. "Authorizer" = wherever the user has the Safe whose
+ * owner-set is being extended; "requester" = wherever the user just
+ * enrolled a new passkey that wants to become an additional owner.
+ * The two ends are PEERS — any DOMOVINA-flavoured wallet on any domain
+ * can play either role for any other peer. */
 export type LinkAuthorizeParams = {
-  /** Address of the new WebAuthn signer the tenant just enrolled —
-   * this is what the master Safe will add as a new owner. */
+  /** Hostname (no scheme) of the authorizer wallet, e.g.
+   * `wallet.domovina.ai`, `sportklub.domovina.ai`, `zupa321.hr`. */
+  targetDomain: string;
+  /** Address of the new WebAuthn signer the requester just enrolled —
+   * this is what the authorizer's Safe will add as a new owner. */
   newSigner: Address;
-  /** The new credential id (hex, 0x-prefixed) so the master can register
-   * it with the backend on the tenant's behalf. */
+  /** The new credential id (hex, 0x-prefixed) so the authorizer can
+   * register it with the backend on the requester's behalf. */
   newCredentialId: string;
   /** P-256 pubkey decimal x of the new passkey. */
   newPubKeyX: string;
   /** P-256 pubkey decimal y of the new passkey. */
   newPubKeyY: string;
-  /** RP under which the new passkey was created (the tenant's RP). */
+  /** RP under which the new passkey was created (the requester's RP). */
   newRpId: string;
-  /** Optional human-readable label the tenant chose (keychainName) so
-   * the master can render "Linking '<name>' to your Safe…". */
+  /** Optional human-readable label the requester chose (keychainName) so
+   * the authorizer can render "Linking '<name>' to your Safe…". */
   newLabel?: string;
   /** Either 'postMessage' (iframe path) or 'redirect' (Safari path). */
   returnMode: 'postMessage' | 'redirect';
   /** For postMessage: the parent window origin the iframe should reply to. */
   parentOrigin?: string;
-  /** For redirect: where the master should send the user back. */
+  /** For redirect: where the authorizer should send the user back. */
   returnUrl?: string;
 };
 
-/** Build the master authorize URL the tenant opens (iframe src or
- * window.location.href). */
+/** Build the authorizer's `/link` URL the requester opens (iframe src
+ * or window.location.href). targetDomain decides which peer authorizes
+ * the addOwner. */
 export function buildLinkAuthorizeUrl(params: LinkAuthorizeParams): string {
-  const u = new URL(`https://${MASTER_WALLET_DOMAIN}/link`);
+  const u = new URL(`https://${params.targetDomain}/link`);
   u.searchParams.set('newSigner', params.newSigner);
   u.searchParams.set('newCredentialId', params.newCredentialId);
   u.searchParams.set('newPubKeyX', params.newPubKeyX);
