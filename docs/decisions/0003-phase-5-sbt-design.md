@@ -499,3 +499,32 @@ recovery procedure — is unchanged.
   `utils/cryptography/ECDSA.sol`, `access/Ownable.sol`.
 - Ethereum Attestation Service — `https://github.com/ethereum-attestation-service/eas-contracts`
   (considered and rejected as a base layer; see Research summary).
+
+## Implementation tracking
+
+Phase 5 SBT design splits into prerequisites (Phase 4 phone-binding
+infrastructure) and the on-chain contract itself (Phase 5a–c). The
+table below reflects what is shipped versus what waits on ADR 0004
+verifier mesh.
+
+| Component | Status | Evidence |
+|---|---|---|
+| **otp.domovina.ai service operational** | ✅ Shipped | Memory `reference_otp_domovina.md`; live at `otp.domovina.ai`; PHONE_PEPPER configured |
+| **Wallet `BindPhone.tsx` UI** | ✅ Shipped | `wallet/src/routes/BindPhone.tsx`; reachable from Settings → Verificirani brojevi |
+| **`wallet_phone_bindings` D1 table** | ✅ Shipped | Migration `0010_wallet_phone_bindings.sql` |
+| **Hash-only persistence (PHONE_PEPPER)** | ✅ Shipped | Memory `reference_otp_domovina.md`; raw phone never persisted |
+| **Privacy disclosure UI strings** | 🟡 Partial | BindPhone has summary text; full ADR 0003 § "Privacy disclosures" spec not fully implemented |
+| **SBT Solidity contract** | ⏳ Not started | Blocked on ADR 0004 mesh; see also ADR 0006 amendment for forward-compatible storage layout |
+| **Verifier signature schema implementation** | ⏳ Not started | Blocked on ADR 0004 mesh production-readiness |
+| **One-phone-one-wallet enforcement (Hard rule)** | ⏳ Not started | Part of SBT contract deployment |
+| **Re-verification cadence + counter** | 🟡 Off-chain only | `wallet_phone_bindings` records every verification; on-chain `latest_at` write needs SBT contract |
+| **EIP-5484 soulbound semantics** | ⏳ Not started | Part of SBT contract deployment |
+
+**Phase 4 (prerequisites) is effectively shipped.** Phase 5a-c (the
+SBT itself) blocks on ADR 0004 mesh and ADR 0006 forward-
+compatibility decision on storage layout (plaintext `phone_hash`
+vs Pedersen commitment).
+
+Amendment 2026-05-22 and 2026-05-23 (verifier custody) are resolved
+by ADR 0004 — no further amendment needed in this doc; cross-
+reference only.

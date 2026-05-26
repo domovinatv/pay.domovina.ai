@@ -248,3 +248,23 @@ to honor the hard rules in this ADR.
 - Privy / Magic.link / ZeroDev — examples of the *rejected* approach
 - Coinbase Smart Wallet, Daimo, Patch — examples closer to our P2P
   ideal (varying degrees)
+
+## Implementation tracking
+
+This ADR establishes a **negative invariant** — what is forbidden —
+rather than a positive feature to ship. Compliance is therefore
+measured by what is NOT in the codebase, audited at each subsequent
+ADR's decision time.
+
+| Hard rule | Status | Evidence |
+|---|---|---|
+| No long-lived signer keys in CF Worker secrets | ✅ Upheld | `wallet/functions/api/relay.ts` only holds gas relayer key, not user signing key. User signing is WebAuthn passkey. |
+| No "remember device" / "email recovery" / "magic link" code paths | ✅ Upheld | Recovery happens via OS Keychain sync (iCloud / Google PM) OR via Safe co-owner threshold (see ADR 0008). No server-side recovery exists in any deployed surface. |
+| No Zodiac Roles module + RECOVERY_EOA on user Safes | ✅ Upheld | Memory `project_self_custody_principle.md` codifies the rejection. ADR 0005 mesh-custody decision explicitly cites this invariant as the reason for not storing OAuth2 client_secret in CF Worker. |
+| No server-side seed generation / KMS-held shares | ✅ Upheld | All cryptographic material is either passkey (user-held) or onchain (Safe state). |
+| Phase 5 onchain attestation remains passkey-signed | 🟡 Planned, design honors invariant | ADR 0003 verifier mesh signs attestations BUT user's wallet passkey signs the mint tx itself. ADR 0004 moves mesh secret off CF entirely (StrongBox-bound on Android). |
+
+The invariant has been **actively defended** in:
+- ADR 0004 § "CF Worker secret rejected" — mesh custody decision
+- ADR 0005 § "Decision 3" — OAuth2 client_secret extends mesh, not CF
+- ADR 0006 § "Decision 4" — zkProof commitments preserve the user-secret-locality property
