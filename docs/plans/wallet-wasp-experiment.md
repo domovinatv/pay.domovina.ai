@@ -36,11 +36,20 @@ track, ne migracija.
 
 | Resurs | Verzija | Status |
 |---|---|---|
-| WASP CLI | 0.20.1 | Pre-installed at `/Users/ms/.local/bin/wasp` |
+| Node.js | 24.16.0 | Installed via nvm 2026-05-26 (WASP 0.23+ requires ≥24.14.1) |
+| WASP CLI | 0.23.0 | Installed via npm 2026-05-26 (`@wasp.sh/wasp-cli@0.23.0` + `@wasp.sh/wasp-cli-darwin-arm64-unknown@0.23.0` — platform pkg eksplicitno radi workaround [upstream packaging bug](https://github.com/wasp-lang/wasp/issues) za darwin-arm64) |
 | Claude Code | 2.1.150 | Pre-installed |
 | Official WASP plugin | wasp@wasp-agent-plugins | Installed user-scope 2026-05-26 |
 | GitHub repo | domovinatv/wallet-wasp | Public, created 2026-05-26 |
-| Git submodule | experiments/wallet-wasp | Linked 2026-05-26 |
+| Git submodule | experiments/wallet-wasp | Linked 2026-05-26, re-scaffold 0.23.0 commit `d5e2278` |
+
+**Note**: WASP 0.21+ migrated install method from `curl ... installer.sh` na
+npm. Migration helper: `curl -sSL https://get.wasp.sh/installer.sh | sh -s -- migrate-to-npm`.
+Node 24 mora biti aktivan kad se zove `wasp` — `nvm use 24` ako default nije 24.
+
+**Tailwind**: u 0.23.0 default scaffoldu **uklonjen** — opt-in feature preko
+plugin `add-feature` skill-a. Naš referentni wallet koristi Tailwind intenzivno,
+treba ga vratiti u Fazi 2.
 
 **WASP plugin skills**: `add-feature`, `deploying-app`, `expert-advice`,
 `start-dev-server`, `wasp-plugin-help`, `wasp-plugin-init`. Plugin obezbjeđuje
