@@ -46,6 +46,7 @@ history.
 | [0007](0007-brand-as-data-white-label.md) | Brand-as-data white-label architecture | 2026-05-26 | ✅ Accepted | ✅ Implemented; 3 sample tenants live (default, sportklub, zupa) |
 | [0008](0008-multi-passkey-same-safe.md) | Multi-passkey, multi-domain Safe ownership | 2026-05-26 | ✅ Accepted | ✅ Implemented (intra-RP ExpandAccess + cross-TLD peer linking) |
 | [0009](0009-iframe-sdk-third-party-embedding.md) | Iframe SDK for third-party dApp embedding | 2026-05-26 | ✅ Accepted | 🟢 MVP shipped; signMessage + in-iframe onboarding deferred |
+| [0010](0010-open-wallet-vision.md) | Open-Wallet vision (wallet-wasp as seed for open-source WASP wallet template) | 2026-05-26 | 🔬 Accepted (vision) | ⏳ Incubation in `experiments/wallet-wasp/`; rename criteria documented |
 
 ---
 
@@ -101,6 +102,15 @@ history.
                           │ ONCHAIN VOTING        │
                           │ (cryptographic vision)│
                           └───────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────┐
+│                  STRATEGIC / META-DECISIONS                          │
+├─────────────────────────────────────────────────────────────────────┤
+│ ADR 0010  Open-Wallet vision                                         │
+│   ├─ Incubates in experiments/wallet-wasp/ (WASP rewrite)            │
+│   ├─ Inherits 0001 (self-custody), 0007 (brand-as-data), 0008, 0009  │
+│   └─ Genericization → potential wasp-lang/open-wallet template       │
+└─────────────────────────────────────────────────────────────────────┘
 ```
 
 ---

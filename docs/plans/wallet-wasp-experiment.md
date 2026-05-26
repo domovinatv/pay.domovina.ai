@@ -196,10 +196,73 @@ white-label, phone binding, attestation, OTP, settings.
   custom-bypass auth-om, ali jasno označiti to kao "WASP-tooling gap" u
   blog postu — to je vrijednija priča za WASP tim nego silent skip
 
+## When to fork WASP (i kad ne)
+
+Default: **NE forkati waspc**. WASP CLI iz npm-a + `wasp-agent-plugins` plugin
+su radni alat dok ne udarimo u konkretan core gap.
+
+### Zašto lazy fork, ne eager fork
+
+1. **waspc je Haskell projekt** (`waspc/` u wasp-lang/wasp). Build from source
+   traži GHC + Stack toolchain — nije besplatna investicija u dev-environment.
+2. **Većina extensions su user-land**. Naš biggest risk (custom passkey/WebAuthn auth)
+   može završiti bilo gdje na spektru: čisti user-land (custom `action` + Prisma
+   model) → plugin-level (skill u `wasp-lang/claude-plugins`) → core-WASP DSL
+   izmjena. Samo posljednje opravdava waspc fork.
+3. **Trostruko-ugniježđeni submodule lanac postaje teško objasniti**
+   contributor-ima (`pay.domovina.ai → wallet-wasp → wasp-fork`).
+
+### Trigger kriteriji — kad fork postaje opravdan
+
+| Okidač | Akcija |
+|---|---|
+| Phase 1 auth udari u WASP DSL ograničenje, **WASP Discord/maintaineri potvrde** da je core-issue | Fork `wasp-lang/wasp` → `domovinatv/wasp`; postavi Haskell toolchain |
+| Spremni smo isporučiti production-grade passkey auth provider za WASP zajednicu | Fork + RFC issue + PR upstream — community contribution koji WASP tim cilja |
+| Naš passkey pattern treba dokumentaciju za druge WASP korisnike (bez core izmjene) | **Manji fork**: `wasp-lang/claude-plugins` (JS, lakši) — dodaje passkey skill |
+
+Vrlo vjerojatan **prvi fork** je `wasp-lang/claude-plugins` (passkey skill kao
+opt-in plugin feature), ne waspc.
+
+### Struktura kad/ako se okine waspc fork
+
+```
+pay.domovina.ai/
+  experiments/
+    wallet-wasp/         (postojeći submodule — WASP rewrite)
+    wasp-fork/           (NOVI submodule — domovinatv/wasp, paralelan)
+```
+
+**Sibling, ne nested.** Drži wasp-fork kao paralelan submodule od wallet-wasp,
+ne unutar njega — izbjegavamo treću razinu ugniježđenja. Lokalna veza ide
+preko `npm link` / `WASP_CLI_BIN` env varijable u wallet-wasp build-u.
+
+Iz `domovinatv/wasp` PR-ove otvaramo standardnim fork→upstream flow-om —
+nije potreban novi circular submodule pattern.
+
+## North Star: open-wallet template
+
+Vidi [ADR 0010 — Open-Wallet vision](../decisions/0010-open-wallet-vision.md)
+za strategijski kontekst. Skraćeno: ovaj eksperiment nije samo "rewrite za
+showcase" — to je **seed za open-wallet template** po uzoru na
+[wasp-lang/open-saas](https://github.com/wasp-lang/open-saas).
+Ako se incubation ovog eksperimenta pokaže uspješnim, sljedeća iteracija je
+generalizacija (skidanje domovina.ai brand hard-codeova) i potencijalno
+preseljenje pod `wasp-lang/open-wallet` (ili zadržavanje pod
+`domovinatv/open-wallet` s WASP blagoslovom).
+
+To znači **dva načela odmah u Faza 1+**:
+
+1. **Brand-as-data**: bez `domovina.ai` hard-codeova u src-u — sve preko env
+   ili konfiguracije, čak i kad isporučujemo samo DOMOVINA brand u MVP-u.
+2. **Generic naming**: komponente, route-i, Prisma modeli zovu se po onome
+   što rade (`Wallet`, `Passkey`, `PaymentIntent`), ne po našem brand-u.
+
 ## References
 
 - Production wallet: `wallet/` u ovom repu, [wallet.domovina.ai](https://wallet.domovina.ai)
+- ADR 0010 — Open-Wallet vision: `docs/decisions/0010-open-wallet-vision.md`
 - WASP plugin: [github.com/wasp-lang/claude-plugins/tree/main/plugins/wasp](https://github.com/wasp-lang/claude-plugins/tree/main/plugins/wasp)
 - WASP "40% less tokens" claim: [wasp.sh/blog/2026/03/26](https://wasp.sh/blog/2026/03/26/nextjs-vs-wasp-40-percent-less-tokens-same-app)
 - WASP Claude Code essentials: [wasp.sh/blog/2026/01/29](https://wasp.sh/blog/2026/01/29/claude-code-fullstack-development-essentials)
+- Open-SaaS template (analog koji slijedimo): [github.com/wasp-lang/open-saas](https://github.com/wasp-lang/open-saas), [opensaas.sh](https://opensaas.sh)
 - Cross-domain wallet plan (related, broader scope): `docs/plans/cross-domain-wallet-passkey.md`
