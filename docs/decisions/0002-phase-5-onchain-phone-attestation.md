@@ -299,3 +299,22 @@ phone-binding feature surviving the recovery deprecation.
 - Similar prior art: Gitcoin Passport stamps, Proof of Humanity,
   Worldcoin Orb attestations (different mechanism, similar
   "verifiable reputation footprint" concept)
+
+## Implementation tracking
+
+This ADR is **SUPERSEDED** by ADR 0003 for the uniqueness mechanism
+(append-only log → single-slot mapping in a CitizenshipSBT contract).
+The reputation-footprint rationale (re-verification cadence as
+sybil-resistance signal) survives in ADR 0003 § "Hard rules" and
+ADR 0006 (Phase 5e zkProof variant).
+
+| Concept | Status | Where it lives now |
+|---|---|---|
+| Rationale: phone re-verification = sybil signal | ✅ Carried forward | ADR 0003 § "Decision" + ADR 0005 § "GDPR scope expansion" |
+| Mechanism: append-only `PhoneAttestation.attest()` | ❌ Replaced | ADR 0003 single-slot SBT mapping replaces this |
+| Per-wallet log of verification hashes | ➖ Repurposed | Lives off-chain in `wallet_phone_bindings` D1 table (migration 0010, shipped) |
+| Sybil flagging by external indexers | 🟡 Reframed | ADR 0003 contract is *queryable* primitive; indexers can build trust scores on top but uniqueness is now enforced not just flagged |
+
+No code was ever written under this ADR's mechanism — design pivoted
+before implementation. The doc remains as historical record of why
+the mechanism changed.

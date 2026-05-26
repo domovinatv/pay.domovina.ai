@@ -536,3 +536,29 @@ This ADR does **not**:
   https://security.googleblog.com/2021/10/pixel-6-setting-new-standard-for-mobile.html
 - Common Criteria certification for Titan M2:
   https://www.commoncriteriaportal.org/files/epfiles/anssi-cible2023_67en.pdf
+
+## Implementation tracking
+
+This ADR is the **single largest blocker** on the critical path —
+ADR 0003 (PhoneSBT) and ADR 0005 (Certilia 5d-2) both depend on
+the mesh being operational, and ADR 0006 (Phase 5e zkProof)
+inherits the mesh as commitment signer. Implementation is 0%; all
+six sub-questions are answered in the ADR but no hardware
+procurement, no CF Tunnel setup, no Android app code, no quorum
+protocol implementation exist yet.
+
+| Sub-question (per ADR) | Design status | Implementation status |
+|---|---|---|
+| Q1: How many devices in the mesh? | ✅ Answered (M-of-N with M=2, N=3 to start) | ⏳ Not procured |
+| Q2: Where does each device live? | ✅ Answered (Matija + 1 trusted operator + 1 cold spare) | ⏳ Not provisioned |
+| Q3: How does CF Worker reach them? | ✅ Answered (CF Tunnel + Access service tokens) | ⏳ Not configured |
+| Q4: Quorum protocol? | ✅ Answered (TSS via Shamir SSS over Ed25519 / ECDSA secp256k1) | ⏳ Not implemented |
+| Q5: Key rotation cadence? | ✅ Answered (quarterly, governance-Safe gated) | ⏳ N/A until in production |
+| Q6: Disaster recovery? | ✅ Answered (cold spare reactivation + re-issuance) | ⏳ N/A until in production |
+
+**ROI argument**: one mesh implementation unlocks BOTH ADR 0003
+(phone SBT minting) AND ADR 0005 (Certilia OAuth2 secret custody).
+Single largest infrastructure ROI per implementation hour in the
+project. Estimated effort: 2-4 months calendar time (hardware
+procurement + Android app + protocol implementation + dry-run
+exercises), assuming the ADR design is implemented as written.

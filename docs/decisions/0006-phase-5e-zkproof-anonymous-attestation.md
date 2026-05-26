@@ -287,3 +287,25 @@ ADR 0007 once the prototype yields concrete numbers.
   https://eprint.iacr.org/2023/1042 (representative — not authoritative)
 - Trusted setup ceremonies (Perpetual Powers of Tau):
   https://github.com/privacy-scaling-explorations/perpetualpowersoftau
+
+## Implementation tracking
+
+ADR was accepted 2026-05-26 as **design direction**, not buildable
+spec. Phase 5e is research-stage; concrete implementation gated on
+ADR 0007 (primitive selection benchmarks) and external partnership
+(likely PSE) + audit budget.
+
+| Decision / milestone | Status | Notes |
+|---|---|---|
+| D1: Commitment-not-hash onchain | ✅ Decided | Schema change to ADR 0003 storage layout; impl deferred |
+| D2: Semaphore v4 for onchain voting | 🟡 Direction set | Primitive selection final in ADR 0007 |
+| D3: BBS+ for off-chain selective disclosure | 🟡 Direction set | No native Gnosis verifier; off-chain track only |
+| D4: Identifier still hashed + pepper-isolated in mesh | ✅ Decided (extends ADR 0005 D3) | Carried forward from ADR 0005 |
+| D5: Phase 5e is research, not release | ✅ Decided | 12-24 month horizon, €50-200k audit budget required |
+| Reading + Semaphore benchmarking | ⏳ Not started | First task in ADR 0007 prep |
+| ADR 0007 primitive selection | ⏳ Not started | Triggered by benchmark numbers |
+| PSE / iden3 / Sismo partnership outreach | ⏳ Not started | Pre-implementation prerequisite |
+| Circuit prototype | ⏳ Not started | After ADR 0007 |
+| Audit-ready implementation | ⏳ Not started | Requires audit budget secured |
+| Production launch + migration coordination | ⏳ Not started | Coordinated with Phase 5d → 5e migration story |
+| ADR 0003 storage forward-compatibility check | ⏳ Required before SBT contract code | `bytes32 identifier` + `uint8 schemaVersion` slot reservation suggested cross-reference |

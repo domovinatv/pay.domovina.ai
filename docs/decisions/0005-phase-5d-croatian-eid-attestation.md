@@ -358,3 +358,27 @@ legal review.
 These are NOT blockers for Phase 5d-1 implementation start; they
 will be resolved in subsequent ADR amendments or new ADRs once
 implementation lands and concrete failure modes appear.
+
+## Implementation tracking
+
+ADR was accepted 2026-05-26. Implementation has not started in this
+repo (Phase 5d-1 unblocks-from-day-1 path documented below). The
+flutter_certilia repo provides ~80% of the Node.js portion that
+ports to a Hono route.
+
+| Decision / phase | Status | Notes |
+|---|---|---|
+| D1: Certilia mIN as second SBT source | ⏳ Not started | Awaiting Phase 5d-1 kickoff |
+| D2: eOI-as-passkey REJECTED | ✅ Decided (no code needed) | Permanent — see Decision 2 rationale |
+| D3: OAuth2 client_secret on mesh (Option A MVP) | ⏳ Not started | Blocked on ADR 0004 mesh production-readiness |
+| D3: OAuth2 client_secret on mesh (Option B production target) | ⏳ Not started | Blocked on D3 Option A + Certilia commercial discussion |
+| D4: eOI for FUTURE mesh-operator enrollment | ⏳ Deferred | Reserved for ADR 0006+ when mesh expansion becomes concrete |
+| **5d-1 (backend OIDC adapter)** | ⏳ Not started | **Unblockable today** — can ship with CF Worker secret as MVP, refactor in 5d-2 |
+| **5d-2 (mesh refactor for client_secret)** | ⏳ Not started | Blocks on ADR 0004 mesh + 5d-1 |
+| **5d-3 (SBT mint + UI)** | ⏳ Not started | Blocks on 5d-1 + ADR 0003 contract deployment |
+| GDPR scope expansion (OIB hashing + privacy disclosures) | ⏳ Not started | Schema mirrors `wallet_phone_bindings`; add `wallet_certilia_bindings` migration when 5d-1 ships |
+
+**Critical path note**: 5d-1 alone (backend OIDC adapter, CF Worker
+secret MVP) is unblockable today and would deliver visible value to
+users (eIDAS High LoA identity proof on Settings page, even before
+SBT mint).
