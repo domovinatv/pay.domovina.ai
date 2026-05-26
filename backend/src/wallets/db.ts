@@ -68,6 +68,23 @@ export async function getWalletsByPhoneHash(
   return res.results ?? [];
 }
 
+/// Wallets that share a Safe address are members of the same "wallet
+/// family" — typically one Safe with multiple passkey owners enrolled
+/// across different RPs (cross-domain linking flow). Used by the Settings
+/// linked-passkeys view so a user can see every device + tenant that
+/// can sign for this Safe.
+export async function getWalletsBySafeAddress(
+  env: Env,
+  safeAddress: string,
+): Promise<WalletRow[]> {
+  const res = await env.DB.prepare(
+    `SELECT * FROM wallet_registry WHERE safe_address = ? ORDER BY created_at ASC`,
+  )
+    .bind(safeAddress.toLowerCase())
+    .all<WalletRow>();
+  return res.results ?? [];
+}
+
 /// Legacy convenience: keeps `wallet_registry.phone_hash` and `phone_bound_at`
 /// in sync as a denormalized "latest phone bound to this wallet" cache for
 /// admin UI rendering and the `has_phone` boolean. The source of truth for

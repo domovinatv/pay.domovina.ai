@@ -5,6 +5,7 @@ import {
   bindPhone,
   getVerificationStats,
   getWalletByCredentialId,
+  getWalletsBySafeAddress,
   listPhoneBindingsForCredential,
   markOtpConsumed,
   registerWallet,
@@ -96,6 +97,21 @@ export function buildWalletApi(): Hono<{ Bindings: Env }> {
       ...publicWalletView(row),
       verification: viewStats(stats),
       phones: phones.map(viewPhoneBinding),
+    });
+  });
+
+  // Family lookup: every passkey that has been registered as a member
+  // of this Safe across all RPs / tenants. Used by the Settings linked-
+  // passkeys view + the cross-TLD linking flow to prevent the user from
+  // adding the same signer twice.
+  api.get('/family/:safeAddress', async (c) => {
+    const safeAddress = c.req.param('safeAddress');
+    if (!ADDR_RE.test(safeAddress)) return c.json({ error: 'invalid_safe_address' }, 400);
+    const rows = await getWalletsBySafeAddress(c.env, safeAddress);
+    return c.json({
+      safe_address: safeAddress.toLowerCase(),
+      count: rows.length,
+      members: rows.map((r) => publicWalletView(r)),
     });
   });
 
