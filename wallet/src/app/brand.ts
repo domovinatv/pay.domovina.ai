@@ -37,3 +37,15 @@ export const brand: BrandConfig = resolveActiveBrand();
 export function isFeatureEnabled(featureId: string): boolean {
   return brand.enabledFeatures.includes(featureId);
 }
+
+/** Every sibling brand the user could plausibly authorize a link from,
+ * minus the active brand itself (linking with yourself is a no-op).
+ *
+ * All brand configs are imported eagerly above, so this list is bundled
+ * into every brand build — sportklub knows about default + zupa, default
+ * knows about sportklub + zupa, etc. That is what enables the N-to-N
+ * linking UI: peers list each other, not just "master + tenants".
+ */
+export function getLinkTargets(): BrandConfig[] {
+  return Object.values(REGISTRY).filter((b) => b.id !== brand.id);
+}

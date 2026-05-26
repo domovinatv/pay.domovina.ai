@@ -36,12 +36,13 @@ import { predictSignerAddress, predictSafeAddress } from '../lib/safe';
 import { lookupWallet, registerWalletWithBackend } from '../lib/registry';
 import { brand } from '../app/brand';
 import {
-  MASTER_WALLET_DOMAIN,
   buildLinkAuthorizeUrl,
   isSafariLike,
   parseLinkMessage,
   stashPendingLink,
 } from '../lib/linking';
+import { getLinkTargets } from '../app/brand';
+import type { BrandConfig } from '../brands/_shared/types';
 import { Link2 } from 'lucide-react';
 
 /** Above this count we surface a discouragement hint inline and gate
@@ -58,16 +59,12 @@ type Stage =
   | { kind: 'naming'; suggestedName: string }
   | { kind: 'creating' }
   | { kind: 'opening' }
-  | { kind: 'linking-create' } // enrolling the new tenant-side passkey
-  | { kind: 'linking-bridge'; iframeUrl: string } // iframe path: waiting for master to postMessage
+  | { kind: 'pick-link-target'; targets: BrandConfig[] } // N-to-N: which peer authorizes
+  | { kind: 'linking-create'; targetDomain: string; targetName: string } // enrolling the new requester-side passkey
+  | { kind: 'linking-bridge'; iframeUrl: string; targetOrigin: string } // iframe path
   | { kind: 'linking-redirected' } // redirect path: page about to navigate
   | { kind: 'created'; record: PasskeyRecord }
   | { kind: 'error'; message: string };
-
-/** Whether this build is the master wallet (default brand) or a tenant
- * that may want to link itself onto a master Safe. Linking only makes
- * sense from a tenant — wallet.domovina.ai IS the master. */
-const IS_TENANT = brand.domain !== MASTER_WALLET_DOMAIN;
 
 export function Landing() {
   const setIdentity = useWalletStore((s) => s.setIdentity);
@@ -233,21 +230,28 @@ export function Landing() {
   }
 
   /**
-   * Cross-TLD linking entry point on a TENANT wallet (not the master).
-   * Enrolls a fresh passkey under this tenant's RP, then hands off to
-   * the master wallet's /link page so the user can authorize adding
-   * this new signer to one of their existing Safes. After the master
-   * mines the addOwnerWithThreshold tx, the tenant takes the supplied
-   * safeAddress as its own and the user gets the same balance + history
-   * everywhere their Safe is linked.
-   *
-   * Picks iframe (postMessage) for non-Safari browsers and redirect
-   * (top-level) for Safari — Safari ITP partitions third-party iframe
-   * storage which breaks WebAuthn inside the iframe.
+   * Cross-TLD linking entry point. PEER-TO-PEER: any brand build can be
+   * the requester, any other brand can be the authorizer. Step 1 shows
+   * a picker of known sibling brands so the user chooses which existing
+   * wallet they want to grow (e.g. zupa user wants to link to their
+   * sportklub Safe).
    */
-  async function startLinkExisting() {
+  function pickLinkTarget() {
     haptic('tap');
-    setStage({ kind: 'linking-create' });
+    const targets = getLinkTargets();
+    setStage({ kind: 'pick-link-target', targets });
+  }
+
+  /**
+   * After the target peer is chosen: enroll a fresh passkey under THIS
+   * build's RP, then open the authorizer's `/link` page so the user
+   * can sign addOwnerWithThreshold on whichever Safe they choose there.
+   * Iframe path on non-Safari, redirect path on Safari (ITP partitions
+   * third-party iframe storage on Safari, breaking WebAuthn there).
+   */
+  async function startLinkExisting(target: { domain: string; name: string }) {
+    haptic('tap');
+    setStage({ kind: 'linking-create', targetDomain: target.domain, targetName: target.name });
     try {
       // 1. Enroll a new passkey under this tenant's RP.
       const { credentialId, pubKey, keychainName, rpId } = await createPasskey(
@@ -263,7 +267,7 @@ export function Landing() {
       if (safariPath) {
         // Redirect path: stash the new passkey in sessionStorage so
         // /link-callback can read it back after the round-trip, then
-        // hop to the master authorize page.
+        // hop to the chosen target's authorize page.
         stashPendingLink({
           credentialId,
           pubKeyX,
@@ -275,6 +279,7 @@ export function Landing() {
         });
         const returnUrl = `${window.location.origin}/link-callback`;
         const url = buildLinkAuthorizeUrl({
+          targetDomain: target.domain,
           newSigner: signerAddress as Address,
           newCredentialId: credentialId,
           newPubKeyX: pubKeyX,
@@ -289,10 +294,11 @@ export function Landing() {
         return;
       }
 
-      // iframe path: render an iframe to the master authorize page,
-      // listen for the postMessage result, persist the PasskeyRecord
+      // iframe path: render an iframe to the chosen target's authorize
+      // page, listen for the postMessage result, persist the PasskeyRecord
       // when it arrives.
       const iframeUrl = buildLinkAuthorizeUrl({
+        targetDomain: target.domain,
         newSigner: signerAddress as Address,
         newCredentialId: credentialId,
         newPubKeyX: pubKeyX,
@@ -302,11 +308,12 @@ export function Landing() {
         returnMode: 'postMessage',
         parentOrigin: window.location.origin,
       });
+      const targetOrigin = `https://${target.domain}`;
 
-      // We persist the new passkey to localStorage as soon as the master
-      // confirms the link — see the message handler below.
+      // We persist the new passkey to localStorage as soon as the target
+      // peer confirms the link — see the message handler below.
       function handler(event: MessageEvent) {
-        if (event.origin !== `https://${MASTER_WALLET_DOMAIN}`) return;
+        if (event.origin !== targetOrigin) return;
         const msg = parseLinkMessage(event.data);
         if (!msg) return;
         if (msg.type === 'link-result') {
@@ -338,7 +345,7 @@ export function Landing() {
         }
       }
       window.addEventListener('message', handler);
-      setStage({ kind: 'linking-bridge', iframeUrl });
+      setStage({ kind: 'linking-bridge', iframeUrl, targetOrigin });
     } catch (e) {
       haptic('error');
       setStage({ kind: 'error', message: humanizeError(e, 'passkey') });
@@ -355,7 +362,7 @@ export function Landing() {
             onCreate={startCreate}
             onCrossDevice={() => openExisting()}
             onLegacy={openLegacy}
-            onLinkExisting={IS_TENANT ? startLinkExisting : undefined}
+            onLinkExisting={pickLinkTarget}
           />
         )}
 
@@ -366,15 +373,26 @@ export function Landing() {
             onCreate={startCreate}
             onCrossDevice={() => openExisting()}
             onLegacy={openLegacy}
-            onLinkExisting={IS_TENANT ? startLinkExisting : undefined}
+            onLinkExisting={pickLinkTarget}
             onRequestArchive={requestArchive}
+          />
+        )}
+
+        {stage.kind === 'pick-link-target' && (
+          <PickLinkTargetView
+            targets={stage.targets}
+            onPick={(t) => startLinkExisting({ domain: t.domain, name: t.name })}
+            onPickCustom={(domain) =>
+              startLinkExisting({ domain, name: domain })
+            }
+            onCancel={resetToWelcome}
           />
         )}
 
         {stage.kind === 'linking-create' && (
           <ProgressInline
             title="Otvori Face ID"
-            subtitle="Kreiram passkey za ovaj wallet prije linkanja."
+            subtitle={`Kreiram passkey ovog walleta prije linkanja na ${stage.targetName}.`}
           />
         )}
 
@@ -508,7 +526,7 @@ function WelcomeView({
         {onLinkExisting && (
           <Button onClick={onLinkExisting} variant="secondary" size="lg" block>
             <Link2 className="h-4 w-4" />
-            Linkaj DOMOVINA wallet
+            Linkaj postojeći wallet
           </Button>
         )}
         <Button onClick={onLegacy} variant="ghost" size="sm" block>
@@ -602,7 +620,7 @@ function WelcomeKnownView({
         {onLinkExisting && (
           <Button onClick={onLinkExisting} variant="ghost" size="sm" block>
             <Link2 className="h-4 w-4" />
-            Linkaj još jedan DOMOVINA wallet
+            Linkaj još jedan wallet (drugi domen)
           </Button>
         )}
         <Button onClick={onLegacy} variant="ghost" size="sm" block>
@@ -720,6 +738,122 @@ function WalletCard({
       >
         <Archive className="h-4 w-4" />
       </button>
+    </div>
+  );
+}
+
+function PickLinkTargetView({
+  targets,
+  onPick,
+  onPickCustom,
+  onCancel,
+}: {
+  targets: BrandConfig[];
+  onPick: (t: BrandConfig) => void;
+  onPickCustom: (domain: string) => void;
+  onCancel: () => void;
+}) {
+  const [customMode, setCustomMode] = useState(false);
+  const [customDomain, setCustomDomain] = useState('');
+
+  function trySubmitCustom() {
+    const cleaned = customDomain.trim().replace(/^https?:\/\//, '').replace(/\/$/, '');
+    if (!cleaned || !/^[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/.test(cleaned)) return;
+    if (cleaned === window.location.hostname) return; // can't link to self
+    onPickCustom(cleaned);
+  }
+
+  return (
+    <div className="flex flex-col gap-4 animate-route-enter">
+      <div className="text-center flex flex-col gap-2">
+        <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-surface-sunken text-brand-primary">
+          <Link2 className="h-7 w-7" />
+        </div>
+        <h2 className="text-2xl font-semibold text-ink-primary">Iz kojeg walleta linkaš?</h2>
+        <p className="text-sm text-ink-secondary max-w-sm mx-auto">
+          Odaberi wallet u kojem već imaš Safe. Otvorit ćemo ga, autenticirat ćeš se,
+          i ovaj <span className="font-medium text-ink-primary">{brand.name}</span> postat
+          će dodatni potpisnik istog Safe-a (threshold = 1).
+        </p>
+      </div>
+
+      {!customMode && (
+        <div className="flex flex-col gap-2">
+          {targets.map((t) => (
+            <button
+              key={t.id}
+              type="button"
+              onClick={() => onPick(t)}
+              className="text-left flex items-center gap-3 rounded-2xl border border-surface-border bg-surface-raised hover:bg-surface-sunken active:scale-[0.99] transition p-4"
+            >
+              <div
+                aria-hidden
+                className="h-10 w-10 rounded-2xl shrink-0 ring-1 ring-black/5"
+                style={{ background: `linear-gradient(135deg, ${t.colors.primary}, ${t.colors.accent})` }}
+              />
+              <div className="flex flex-col leading-tight min-w-0 flex-1">
+                <span className="font-medium text-ink-primary truncate">{t.name}</span>
+                <span className="text-xs text-ink-muted font-mono truncate">{t.domain}</span>
+              </div>
+              <ChevronRight className="h-5 w-5 text-ink-muted shrink-0" />
+            </button>
+          ))}
+          <button
+            type="button"
+            onClick={() => setCustomMode(true)}
+            className="text-left flex items-center gap-3 rounded-2xl border border-dashed border-surface-border bg-surface-base hover:bg-surface-sunken active:scale-[0.99] transition p-4"
+          >
+            <div className="flex flex-col leading-tight min-w-0 flex-1">
+              <span className="font-medium text-ink-secondary">Drugi wallet (custom URL)</span>
+              <span className="text-xs text-ink-muted">Za wallete čije domene nisu u listi.</span>
+            </div>
+            <ChevronRight className="h-5 w-5 text-ink-muted shrink-0" />
+          </button>
+        </div>
+      )}
+
+      {customMode && (
+        <Card padding="md" className="flex flex-col gap-3">
+          <Field
+            label="Domena ciljnog walleta"
+            hint="Npr. wallet.example.com — bez https://"
+            error={
+              customDomain && customDomain.trim() === window.location.hostname
+                ? 'Ne možeš linkati ovaj wallet sam sa sobom.'
+                : undefined
+            }
+          >
+            {(id) => (
+              <Input
+                id={id}
+                type="text"
+                autoFocus
+                value={customDomain}
+                onChange={(e) => setCustomDomain(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') trySubmitCustom();
+                }}
+                placeholder="wallet.example.com"
+                autoComplete="off"
+                autoCorrect="off"
+                autoCapitalize="off"
+                spellCheck={false}
+              />
+            )}
+          </Field>
+          <Button onClick={trySubmitCustom} size="lg" block>
+            <Link2 className="h-4 w-4" />
+            Otvori autorizaciju
+          </Button>
+          <Button onClick={() => setCustomMode(false)} variant="ghost" size="sm" block>
+            Natrag na listu
+          </Button>
+        </Card>
+      )}
+
+      <Button onClick={onCancel} variant="ghost" size="md" block>
+        Otkaži
+      </Button>
     </div>
   );
 }
