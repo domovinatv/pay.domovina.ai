@@ -8,7 +8,7 @@
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
-    "deploy": "wrangler pages deploy dist --project-name=${BRAND_PROJECT:-wallet-domovina}",
+    "deploy": "wrangler pages deploy dist --project-name=${BRAND_PROJECT:-wallet-domovina} --commit-message=\"deploy from main\"",
     "build:default": "VITE_BRAND=default npm run build",
     "build:sportklub": "VITE_BRAND=sportklub npm run build",
     "build:zupa": "VITE_BRAND=zupa npm run build",
