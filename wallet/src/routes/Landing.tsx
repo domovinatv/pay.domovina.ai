@@ -35,6 +35,14 @@ import { fetchEureBalances, formatEureShort } from '../lib/balances';
 import { predictSignerAddress, predictSafeAddress } from '../lib/safe';
 import { lookupWallet, registerWalletWithBackend } from '../lib/registry';
 import { brand } from '../app/brand';
+import {
+  MASTER_WALLET_DOMAIN,
+  buildLinkAuthorizeUrl,
+  isSafariLike,
+  parseLinkMessage,
+  stashPendingLink,
+} from '../lib/linking';
+import { Link2 } from 'lucide-react';
 
 /** Above this count we surface a discouragement hint inline and gate
  * creation behind an explicit confirmation step. Three is the threshold
@@ -50,8 +58,16 @@ type Stage =
   | { kind: 'naming'; suggestedName: string }
   | { kind: 'creating' }
   | { kind: 'opening' }
+  | { kind: 'linking-create' } // enrolling the new tenant-side passkey
+  | { kind: 'linking-bridge'; iframeUrl: string } // iframe path: waiting for master to postMessage
+  | { kind: 'linking-redirected' } // redirect path: page about to navigate
   | { kind: 'created'; record: PasskeyRecord }
   | { kind: 'error'; message: string };
+
+/** Whether this build is the master wallet (default brand) or a tenant
+ * that may want to link itself onto a master Safe. Linking only makes
+ * sense from a tenant — wallet.domovina.ai IS the master. */
+const IS_TENANT = brand.domain !== MASTER_WALLET_DOMAIN;
 
 export function Landing() {
   const setIdentity = useWalletStore((s) => s.setIdentity);
@@ -216,6 +232,119 @@ export function Landing() {
     await openExisting({ legacyOnly: true });
   }
 
+  /**
+   * Cross-TLD linking entry point on a TENANT wallet (not the master).
+   * Enrolls a fresh passkey under this tenant's RP, then hands off to
+   * the master wallet's /link page so the user can authorize adding
+   * this new signer to one of their existing Safes. After the master
+   * mines the addOwnerWithThreshold tx, the tenant takes the supplied
+   * safeAddress as its own and the user gets the same balance + history
+   * everywhere their Safe is linked.
+   *
+   * Picks iframe (postMessage) for non-Safari browsers and redirect
+   * (top-level) for Safari — Safari ITP partitions third-party iframe
+   * storage which breaks WebAuthn inside the iframe.
+   */
+  async function startLinkExisting() {
+    haptic('tap');
+    setStage({ kind: 'linking-create' });
+    try {
+      // 1. Enroll a new passkey under this tenant's RP.
+      const { credentialId, pubKey, keychainName, rpId } = await createPasskey(
+        suggestPasskeyName(),
+      );
+      const signerAddress = await predictSignerAddress(pubKey);
+
+      const pubKeyX = pubKey.x.toString();
+      const pubKeyY = pubKey.y.toString();
+
+      const safariPath = isSafariLike();
+
+      if (safariPath) {
+        // Redirect path: stash the new passkey in sessionStorage so
+        // /link-callback can read it back after the round-trip, then
+        // hop to the master authorize page.
+        stashPendingLink({
+          credentialId,
+          pubKeyX,
+          pubKeyY,
+          signerAddress,
+          keychainName,
+          rpId,
+          stashedAt: Date.now(),
+        });
+        const returnUrl = `${window.location.origin}/link-callback`;
+        const url = buildLinkAuthorizeUrl({
+          newSigner: signerAddress as Address,
+          newCredentialId: credentialId,
+          newPubKeyX: pubKeyX,
+          newPubKeyY: pubKeyY,
+          newRpId: rpId,
+          newLabel: keychainName,
+          returnMode: 'redirect',
+          returnUrl,
+        });
+        setStage({ kind: 'linking-redirected' });
+        window.location.href = url;
+        return;
+      }
+
+      // iframe path: render an iframe to the master authorize page,
+      // listen for the postMessage result, persist the PasskeyRecord
+      // when it arrives.
+      const iframeUrl = buildLinkAuthorizeUrl({
+        newSigner: signerAddress as Address,
+        newCredentialId: credentialId,
+        newPubKeyX: pubKeyX,
+        newPubKeyY: pubKeyY,
+        newRpId: rpId,
+        newLabel: keychainName,
+        returnMode: 'postMessage',
+        parentOrigin: window.location.origin,
+      });
+
+      // We persist the new passkey to localStorage as soon as the master
+      // confirms the link — see the message handler below.
+      function handler(event: MessageEvent) {
+        if (event.origin !== `https://${MASTER_WALLET_DOMAIN}`) return;
+        const msg = parseLinkMessage(event.data);
+        if (!msg) return;
+        if (msg.type === 'link-result') {
+          window.removeEventListener('message', handler);
+          const record: PasskeyRecord = {
+            credentialId,
+            pubKey: { x: pubKeyX, y: pubKeyY },
+            signerAddress: signerAddress as Address,
+            safeAddress: msg.safeAddress,
+            createdAt: new Date().toISOString(),
+            keychainName,
+            rpId,
+          };
+          savePasskey(record);
+          void registerWalletWithBackend({
+            credentialId,
+            pubKeyX,
+            pubKeyY,
+            signerAddress: signerAddress as Address,
+            safeAddress: msg.safeAddress,
+            rpId,
+          });
+          haptic('success');
+          setStage({ kind: 'created', record });
+        } else if (msg.type === 'link-error') {
+          window.removeEventListener('message', handler);
+          haptic('error');
+          setStage({ kind: 'error', message: msg.error });
+        }
+      }
+      window.addEventListener('message', handler);
+      setStage({ kind: 'linking-bridge', iframeUrl });
+    } catch (e) {
+      haptic('error');
+      setStage({ kind: 'error', message: humanizeError(e, 'passkey') });
+    }
+  }
+
   return (
     <div className="min-h-full flex flex-col px-6 max-w-md mx-auto pt-safe pb-safe">
       <BrandHeader />
@@ -226,6 +355,7 @@ export function Landing() {
             onCreate={startCreate}
             onCrossDevice={() => openExisting()}
             onLegacy={openLegacy}
+            onLinkExisting={IS_TENANT ? startLinkExisting : undefined}
           />
         )}
 
@@ -236,7 +366,26 @@ export function Landing() {
             onCreate={startCreate}
             onCrossDevice={() => openExisting()}
             onLegacy={openLegacy}
+            onLinkExisting={IS_TENANT ? startLinkExisting : undefined}
             onRequestArchive={requestArchive}
+          />
+        )}
+
+        {stage.kind === 'linking-create' && (
+          <ProgressInline
+            title="Otvori Face ID"
+            subtitle="Kreiram passkey za ovaj wallet prije linkanja."
+          />
+        )}
+
+        {stage.kind === 'linking-bridge' && (
+          <LinkingBridgeView iframeUrl={stage.iframeUrl} onCancel={resetToWelcome} />
+        )}
+
+        {stage.kind === 'linking-redirected' && (
+          <ProgressInline
+            title="Preusmjeravam na DOMOVINA Wallet…"
+            subtitle="Tamo ćeš odobriti linkanje pa te vraćamo natrag."
           />
         )}
 
@@ -314,10 +463,13 @@ function WelcomeView({
   onCreate,
   onCrossDevice,
   onLegacy,
+  onLinkExisting,
 }: {
   onCreate: () => void;
   onCrossDevice: () => void;
   onLegacy: () => void;
+  /** Only set on TENANT builds (non-default brand). undefined on master. */
+  onLinkExisting?: () => void;
 }) {
   return (
     <div className="flex flex-col gap-8 animate-route-enter">
@@ -353,6 +505,12 @@ function WelcomeView({
           <RefreshCw className="h-4 w-4" />
           Otvori postojeći passkey
         </Button>
+        {onLinkExisting && (
+          <Button onClick={onLinkExisting} variant="secondary" size="lg" block>
+            <Link2 className="h-4 w-4" />
+            Linkaj DOMOVINA wallet
+          </Button>
+        )}
         <Button onClick={onLegacy} variant="ghost" size="sm" block>
           Ne vidim ga — stari passkey (wallet.domovina.ai)
         </Button>
@@ -367,6 +525,7 @@ function WelcomeKnownView({
   onCreate,
   onCrossDevice,
   onLegacy,
+  onLinkExisting,
   onRequestArchive,
 }: {
   known: PasskeyRecord[];
@@ -374,6 +533,8 @@ function WelcomeKnownView({
   onCreate: () => void;
   onCrossDevice: () => void;
   onLegacy: () => void;
+  /** Only set on TENANT builds. undefined on master. */
+  onLinkExisting?: () => void;
   onRequestArchive: (record: PasskeyRecord) => void;
 }) {
   const activeCred = useWalletStore((s) => s.credentialId);
@@ -438,6 +599,12 @@ function WelcomeKnownView({
           <RefreshCw className="h-4 w-4" />
           Otvori drugi passkey (iCloud / Google sync)
         </Button>
+        {onLinkExisting && (
+          <Button onClick={onLinkExisting} variant="ghost" size="sm" block>
+            <Link2 className="h-4 w-4" />
+            Linkaj još jedan DOMOVINA wallet
+          </Button>
+        )}
         <Button onClick={onLegacy} variant="ghost" size="sm" block>
           Ne vidim ga — stari passkey (wallet.domovina.ai)
         </Button>
@@ -553,6 +720,52 @@ function WalletCard({
       >
         <Archive className="h-4 w-4" />
       </button>
+    </div>
+  );
+}
+
+function LinkingBridgeView({ iframeUrl, onCancel }: { iframeUrl: string; onCancel: () => void }) {
+  return (
+    <div className="flex flex-col gap-3 animate-route-enter">
+      <Card padding="md" className="flex flex-col gap-2">
+        <div className="flex items-center gap-2 text-brand-primary">
+          <Link2 className="h-5 w-5" />
+          <h2 className="font-semibold">Linkanje s DOMOVINA Walletom</h2>
+        </div>
+        <p className="text-sm text-ink-secondary">
+          U okvirima ispod otvori se DOMOVINA Wallet. Tamo odaberi Safe na
+          koji želiš spojiti ovaj {brand.name} i potpiši Face ID-em.
+          Kad završi, automatski se vraćamo ovamo.
+        </p>
+      </Card>
+      <div className="rounded-3xl overflow-hidden border border-surface-border bg-surface-raised shadow-card">
+        <iframe
+          src={iframeUrl}
+          title="DOMOVINA Wallet linking"
+          allow="publickey-credentials-get; publickey-credentials-create"
+          className="block w-full h-[520px] bg-surface-base"
+        />
+      </div>
+      <Button onClick={onCancel} variant="ghost" size="md" block>
+        Otkaži linkanje
+      </Button>
+    </div>
+  );
+}
+
+function ProgressInline({ title, subtitle }: { title: string; subtitle: string }) {
+  return (
+    <div className="flex flex-col items-center justify-center gap-4 py-12 animate-route-enter">
+      <div className="relative">
+        <div className="absolute inset-0 rounded-full bg-brand-primary/20 animate-ping" />
+        <div className="relative flex h-20 w-20 items-center justify-center rounded-full bg-brand-primary text-brand-primary-fg">
+          <Fingerprint className="h-10 w-10" />
+        </div>
+      </div>
+      <div className="text-center flex flex-col gap-1">
+        <p className="font-semibold text-ink-primary text-lg">{title}</p>
+        <p className="text-sm text-ink-secondary max-w-xs">{subtitle}</p>
+      </div>
     </div>
   );
 }
