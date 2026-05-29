@@ -41,6 +41,7 @@ import {
   markIntentPaid,
   sweepExpiredIntents,
 } from './intents/db';
+import { emitIntentPaidWebhook } from './intents/outbound';
 import { renderCheckoutPage } from './checkout/page';
 import type { Address } from 'viem';
 import type { MoneriumWebhookEvent } from './monerium/types';
@@ -489,12 +490,19 @@ async function handleForward(
     // page can flip to 'paid'. Idempotent: only flips pending → paid,
     // ignores already-paid or expired intents.
     if (routing.sid) {
-      await markIntentPaid(env, routing.sid, {
+      const flipped = await markIntentPaid(env, routing.sid, {
         moneriumOrderId: order.id,
         forwardId,
         forwardTxHash: result.txHash!,
         amountReceivedCents: amountCents,
       });
+      // Notify the merchant (e.g. pinka.finance) exactly once, on the real
+      // pending → paid flip. Monerium retries / duplicate order.updated events
+      // return flipped=false here, so no duplicate outbound webhook fires.
+      if (flipped) {
+        const paidIntent = await getIntent(env, routing.sid);
+        if (paidIntent) await emitIntentPaidWebhook(env, paidIntent);
+      }
     }
   } else {
     await updateForward(env, forwardId, {

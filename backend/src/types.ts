@@ -55,6 +55,12 @@ export interface Env {
   // See [[reference-wallet-domovina]] and [[reference-otp-domovina]].
   OTP_API_BASE: string;             // e.g. "https://otp.domovina.ai" — env var, not secret
   PHONE_PEPPER: string;             // SECRET — HMAC key for hashing E.164 phones before DB write
+
+  // Outbound "intent paid" webhook (merchant notification seam). Optional — when
+  // unset the rail simply doesn't notify. pinka.finance points this at the
+  // domovina-api `pinka-webhook` edge function. See src/intents/outbound.ts.
+  INTENT_WEBHOOK_URL: string;       // e.g. "https://api.domovina.ai/functions/v1/pinka-webhook"
+  INTENT_WEBHOOK_SECRET: string;    // SECRET — HMAC key (svix-style, optional whsec_ prefix)
 }
 
 export interface AccountRow {
