@@ -119,7 +119,19 @@ type Body = {
   value: string;
   data: string;
   signature: string;
+  /**
+   * Optional CREATE2 saltNonce for the Safe proxy deploy (cold path).
+   * Decimal uint256 string. Defaults to "0" — the personal-wallet derivation
+   * (wallet/src/lib/safe.ts uses saltNonce '0'). pinka.finance per-campaign
+   * Safes pass keccak("pinka:campaign:<id>") as a decimal string so the relay
+   * deploys the Safe at the SAME counterfactual address the client funded.
+   * Hardcoding 0 here would deploy a different address and silently strand the
+   * EURe (see memory: evm-call-to-empty-address).
+   */
+  saltNonce?: string;
 };
+
+const UINT256_MAX = (1n << 256n) - 1n;
 
 export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
   let body: Body;
@@ -142,6 +154,19 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
       400,
     );
   }
+  // Parse the optional saltNonce up-front so a malformed value fails loudly
+  // with a 400 rather than throwing deep in the cold-path encode. Absent →
+  // "0" (personal-wallet default).
+  let saltNonce: bigint;
+  try {
+    saltNonce = body.saltNonce == null ? 0n : BigInt(body.saltNonce);
+  } catch {
+    return json({ ok: false, error: `Invalid saltNonce: ${body.saltNonce}` }, 400);
+  }
+  if (saltNonce < 0n || saltNonce > UINT256_MAX) {
+    return json({ ok: false, error: 'saltNonce out of uint256 range' }, 400);
+  }
+
   // Reject stub pubkeys early — cross-device-restored passkey records store
   // ('0','0') until the next signing event refreshes them, and sending with
   // stubs would deploy a wrong signer at a CREATE2-derived address that does
@@ -266,7 +291,7 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
           data: encodeFunctionData({
             abi: PROXY_FACTORY_ABI,
             functionName: 'createProxyWithNonce',
-            args: [SAFE_SINGLETON, initializer, 0n],
+            args: [SAFE_SINGLETON, initializer, saltNonce],
           }),
         });
       }

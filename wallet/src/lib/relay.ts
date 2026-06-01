@@ -17,6 +17,14 @@ export type RelayRequest = {
   data: Hex;
   /** Safe contract-signature blob produced by encodeWebAuthnSignature. */
   signature: Hex;
+  /**
+   * Optional CREATE2 saltNonce for the cold-path Safe deploy, as a decimal
+   * uint256 string. Omit for personal wallets (server defaults to "0").
+   * pinka.finance per-campaign Safes pass keccak("pinka:campaign:<id>") so the
+   * relay deploys the Safe at the same counterfactual address the campaign was
+   * funded at.
+   */
+  saltNonce?: string;
 };
 
 export type RelayResponse =
