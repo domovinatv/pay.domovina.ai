@@ -3,8 +3,10 @@ import {
   createWalletClient,
   encodeFunctionData,
   encodePacked,
+  getCreate2Address,
   http,
   isAddress,
+  keccak256,
   zeroAddress,
   type Address,
   type Hex,
@@ -20,6 +22,14 @@ const SAFE_PROXY_FACTORY = '0x4e1DCf7AD4e460CfD30791CCC4F9c8a4f820ec67' as const
 const SAFE_SINGLETON = '0x29fcB43b46531BcA003ddC8FCB67FFE91900C762' as const; // SafeL2
 const COMPATIBILITY_FALLBACK_HANDLER = '0xfd0732Dc9E303f09fCEf3a7388Ad10A83459Ec99' as const;
 const MULTISEND_CALL_ONLY = '0x9641d764fc13c8B624c04430C7356C1C7C8102e2' as const;
+
+// keccak256(SafeProxyFactory.proxyCreationCode() ++ abi.encode(uint256(SAFE_SINGLETON))).
+// Constant because both the proxy creation code (pure, on the v1.4.1 factory) and
+// the singleton are fixed. Captured from the live Gnosis factory and verified to
+// reproduce protocol-kit's predicted addresses for salt 0 AND a campaign salt.
+// This is the CREATE2 init-code hash used to derive the counterfactual Safe addr.
+const SAFE_PROXY_INIT_CODE_HASH =
+  '0xe298282cefe913ab5d282047161268a8222e4bd4ed106300c547894bbefd31ee' as const;
 
 // Safe Passkey module v0.2.1 — see safe-modules-deployments
 const SAFE_WEBAUTHN_SIGNER_FACTORY = '0x1d31F259eE307358a26dFb23EB365939E8641195' as const;
@@ -167,6 +177,27 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
     return json({ ok: false, error: 'saltNonce out of uint256 range' }, 400);
   }
 
+  // CREATE2 consistency guard. The relay trusts the client-supplied safeAddress
+  // for the (no-op-safe) hot path, but the cold path DEPLOYS a Safe whose address
+  // is fully determined by (signerAddress, saltNonce). If the client sends a
+  // safeAddress that doesn't match that derivation, the cold path would deploy a
+  // Safe at address X while execTransaction targets safeAddress Y (no code) —
+  // EVM returns status=1 with no revert and the EURe is stranded forever (see
+  // memory: evm-call-to-empty-address). Reject the inconsistent triple up-front.
+  const predictedSafe = predictSafeProxyAddress(body.signerAddress as Address, saltNonce);
+  if (predictedSafe.toLowerCase() !== body.safeAddress.toLowerCase()) {
+    return json(
+      {
+        ok: false,
+        error:
+          `safeAddress ${body.safeAddress} does not match the Safe derived from ` +
+          `signerAddress + saltNonce (${predictedSafe}). Refusing to deploy — this ` +
+          `would strand funds at the counterfactual address.`,
+      },
+      400,
+    );
+  }
+
   // Reject stub pubkeys early — cross-device-restored passkey records store
   // ('0','0') until the next signing event refreshes them, and sending with
   // stubs would deploy a wrong signer at a CREATE2-derived address that does
@@ -271,20 +302,7 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
         });
       }
       if (!skipSafe) {
-        const initializer = encodeFunctionData({
-          abi: SAFE_SETUP_ABI,
-          functionName: 'setup',
-          args: [
-            [signerAddress],
-            1n,
-            zeroAddress,
-            '0x',
-            COMPATIBILITY_FALLBACK_HANDLER,
-            zeroAddress,
-            0n,
-            zeroAddress,
-          ],
-        });
+        const initializer = buildSafeInitializer(signerAddress);
         ops.push({
           to: SAFE_PROXY_FACTORY,
           value: 0n,
@@ -386,6 +404,48 @@ function packMultiSend(ops: PackedCall[]): Hex {
 
 function encodeVerifiers(): bigint {
   return (BigInt(P256_PRECOMPILE) << 160n) | BigInt(DAIMO_P256_VERIFIER);
+}
+
+/**
+ * Safe v1.4.1 `setup` calldata for a 1/1 Safe owned solely by signerAddress.
+ * Used both for the cold-path deploy AND the CREATE2 guard, so they can never
+ * drift — the predicted address is only meaningful if the initializer here is
+ * byte-identical to the one actually deployed.
+ */
+function buildSafeInitializer(signerAddress: Address): Hex {
+  return encodeFunctionData({
+    abi: SAFE_SETUP_ABI,
+    functionName: 'setup',
+    args: [
+      [signerAddress],
+      1n,
+      zeroAddress,
+      '0x',
+      COMPATIBILITY_FALLBACK_HANDLER,
+      zeroAddress,
+      0n,
+      zeroAddress,
+    ],
+  });
+}
+
+/**
+ * Deterministic counterfactual Safe address for (signerAddress, saltNonce) under
+ * the v1.4.1 SafeProxyFactory. Mirrors `createProxyWithNonce`'s CREATE2:
+ *   salt = keccak256(keccak256(initializer) ++ saltNonce)
+ *   addr = CREATE2(factory, salt, keccak256(creationCode ++ singleton))
+ * Verified against protocol-kit (the client's derivation) for salt 0 + campaign salts.
+ */
+function predictSafeProxyAddress(signerAddress: Address, saltNonce: bigint): Address {
+  const initializer = buildSafeInitializer(signerAddress);
+  const salt = keccak256(
+    encodePacked(['bytes32', 'uint256'], [keccak256(initializer), saltNonce]),
+  );
+  return getCreate2Address({
+    from: SAFE_PROXY_FACTORY,
+    salt,
+    bytecodeHash: SAFE_PROXY_INIT_CODE_HASH,
+  });
 }
 
 function json(data: unknown, status = 200) {
