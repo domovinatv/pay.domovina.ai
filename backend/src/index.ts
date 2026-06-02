@@ -42,6 +42,7 @@ import {
   sweepExpiredIntents,
 } from './intents/db';
 import { emitIntentPaidWebhook } from './intents/outbound';
+import { scanOnchainDonations } from './intents/onchainIndexer';
 import { renderCheckoutPage } from './checkout/page';
 import type { Address } from 'viem';
 import type { MoneriumWebhookEvent } from './monerium/types';
@@ -366,6 +367,16 @@ app.route('/api/intents', buildIntentApi());
 // Admin endpoints + HTML dashboard live under /admin/wallets (see admin/app.ts).
 app.route('/api/wallets', buildWalletApi());
 
+// Manual trigger for the on-chain donation indexer (same logic as the cron).
+// Guarded by the indexer secret so it can be poked for testing/backfill.
+app.post('/api/onchain/scan', async (c) => {
+  const key = c.req.header('x-indexer-key') ?? '';
+  const secret = (c.env.INTENT_WEBHOOK_SECRET ?? '').trim();
+  if (!secret || key !== secret) return c.json({ ok: false, error: 'unauthorized' }, 401);
+  const r = await scanOnchainDonations(c.env);
+  return c.json({ ok: true, ...r });
+});
+
 // Public branded checkout page rendered server-side; polls /api/intents/:sid.
 app.get('/checkout/:sid', async (c) => {
   const sid = c.req.param('sid');
@@ -573,21 +584,33 @@ h1{color:${color};margin:0 0 8px;font-size:18px}p{color:#444;margin:0;line-heigh
 export default {
   fetch: app.fetch,
   scheduled: async (
-    _event: ScheduledEvent,
+    event: ScheduledEvent,
     env: Env,
     ctx: ExecutionContext,
   ) => {
+    // Runs on every cron tick (the frequent one drives on-chain donation
+    // detection). Idempotent + cheap when there's nothing new.
     ctx.waitUntil(
-      refreshAllAccounts(env).then((n) =>
-        console.log(`cron: inserted ${n} new transactions`),
+      scanOnchainDonations(env).then(
+        (r) => console.log(`cron: onchain scan ${r.scanned} found=${r.found} created=${r.created ?? 0}`),
+        (e) => console.error(`cron: onchain scan failed: ${e}`),
       ),
     );
-    // Flip overdue pending intents to expired so the checkout page can
-    // show a clear "istekao" state. Idempotent + cheap UPDATE.
-    ctx.waitUntil(
-      sweepExpiredIntents(env).then((n) =>
-        console.log(`cron: expired ${n} pending intents`),
-      ),
-    );
+
+    // Heavier housekeeping only on the 6-hourly cron.
+    if (event.cron === '0 */6 * * *') {
+      ctx.waitUntil(
+        refreshAllAccounts(env).then((n) =>
+          console.log(`cron: inserted ${n} new transactions`),
+        ),
+      );
+      // Flip overdue pending intents to expired so the checkout page can
+      // show a clear "istekao" state. Idempotent + cheap UPDATE.
+      ctx.waitUntil(
+        sweepExpiredIntents(env).then((n) =>
+          console.log(`cron: expired ${n} pending intents`),
+        ),
+      );
+    }
   },
 };

@@ -30,7 +30,9 @@ zone_name = "domovina.ai"
 enabled = true
 
 [triggers]
-crons = ["0 */6 * * *"]
+# "*/2" drives the on-chain donation indexer (snappy detection); "0 */6" also
+# runs account refresh + expired-intent sweep (gated in the scheduled handler).
+crons = ["*/2 * * * *", "0 */6 * * *"]
 
 # D1 — create with: wrangler d1 create pay_domovina
 [[d1_databases]]
