@@ -43,6 +43,7 @@ import {
 } from './intents/db';
 import { emitIntentPaidWebhook } from './intents/outbound';
 import { scanOnchainDonations } from './intents/onchainIndexer';
+import { fetchOgPreview } from './og/preview';
 import { renderCheckoutPage } from './checkout/page';
 import type { Address } from 'viem';
 import type { MoneriumWebhookEvent } from './monerium/types';
@@ -375,6 +376,22 @@ app.post('/api/onchain/scan', async (c) => {
   if (!secret || key !== secret) return c.json({ ok: false, error: 'unauthorized' }, 401);
   const r = await scanOnchainDonations(c.env);
   return c.json({ ok: true, ...r });
+});
+
+// Open Graph link preview for the pinka support wall. Public-only egress here
+// (CF) keeps it SSRF-isolated; the secret keeps it from being an open OG proxy.
+app.post('/api/og-preview', async (c) => {
+  const key = c.req.header('x-og-key') ?? '';
+  const secret = (c.env.INTENT_WEBHOOK_SECRET ?? '').trim();
+  if (!secret || key !== secret) return c.json({ ok: false, error: 'unauthorized' }, 401);
+  let url = '';
+  try {
+    url = String(((await c.req.json()) as { url?: string }).url ?? '');
+  } catch {
+    return c.json({ ok: false, error: 'bad_json' }, 400);
+  }
+  const preview = await fetchOgPreview(url);
+  return c.json({ ok: true, preview });
 });
 
 // Public branded checkout page rendered server-side; polls /api/intents/:sid.
