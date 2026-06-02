@@ -376,33 +376,235 @@ flowchart LR
 
 ---
 
-## 8. Open questions (highest-priority first)
+## 8. Open questions
 
-1. **Does LazorKit bind the WebAuthn challenge to the *actual* Solana tx**
-   (challenge == recomputed instruction/payer/slot/counter/program_id digest)
-   or to a simpler app-defined message? Read `auth/secp256r1.rs` before
-   trusting anti-replay-across-relay. **#1 code review.**
-2. Exact **CU cost** of one precompile verify on mainnet, and whether a
-   deploy+create-ATA+send batch fits 1232 B or mandates ALT / deferred-2-tx.
-3. Does **EURC's mint have an active `freezeAuthority`** (issuer can freeze
-   ATAs)? Affects the self-custody guarantee vs EURe on Gnosis.
-4. LazorKit **upgrade authority / mutability** + the shared-mainnet-slot
-   binary-swap arrangement — confirm we can deploy an independent immutable
-   fork.
-5. Which **3rd-party SEPA→EURC on-ramp** delivers EURC directly to a
-   self-custody vault ATA with acceptable KYC/fees (Circle Mint is
-   institutional-only; Monerium's IBAN rail does not exist on Solana).
-6. Does LazorKit **`addAuthority` support a pure multi-passkey-owner (no
-   quorum) flow** that survives iCloud/Google passkey-sync edge cases,
-   matching `addOwnerWithThreshold` redundancy?
-7. **CF Worker CPU/duration limits** vs the full relayer flow — confirm
-   whether confirmation polling needs a Durable Object (likely).
-8. Scope/findings of the **Accretion Labs audit** before any production
-   reliance.
+**Resolved by iteration 2** (see §9–§11):
+
+1. ✅ **Challenge binds to the actual tx** — confirmed in source (`auth/secp256r1.rs`); stronger than ERC-1271. See §9.1.
+2. ✅ **EURC `freezeAuthority` is enabled** (`6FF2CPcL…`) but there is **no `permanentDelegate`** — freeze possible under legal order, clawback not. See §10.
+3. ✅ **LazorKit mainnet slot is upgradeable / binary-swap** — deploy our own program ID + `set-upgrade-authority --final`. See §9.2.
+4. ✅ **`addAuthority` supports pure multi-passkey-owner** (no quorum); synced-passkey hardware counter ignored, odometer used. See §9.2.
+5. ✅ **Accretion audit** — 14 issues all fixed; covers the program, not the SDK/commercial binary. See §9.2.
+6. ✅ **A SEPA→EURC→self-custody-Solana on-ramp exists** — Transak (~0.99 %). See §10.
+
+**Still open** (carried into Phase 0 / future iterations):
+
+7. Exact **CU cost + tx byte size** on real iOS vs Android assertions — single-tx vs deferred-2-tx decision (Phase 0 measures it; §11.3).
+8. Confirm **Transak's live widget** exposes EURC+Solana+SEPA for an EU/Croatian retail user + per-tier limits; verify **Ramp/Banxa** as a second-source EURC-on-Solana on-ramp.
+9. Concrete **retail EURC→EUR off-ramp / at-par redeem** path for a self-custody seller.
+10. Watch for a **native-Solana EURØP** (Schuman; no permanentDelegate, retail-friendly — could supersede EURC) or a **Monerium Solana** deployment (would close the IBAN-mint UX gap).
+11. **CF Worker CPU/duration limits** vs the full relayer flow — confirm confirmation polling needs a Durable Object (likely, per the SSE finding).
+12. Audit scope for **our fork + relayer + TS SDK** (the Accretion audit does not cover these).
 
 ---
 
-## 9. Provenance
+## 9. Iteration 2 — LazorKit source audit (read from the cloned repo)
+
+Cloned `lazor-kit/program-v2` and read the program source directly (not blog
+posts). **Verdict: `fork-with-changes`** — the design is a faithful, in some
+ways *stronger* Solana analogue of the Gnosis Safe + WebAuthn-signer + relayer
+model. Audited commit `79cfc6c`; Accretion Labs report is in-repo at
+`audits/2026-accretion-solana-foundation-lazorkit-audit-A26SFR1.pdf`.
+
+### 9.1 Challenge binding — RESOLVED: binds to the actual tx (#1 question)
+
+This was the make-or-break code review. The WebAuthn challenge the passkey
+signs is **not** an app-defined message — it is a SHA-256 digest of the literal
+transaction the relayer will submit:
+
+```mermaid
+flowchart TB
+  subgraph CH["challenge = SHA256( … )  — program/src/auth/secp256r1/mod.rs"]
+    direction LR
+    D["discriminator (disc 4)<br/>= Execute"] --- AP["auth_payload[..14]<br/>slot(8)+counter(4)+sysvarIdx+rsv"]
+    AP --- SP["signed_payload"]
+    SP --- PY["payer pubkey<br/>(relayer)"]
+    PY --- CT["counter (u32 LE)"]
+    CT --- PID["program_id"]
+  end
+  SP --> SP2["data_payload = full compact-ix stream<br/>(program idx + account idxs + raw ix data)"]
+  SP --> SP3["accounts_hash = SHA256 of EVERY<br/>resolved account pubkey (compute_accounts_hash)"]
+  CH --> B64["base64url-no-pad"]
+  B64 --> CMP{"ct_eq vs<br/>clientDataJSON.challenge"}
+  CMP -->|"mismatch"| ERR["InvalidMessageHash → revert"]
+  CMP -->|"match"| OK["precompile message verified → execute"]
+  classDef ok fill:#e6ffe6,stroke:#2a2;
+  class OK ok;
+```
+
+Because the **raw inner instruction bytes** *and* a **hash of every resolved
+account pubkey** are folded in, a fee-payer relayer **cannot** reorder
+accounts, swap the recipient, change the amount, substitute the target program,
+or replay — any change breaks the passkey signature. This is *stronger* binding
+than Safe's ERC-1271 (which binds a Safe-tx hash). The precompile message itself
+is `authenticatorData ‖ SHA256(clientDataJSON)`; introspection forces the
+sibling secp256r1 ix offsets to be self-referential (`instruction_index ==
+0xFFFF`). **No blockhash** in the challenge — freshness comes from an explicit
+`u64` slot (`MAX_SLOT_AGE = 150`, ~60 s) + the odometer.
+
+### 9.2 What else the audit confirmed
+
+| Property | Finding | Implication for us |
+|---|---|---|
+| **Immutability** | Mainnet slot `LazorjRF…` is **upgradeable** by a foundation+LazorKit multisig and **explicitly slated for a binary-swap** to the fee-charging `lazorkit-protocol` (`docs/MAINNET_DEPLOY.md`). | **Do NOT integrate against the shared slot.** Deploy our **own** program ID, re-point `crate::ID` in `assertions/src/lib.rs` (else PDA derivation silently fails), then `set-upgrade-authority --final`. Keep `scripts/check-no-fee.sh` in CI to assert no `try_collect_fee`/`ProtocolConfig`/`TreasuryShard`. |
+| **Multi-passkey** | `addAuthority` supports a **pure multi-owner** model (no quorum): an Owner can add another Owner; each passkey is its own PDA `["authority", wallet, credId_hash]` with its own counter; any one Owner executes alone. `RemoveAuthority` can't remove an Owner or self-remove. | This is exactly the `addOwnerWithThreshold(s,1)` redundancy / recovery model. iCloud/Google-synced passkey across devices = multiple Owners. |
+| **Replay protection** | Per-authority **u32 odometer** (must submit `counter+1`, folded into the challenge, committed only after verify) + **slot freshness** (`MAX_SLOT_AGE=150`) + **discriminator** bound (anti cross-ix replay) + anti-CPI (`stack_height>1` rejected). WebAuthn **hardware sign-counter deliberately ignored** (synced passkeys return 0). | A relayer cannot resubmit a signed payload. **Serialize concurrent sends** from the same authority (single counter). |
+| **Accretion audit** | 14 issues (2 critical, 2 high, 2 med, 5 low, 3 info) — **all fixed**, with remediation commits. Several fixes *added* the very tx-binding properties above (`compute_accounts_hash`, full `u64` slot, discriminator). Covers the program; **not** the commercial `lazorkit-protocol` binary nor the TS SDK. | Reasonable assurance for the **forked program**; we still own audit of our fork + relayer + SDK. |
+
+### 9.3 Implementer gotchas
+
+- **Toolchain pinned:** Solana CLI 3.0.4, `rust-toolchain.toml`, **Pinocchio
+  (not Anchor)**; build `cargo build-sbf --features mainnet`.
+- **`crate::ID` must be re-pointed** to our program keypair or every
+  `find_program_address` fails at runtime.
+- **~60 s window:** passkey prompt → sign → submit must finish inside
+  `MAX_SLOT_AGE`; relayer embeds a fresh `getSlot` in `auth_payload[0..8]`.
+- **Self-reentrancy blocked:** can't batch `AddAuthority` inside `Execute` —
+  multi-step wallet ops need separate top-level txs.
+- **`origin` not validated** (relies on the on-chain `rpIdHash` set at
+  authority creation) — pick the production RP ID up front; aligns with our
+  [cross-domain RP strategy](cross-domain-wallet-passkey.md).
+- **EURC swap point:** vault is `["vault", wallet]`; transfer is a compact ix
+  whose program is SPL Token and whose accounts include the vault ATA; the
+  program CPI-signs via `invoke_signed`. Swapping USDC→EURC is a mint-address
+  change.
+
+---
+
+## 10. Iteration 2 — euro issuer + SEPA on-ramp (read live from mainnet)
+
+All mint facts below were read from Solana mainnet via `getAccountInfo`
+(jsonParsed, 2026-06-02, slot ~423.88M), not marketing pages.
+
+| Euro unit | Live on Solana | Mint / program | Freeze / clawback | Retail self-custody? |
+|---|---|---|---|---|
+| **EURC** (Circle) | ✅ yes | `Hzwqb…DKtr` · legacy SPL · 6 dp | freeze **enabled** (`6FF2CPcL…`); **no permanentDelegate** | ✅ **full** — hold/receive/transfer; redeem indirect (sell on off-ramp; Circle Mint direct = institutional) |
+| **EURAU** (AllUnity) | ✅ yes | `9pCW…t6hS` · **Token-2022** · 6 dp | **permanentDelegate** = issuer **clawback** + global pause | ❌ **disqualified** — issuer can move any balance + contractually **B2B-only**. At most *display*, never present as self-custody euro. |
+| **EURØP** (Schuman) | ❌ no | not deployed on Solana (EVM/XRPL only) | n/a | n/a — most retail-friendly MiCA EMT (no permanentDelegate on EVM); **track for a native Solana mint** |
+| **EUROe** (Paxos) | ⚠️ residual | `2Vhj…WVg` · legacy SPL | freeze enabled | ❌ **dead** — Paxos redemption-only wind-down |
+| **Monerium EURe** (the rail we lose) | ❌ no | Gnosis/ETH/Polygon/Arbitrum only | n/a | n/a — **no Solana issuer replicates the per-wallet-IBAN mint rail** |
+
+**On-ramps (SEPA → euro-token → self-custody Solana address):**
+
+- **Transak** — ✅ delivers **EURC on Solana** via SEPA (~0.99 %, cheapest),
+  hosted widget pre-fills the user's address. **The one viable retail path.**
+- **MoonPay** — Solana + SEPA, but **no EURC** (only SOL/USDC); would need a
+  Jupiter USDC→EURC swap after. Not a euro on-ramp.
+- **Circle Mint** — at-par 1:1 SEPA issuance, but **institutional-only**.
+- **Ramp / Banxa** — SOL/USDC on Solana confirmed; **EURC-on-Solana
+  unconfirmed** (open question — would be a useful second source).
+- **Monerium** — the per-wallet-IBAN mint rail, **not on Solana**.
+
+```mermaid
+flowchart TD
+  Q{"Strict retail self-custody<br/>euro on Solana mainnet?"}
+  Q --> EURC["EURC ✅<br/>native SPL, no clawback,<br/>Transak SEPA on-ramp"]
+  Q --> EURAU["EURAU ❌<br/>permanentDelegate clawback<br/>+ B2B-only"]
+  Q --> EUROP["EURØP ⛔<br/>not on Solana"]
+  Q --> EUROE["EUROe ⛔<br/>redemption-only (dead)"]
+  EURC --> SHIP["Recommendation:<br/>ship on EURC, fund via Transak SEPA,<br/>keep mint address a 1-line configurable const"]
+  classDef good fill:#e6ffe6,stroke:#2a2;
+  classDef bad fill:#ffe6e6,stroke:#d33;
+  class EURC,SHIP good;
+  class EURAU,EUROP,EUROE bad;
+```
+
+> **Decision (still soft — you asked to keep exploring issuers):** ship on
+> **EURC + Transak SEPA**, with the mint address as a single configurable
+> constant so a later switch to a native-Solana **EURØP** or a **Monerium**
+> rail is a one-line change.
+>
+> **Honest UX gap vs Gnosis:** Monerium gives each self-custody wallet its own
+> IBAN and **mints EURe 1:1 directly into the wallet** on SEPA inbound — bank →
+> self-custody, no spread, no secondary market. Solana has **no equivalent**:
+> Circle Mint's at-par rail is institutional-only, so retail routes through
+> Transak, which adds KYC, a ~0.99 % spread, secondary-market price/liquidity
+> dependence, and **no at-par retail redeem**. Self-custody is unaffected; the
+> *mint/redeem economics and IBAN convenience* are what's lost.
+
+---
+
+## 11. Iteration 2 — Phase 0 devnet spike spec
+
+**Objective:** prove end-to-end on devnet that a WebAuthn passkey can authorize
+a real EURC SPL transfer out of a forked-LazorKit PDA vault, where the CF-Worker
+relayer is the **sole Ed25519 signer/fee-payer** and holds **zero** fund
+authority — plus capture the negative (relayer-alone is rejected) and the real
+CU/byte numbers. Everything else (recovery, on-ramp, brand) is **out of scope**.
+
+### 11.1 Transaction anatomy (2 instructions)
+
+```mermaid
+flowchart LR
+  subgraph TX["Devnet tx — relayer = ONLY Ed25519 signer + fee payer"]
+    direction TB
+    I0["ix[0] Secp256r1SigVerify precompile<br/>offsets self-ref (0xFFFF)<br/>sig@16 (64B raw r‖s, low-S)<br/>pubkey@80 (33B compressed)<br/>msg@114 = authData ‖ SHA256(clientDataJSON)"]
+    I1["ix[1] forked-LazorKit Execute (disc 4)<br/>accts: payer, wallet PDA, authority PDA,<br/>vault PDA, Instructions sysvar, +inner SPL accts<br/>data: compact spl-transfer ix ‖ auth_payload"]
+    I0 --> I1
+  end
+  I1 -->|"invoke_signed [vault, wallet, bump]"| T["SPL Token: transferChecked<br/>vault ATA → recipient ATA (EURC)"]
+```
+
+> The precompile **must be the instruction immediately before** Execute. The
+> vault PDA is signed by the program (`invoke_signed`), never by the user. The
+> relayer signs only the envelope.
+
+### 11.2 WebAuthn encoding pipeline (the 2nd-riskiest area)
+
+```mermaid
+flowchart LR
+  REG["create() ES256 (-7)<br/>COSE key → 33B compressed (0x02/0x03‖x)<br/>store + rpIdHash=SHA256(rpId)"]:::once
+  CHAL["relayer builds challenge =<br/>SHA256(disc ‖ auth_payload[..14] ‖<br/>compact_ix‖accounts_hash ‖ payer ‖ counter+1 ‖ program_id)"]
+  GET["get(challenge)<br/>→ authData, clientDataJSON, DER sig"]
+  NORM["DER → raw r‖s<br/>low-S normalize (n−s if s over HALF_ORDER)<br/>→ 64B"]
+  ASM["assemble precompile ix bytes<br/>(sig, compressed pubkey, msg)"]
+  REG -. one-time .-> CHAL --> GET --> NORM --> ASM
+  classDef once fill:#eef,stroke:#88a;
+```
+
+**iOS/Android quirks to test:** Safari vs Chrome emit different
+`clientDataJSON` length + field order (affects tx size — measure both);
+synced-passkey hardware counter is 0 (ignored on-chain — odometer only);
+extra `clientDataJSON` fields / escaping break the strict parser; ensure UP=1.
+
+### 11.3 CU / size budget — the numbers the spike must MEASURE
+
+LazorKit's self-reported figures (to be **verified**, not trusted): ~**9,441
+CU**, ~**574 usable ix-data bytes**, ~**0.000005 SOL/tx**, full setup
+~**0.002713 SOL**. A single-passkey single-EURC-transfer is *expected* to fit
+~700–850 B (under the **1232 B** cap), but `clientDataJSON` length varies by
+platform, so measure via `simulateTransaction.unitsConsumed` + the confirmed
+tx size. **Decision rule:** if ≤ ~1100 B **and** ≤ ~200k CU → ship single-tx;
+else use the **deferred 2-tx** path (`Authorize` binds only
+`instructions_hash ‖ accounts_hash ‖ expiry`, then `ExecuteDeferred` carries
+the full unsigned inner ix and re-verifies the hash — fixed-size passkey
+regardless of inner-ix size). ALT is a 3rd lever, **not** for Phase 0.
+
+### 11.4 Acceptance criteria
+
+1. **Positive:** one confirmed devnet tx moves test-EURC vault ATA → recipient
+   ATA, relayer the only signer, authority solely from a real passkey assertion.
+2. **Negative (mandatory):** same relayer key is **rejected** when the sig is
+   byte-flipped (`InvalidMessageHash`), the recipient index is swapped, the slot
+   is stale (`InvalidSignatureAge`), or the counter is replayed
+   (`SignatureReused`). Proves the relayer can't move or redirect funds.
+3. **Counter** advances exactly once/Execute; identical resubmit → `SignatureReused`.
+4. **Measured:** CU + byte size recorded for **both** iOS/Safari and
+   Android/Chrome assertions; single-tx-vs-deferred decision stated.
+5. **Fork integrity:** deployed under **our** program ID (`crate::ID`
+   re-pointed); `check-no-fee.sh` passes; reproducible `build-sbf`.
+6. **RP binding:** an assertion from a passkey under a *different* rpId is
+   rejected (`InvalidPubkey`) — confirms the RP model before committing prod RP ID.
+7. **Deferred path** smoke-tested once (`Authorize` + `ExecuteDeferred`; PDA
+   rent refunded on close).
+
+> **Note:** devnet has no canonical Circle EURC mint — the spike mints a local
+> 6-dp legacy-SPL stand-in and documents the substitution; a mainnet-fork test
+> against the real EURC mint (freeze authority enabled) is a Phase 1 follow-up.
+
+---
+
+## 12. Provenance
 
 Research method: autonomous multi-agent workflow (`Workflow` tool) — 6
 parallel research agents (Squads v4, secp256r1/passkeys, fee-payer relay,
@@ -429,3 +631,13 @@ adversarially fact-checked.
   (achievable via the smart-wallet/PDA pattern only; the MPC pattern that
   avoids custom Rust is custodial and rejected; mature audited gasless passkey
   stacks are still early).
+
+**Iteration 2 (2026-06-03)** — §9–§11. 3 agents, ~242k subagent tokens, 120
+tool calls. The LazorKit thread **cloned the repo and read the program source**
+(file:line refs in §9); the euro thread read every mint **live from Solana
+mainnet via `getAccountInfo`** (jsonParsed, slot ~423.88M); a synthesis agent
+produced the Phase 0 spike spec (§11). Net new conclusions: challenge **binds to
+the actual tx** (stronger than ERC-1271, #1 question resolved); LazorKit mainnet
+slot is **upgradeable/binary-swap** → must self-deploy immutable; **EURAU has a
+`permanentDelegate`** (issuer clawback) + B2B-only → disqualified; **EURC** is
+the only retail-self-custody euro on Solana, fundable via **Transak SEPA**.
