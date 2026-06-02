@@ -51,6 +51,45 @@ flips the headline finding about Squads:
 need only (our actual model is threshold-1 redundancy, which LazorKit's
 multi-authority covers more simply). See §3.
 
+### System overview
+
+```mermaid
+flowchart LR
+  subgraph Device["User device"]
+    PK["Passkey P-256<br/>(Face ID / iCloud / Google PM)"]
+  end
+
+  subgraph Edge["Cloudflare Worker relay"]
+    FP["Ed25519 fee-payer<br/>(secret keypair)"]
+    KV["KV rate-limit<br/>5 tx/day"]
+    DO["Durable Object<br/>confirmation poll"]
+  end
+
+  subgraph Solana["Solana mainnet-beta"]
+    PRE["secp256r1 precompile<br/>Secp256r1SigVerify1111…"]
+    PROG["SmartWallet program<br/>(LazorKit fork, immutable)"]
+    VAULT["Vault PDA<br/>(counterfactual)"]
+    EURC["EURC ATA<br/>mint Hzwqb…DKtr"]
+  end
+
+  PK -->|"WebAuthn assertion<br/>(clientDataJSON + sig)"| FP
+  FP -->|"builds + signs tx<br/>(sole Ed25519 signer)"| PRE
+  FP --> KV
+  FP --> DO
+  PRE -->|"verifies P-256<br/>as sibling ix"| PROG
+  PROG -->|"introspects precompile<br/>+ invoke_signed"| VAULT
+  VAULT --> EURC
+
+  classDef gone fill:#e6ffe6,stroke:#2a2;
+  class PRE,PROG gone;
+```
+
+> The relayer is the **only** Ed25519 signer + fee-payer, yet holds **no
+> authority**: the program rejects the execute unless the precompile confirms a
+> valid passkey signature over the tx-bound message. Green nodes are the parts
+> that did not exist when the Gnosis wallet was built and are now live on
+> mainnet.
+
 ---
 
 ## 1. Pillar-by-pillar mapping (Gnosis → Solana)
@@ -63,6 +102,36 @@ multi-authority covers more simply). See §3.
 | 4 | **Gasless relay** (CF Worker EOA submits signed `execTransaction`, pays gas, holds no authority; KV 5/day) | **CF Worker as Ed25519 fee-payer** (tx account index 0). Native fee-payer/signer separation. Relayer is the **sole Ed25519 signer**; passkey rides as instruction data. `@solana/kit` (or web3.js + `nodejs_compat`). | high | *Cleaner* than Gnosis (no deploy-on-first-send dance). Octane (`anza-xyz/octane`) is the design blueprint but **archived 2026-04-20** — copy the validate-then-sign discipline, roll your own. CF Worker CPU limits → confirmation polling likely needs a **Durable Object** (per the existing SSE-on-Workers finding). |
 | 5 | **Euro stablecoin** (Monerium EURe + SEPA mint-to-Safe rail) | **Circle EURC** (mint `Hzwqb…DKtr`, 6 dp, legacy SPL Token `TokenkegQ…`). | medium | **Not a drop-in.** Monerium EURe is **not on Solana** (no roadmap). EUROe is **dead** (Paxos → redemption-only). Circle Mint is **institutional**, not per-wallet IBAN — retail SEPA→EURC must route through a 3rd-party on-ramp (Transak/MoonPay/Privy). Bridging EURe is unclean (CCTP = USDC-only; Wormhole = wrapped non-redeemable). |
 | 6 | **Strict self-custody** (no server key with on-chain authority; server recovery permanently rejected) | **PDA-owned vault gated solely on the precompile + program logic** (LazorKit pattern). Relayer = fee-payer only, provably no fund authority. Backend stores only public info. | high | Two integrity conditions: (a) program **must be immutable or timelock-governed** — an upgrade authority is a custody hole even if the relayer is fee-payer-only; (b) **reject the Para/Privy/Turnkey MPC pattern** (passkey unlocks a *server-held* Ed25519 key) — custodial-adjacent, violates [ADR 0001](../decisions/0001-no-server-side-recovery.md) / [self-custody principle](../decisions/0001-no-server-side-recovery.md). Replay protection = LazorKit's per-authority u32 **odometer** (not the unreliable WebAuthn hardware counter). |
+
+```mermaid
+flowchart LR
+  subgraph G["Gnosis / Safe (live today)"]
+    G1["WebAuthn signer<br/>(ERC-1271 + RIP-7212)"]
+    G2["CREATE2 Safe address"]
+    G3["Safe 1/1 multi-owner"]
+    G4["CF Worker relay<br/>(xDAI gas)"]
+    G5["Monerium EURe<br/>+ SEPA mint rail"]
+    G6["No server key<br/>over funds"]
+  end
+
+  subgraph S["Solana / LazorKit (proposed)"]
+    S1["secp256r1 precompile<br/>+ program introspection"]
+    S2["Vault PDA"]
+    S3["LazorKit multi-authority"]
+    S4["CF Worker fee-payer<br/>(SOL gas)"]
+    S5["Circle EURC<br/>+ 3rd-party on-ramp"]
+    S6["PDA vault gated<br/>on precompile"]
+  end
+
+  G1 ==>|"maps to"| S1
+  G2 ==> S2
+  G3 ==> S3
+  G4 ==> S4
+  G5 -.->|"NOT a drop-in"| S5
+  G6 ==> S6
+
+  linkStyle 4 stroke:#d33,stroke-width:2px;
+```
 
 ---
 
@@ -99,9 +168,91 @@ This satisfies the self-custody invariant exactly — *provided* the program is
 immutable/timelocked and the challenge truly binds to the current tx (the #1
 code-review item, see §6).
 
+### Send flow (sequence)
+
+```mermaid
+sequenceDiagram
+  autonumber
+  participant U as User (PWA)
+  participant A as Authenticator<br/>(passkey P-256)
+  participant R as CF Worker relay<br/>(Ed25519 fee-payer)
+  participant N as Solana RPC
+  participant V as secp256r1 precompile
+  participant P as SmartWallet program
+
+  U->>U: build challenge = SHA256(odometer ‖ payer ‖ accounts ‖ slot ‖ program_id ‖ ix digest)
+  U->>A: navigator.credentials.get(challenge)
+  A-->>U: clientDataJSON + authenticatorData + DER sig
+  U->>U: DER → raw r‖s, low-S normalize, compress pubkey
+  U->>R: POST /relay { assertion, intent: send EURC }
+  R->>R: validate-then-sign (parse ix set, never blind-sign) + KV rate-limit
+  R->>N: tx [ComputeBudget, secp256r1 ix, Execute ix]<br/>(relay = sole Ed25519 signer + fee payer)
+  N->>V: verify P-256 (rejects high-S)
+  N->>P: Execute ix
+  P->>P: introspect precompile via Instructions sysvar
+  P->>P: check clientDataJSON.challenge == digest, UP/UV + rpIdHash, odometer, slot
+  P->>V: ✗ no valid passkey → revert (relayer cannot spend)
+  P->>P: ✓ invoke_signed → transferChecked(EURC) from vault PDA
+  N-->>R: signature
+  R->>N: poll getSignatureStatuses (via Durable Object)
+  R-->>U: { confirmed, signature }
+```
+
+---
+
+### Create + receive flow (sequence)
+
+```mermaid
+sequenceDiagram
+  autonumber
+  participant U as User (PWA)
+  participant A as Authenticator
+  participant B as Backend registry
+  participant R as CF Worker relay
+  participant N as Solana
+
+  Note over U,N: CREATE (counterfactual — no on-chain tx required to show the address)
+  U->>A: navigator.credentials.create()
+  A-->>U: credentialId + COSE pubkey
+  U->>U: COSE → 33-byte compressed pubkey, rpIdHash = SHA256(rpId)
+  U->>U: derive wallet PDA ["wallet", user_seed] + vault PDA ["vault", wallet]
+  U->>B: store ONLY public info (credId hash, pubkey, rpIdHash, PDAs, phone hash)
+  U-->>U: show counterfactual vault address immediately
+
+  Note over U,N: LAZY on-chain creation (relayer-funded)
+  R->>N: create wallet acct + 145-byte secp256r1 authority record (rent ≈ 0.0019 SOL)
+
+  Note over U,N: RECEIVE (relayer/sender sponsors ATA rent)
+  N->>N: createAssociatedTokenAccountIdempotent(vault, EURC) — 0.00204 SOL
+  N->>N: transferChecked(EURC) → vault ATA
+  R->>R: Helius webhook → DO → idempotent "received" event
+```
+
+> SPL differs from ERC-20: tokens can't land until the vault's **EURC ATA**
+> physically exists (rent-funded). Either the relayer pre-creates it at
+> onboarding, or the first inbound transfer bundles
+> `createAssociatedTokenAccountIdempotent` — the sender/relayer pays, the user
+> never needs SOL.
+
 ---
 
 ## 3. Why LazorKit, not Squads (and when Squads earns its keep)
+
+```mermaid
+flowchart TD
+  Q1{"Need passkey =<br/>on-chain authority<br/>(strict self-custody)?"}
+  Q1 -->|No, MPC OK| MPC["Para / Privy / Turnkey<br/>(zero custom Rust)"]
+  MPC --> REJECT["❌ REJECTED<br/>server-held Ed25519 key<br/>violates ADR 0001"]
+  Q1 -->|Yes| Q2{"Need genuine<br/>M-of-N quorum?"}
+  Q2 -->|"No — threshold-1<br/>redundancy (our model)"| LAZ["✅ Fork LazorKit program-v2<br/>pillars 1,2,4,6 built-in<br/>swap USDC→EURC"]
+  Q2 -->|"Yes — future<br/>org treasuries"| SQ["Squads v4<br/>+ custom secp256r1<br/>signer-member shim"]
+
+  classDef good fill:#e6ffe6,stroke:#2a2;
+  classDef bad fill:#ffe6e6,stroke:#d33;
+  class LAZ good;
+  class REJECT bad;
+```
+
 
 `wallet.domovina.ai`'s real model is **threshold-1, multi-owner for
 redundancy** ([multi-passkey ADR 0008](../decisions/0008-multi-passkey-same-safe.md)) —
@@ -153,6 +304,19 @@ Custom Rust **is** required (see §0/§2/§3). The simplest path is therefore
 ---
 
 ## 5. Implementation phases (when/if greenlit)
+
+```mermaid
+flowchart LR
+  P0["Phase 0<br/>De-risk spike (devnet)<br/>precompile + relayer<br/>WebAuthn encoding<br/>CU/byte budget"]
+  P1["Phase 1<br/>Fork + deploy LazorKit<br/>own immutable program ID<br/>swap → EURC"]
+  P2["Phase 2<br/>Create + receive<br/>counterfactual PDA<br/>relayer sponsors rent"]
+  P3["Phase 3<br/>Send + relayer hardening<br/>validate-then-sign<br/>negative test"]
+  P4["Phase 4<br/>Recovery + SEPA on-ramp<br/>addAuthority<br/>3rd-party EURC ramp"]
+  P0 --> P1 --> P2 --> P3 --> P4
+  P3 -.->|"mainnet send validated<br/>= the 2026-05-22 Gnosis analogue"| MILE(["MVP parity"])
+  classDef ms fill:#fff5cc,stroke:#cc9;
+  class MILE ms;
+```
 
 | Phase | Goal | Deliverable |
 |---|---|---|
