@@ -3,7 +3,7 @@
 // Format: ethereum:<address>[@<chainId>][/<function>][?key=value[&...]]
 //
 // For an ERC-20 transfer of EURe on Gnosis Chain:
-//   ethereum:0xcB444e90D8198415266c6a2724b7900fb12FC56E@100/transfer
+//   ethereum:0x420CA0f9B9b604cE0fd9C18EF134C705e5Fa3430@100/transfer
 //     ?address=0xRECIPIENT&uint256=1500000000000000000
 //
 // Decoder also accepts plain "0xADDRESS" strings (some wallets just QR the

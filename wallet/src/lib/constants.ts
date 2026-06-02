@@ -17,7 +17,12 @@ export const gnosis = defineChain({
   },
 });
 
-export const EURE_ADDRESS = '0xcB444e90D8198415266c6a2724b7900fb12FC56E' as const;
+// Monerium EURe **V2** on Gnosis (the proxy that emits Transfer events + that the
+// rail/indexer use). V1 (0xcB444e90 "EUR emoney") is legacy: same balance but its
+// events fire separately, so a V1-pinned wallet missed post-cutover activity and
+// couldn't scan V2 payment QRs. Gnosis is long past the V1→V2 cutover (block
+// 35656951). See docs/reference/monerium-contracts.md.
+export const EURE_ADDRESS = '0x420CA0f9B9b604cE0fd9C18EF134C705e5Fa3430' as const;
 export const EURE_DECIMALS = 18;
 
 export const SAFE_WEBAUTHN_SIGNER_FACTORY = '0x1d31F259eE307358a26dFb23EB365939E8641195' as const;
