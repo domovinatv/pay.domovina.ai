@@ -77,11 +77,25 @@ export function buildIntentApi(): Hono<{ Bindings: Env }> {
     const label = (c.req.query('label') ?? '').trim();
     if (!ADDR_RE.test(target)) return c.json({ error: 'invalid_target_address' }, 400);
     if (!/^[A-Za-z0-9_-]{6,64}$/.test(id)) return c.json({ error: 'invalid_campaign_id' }, 400);
+    // Optional prefilled amount. Absent/blank → reusable, payer-entered amount.
+    // When present it's only a PREFILL — the payer can override, and the actual
+    // settled amount is what gets recorded (record_sepa_contribution uses the
+    // Monerium order amount), so a fixed-amount QR (e.g. membership) and a
+    // free-amount QR share the same cmp: reference and Safe.
+    const amountRaw = (c.req.query('amount') ?? '').trim();
+    let amountEur: number | null = null;
+    if (amountRaw) {
+      const n = Number(amountRaw.replace(',', '.'));
+      if (!Number.isFinite(n) || n <= 0 || Math.round(n * 100) > MAX_AMOUNT_CENTS) {
+        return c.json({ error: 'invalid_amount_eur', max: MAX_AMOUNT_CENTS }, 400);
+      }
+      amountEur = n;
+    }
     const memo = `cmp:${target.toLowerCase()}?id=${id}`;
     const epcText = buildEpcText({
       beneficiaryName: MPT_BENEFICIARY_NAME,
       iban: MPT_IBAN,
-      amountEur: null, // blank → reusable, payer-entered amount
+      amountEur, // null → blank (free), positive → prefilled (still overridable)
       purposeCode: 'OTHR',
       remittanceInfo: memo,
       bic: MPT_BIC,
@@ -90,6 +104,7 @@ export function buildIntentApi(): Hono<{ Bindings: Env }> {
       campaign_id: id,
       target_address: target.toLowerCase(),
       label: label || null,
+      amount_eur: amountEur !== null ? amountEur.toFixed(2) : null,
       memo,
       iban: MPT_IBAN,
       beneficiary_name: MPT_BENEFICIARY_NAME,
