@@ -31,7 +31,7 @@ import {
   updateForward,
   upsertMoneriumOrder,
 } from './monerium/db';
-import { extractRoutingFromOrder, extractSessionId } from './monerium/sid';
+import { extractRoutingFromOrder, extractSessionId, extractSenderFromOrder } from './monerium/sid';
 import { forwardViaSafe } from './router/safe';
 import { mountAdminUi } from './admin/app';
 import { buildIntentApi } from './intents/api';
@@ -457,6 +457,7 @@ async function handleForward(
   order: import('./monerium/types').MoneriumOrder,
 ): Promise<void> {
   const routing = extractRoutingFromOrder(order);
+  const sender = extractSenderFromOrder(order);
   const amountCents = parseAmountCents(order.amount);
   if (!routing.target) {
     await insertForward(env, {
@@ -529,7 +530,7 @@ async function handleForward(
       // return flipped=false here, so no duplicate outbound webhook fires.
       if (flipped) {
         const paidIntent = await getIntent(env, routing.sid);
-        if (paidIntent) await emitIntentPaidWebhook(env, paidIntent);
+        if (paidIntent) await emitIntentPaidWebhook(env, paidIntent, sender);
       }
     }
     // Permanent campaign QR (`cmp:` protocol): no per-intent sid — every order
@@ -543,6 +544,8 @@ async function handleForward(
         currency: order.currency ?? 'eur',
         targetAddress: routing.target,
         forwardTxHash: result.txHash!,
+        senderIban: sender.iban,
+        senderName: sender.name,
       });
     }
   } else {

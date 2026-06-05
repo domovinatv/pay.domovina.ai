@@ -51,6 +51,22 @@ export function extractRoutingFromOrder(order: MoneriumOrder | null): RoutingTar
   return fromRef.target ? fromRef : fromMemo;
 }
 
+/// Sender (counterpart) of an inbound SEPA "issue" order, as exposed by
+/// Monerium: `counterpart.identifier.iban` + `counterpart.details.name`.
+/// Forwarded to the merchant so it can derive bank-verified / KYC-name-match
+/// flags (see domovina-api record_sepa_contribution / mark_contribution_paid).
+export interface SenderInfo {
+  iban: string | null;
+  name: string | null;
+}
+
+export function extractSenderFromOrder(order: MoneriumOrder | null): SenderInfo {
+  const ident = order?.counterpart?.identifier;
+  const iban = ident && ident.standard === 'iban' ? ident.iban : null;
+  const name = order?.counterpart?.details?.name ?? null;
+  return { iban: iban ?? null, name: name ?? null };
+}
+
 export interface RoutingTarget {
   /// Lowercased 0x-prefixed EVM address parsed from the memo. Null if memo
   /// has no recognizable routing prefix or no valid address found.

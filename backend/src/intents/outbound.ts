@@ -21,6 +21,7 @@ import type { PaymentIntentRow } from './db';
 export async function emitIntentPaidWebhook(
   env: Env,
   intent: PaymentIntentRow,
+  sender?: { iban: string | null; name: string | null },
 ): Promise<void> {
   const url = env.INTENT_WEBHOOK_URL?.trim();
   const secret = env.INTENT_WEBHOOK_SECRET?.trim();
@@ -37,6 +38,10 @@ export async function emitIntentPaidWebhook(
     monerium_order_id: intent.monerium_order_id,
     forward_tx_hash: intent.forward_tx_hash,
     paid_at: intent.paid_at,
+    // SEPA sender (Monerium counterpart) → merchant derives bank-verified /
+    // KYC-name-match. PII: the merchant must not expose it publicly.
+    sender_iban: sender?.iban ?? null,
+    sender_name: sender?.name ?? null,
     metadata: intent.metadata_json ? safeParse(intent.metadata_json) : null,
   };
   const body = JSON.stringify(payload);
@@ -83,6 +88,8 @@ export async function emitCampaignContributionWebhook(
     currency: string;
     targetAddress: string;
     forwardTxHash: string | null;
+    senderIban?: string | null;
+    senderName?: string | null;
   },
 ): Promise<void> {
   const url = env.INTENT_WEBHOOK_URL?.trim();
@@ -97,6 +104,9 @@ export async function emitCampaignContributionWebhook(
     currency: args.currency,
     target_address: args.targetAddress,
     forward_tx_hash: args.forwardTxHash,
+    // SEPA sender (Monerium counterpart) → merchant derives bank-verified.
+    sender_iban: args.senderIban ?? null,
+    sender_name: args.senderName ?? null,
   };
   const body = JSON.stringify(payload);
   const id = `cmp_${args.orderId}`;
