@@ -11,7 +11,8 @@
 export interface EpcArgs {
   beneficiaryName: string;
   iban: string;
-  amountEur: number;          // e.g. 1.02
+  amountEur?: number | null;  // e.g. 1.02; null/0 → blank amount (payer enters it,
+                              // used by the permanent campaign QR — one QR, any amount)
   purposeCode?: string;       // 4-char ISO 20022, default OTHR
   remittanceInfo: string;     // unstructured, max 140 chars
   bic?: string;               // optional but recommended for non-EUR area routing
@@ -34,7 +35,9 @@ export function buildEpcText(a: EpcArgs): string {
   // Both v001 and v002 are accepted by most banking apps; v001 is more
   // permissive about empty BIC. Use v002 when BIC supplied.
   const version = a.bic ? '002' : '001';
-  const amount = `EUR${a.amountEur.toFixed(2)}`;
+  // EPC069-12: the Amount line is optional. A blank amount yields a reusable QR
+  // where the payer types the sum — the basis of the permanent campaign QR.
+  const amount = a.amountEur && a.amountEur > 0 ? `EUR${a.amountEur.toFixed(2)}` : '';
   return [
     'BCD',
     version,

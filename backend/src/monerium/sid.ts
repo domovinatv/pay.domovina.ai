@@ -44,7 +44,7 @@ export function extractSessionId(order: MoneriumOrder | null): string | null {
 /// `referenceNumber` if memo had no usable address. Used by the webhook
 /// handler.
 export function extractRoutingFromOrder(order: MoneriumOrder | null): RoutingTarget {
-  if (!order) return { target: null, sid: null, prefix: null };
+  if (!order) return { target: null, sid: null, campaignId: null, prefix: null };
   const fromMemo = extractRoutingTarget(order.memo ?? null);
   if (fromMemo.target) return fromMemo;
   const fromRef = extractRoutingTarget(order.referenceNumber ?? null);
@@ -57,17 +57,22 @@ export interface RoutingTarget {
   target: string | null;
   /// Session id extracted from `?sid=…` / `?sid.…` / `sid:…` token; null if absent.
   sid: string | null;
-  /// Which prefix was matched, for audit ("mpt", "gnosis", or null = bare).
-  prefix: 'mpt' | 'gnosis' | null;
+  /// Campaign id extracted from `?id=…` (the `cmp:` permanent-QR protocol); null
+  /// for the per-intent `mpt:`/`gnosis:` flows.
+  campaignId: string | null;
+  /// Which prefix was matched, for audit ("mpt", "gnosis", "cmp", or null = bare).
+  prefix: 'mpt' | 'gnosis' | 'cmp' | null;
 }
 
 /// Parses an MPT routing instruction out of the Monerium webhook memo. Memo
 /// shape options accepted (all SEPA-safe character set after = → . mapping):
 ///
-///   mpt:0x<addr>?sid=<id>     (preferred — branded)
+///   mpt:0x<addr>?sid=<id>     (preferred — branded, per-intent)
 ///   mpt:0x<addr>?sid.<id>     (post-SEPA-mapping form)
 ///   gnosis:0x<addr>?sid=<id>  (legacy; user-facing QR still emits this)
 ///   gnosis:0x<addr>           (bare wallet, no session marker)
+///   cmp:0x<safe>?id=<campaign>(PERMANENT campaign QR — many payments, one QR;
+///                              0x = campaign Safe forward target, id = campaign)
 ///   0x<addr>                  (last-resort fallback — accept bare address)
 ///
 /// Returns `{target: null, ...}` when no usable address was found — webhook
@@ -76,13 +81,19 @@ export interface RoutingTarget {
 export function extractRoutingTarget(
   memo: string | null | undefined,
 ): RoutingTarget {
-  if (!memo) return { target: null, sid: null, prefix: null };
-  let prefix: 'mpt' | 'gnosis' | null = null;
+  if (!memo) return { target: null, sid: null, campaignId: null, prefix: null };
+  let prefix: 'mpt' | 'gnosis' | 'cmp' | null = null;
   if (/^mpt:/i.test(memo)) prefix = 'mpt';
   else if (/^gnosis:/i.test(memo)) prefix = 'gnosis';
+  else if (/^cmp:/i.test(memo)) prefix = 'cmp';
   const addrMatch = memo.match(ADDR_RE);
   const target = addrMatch ? addrMatch[0].toLowerCase() : null;
-  return { target, sid: parseSidFromText(memo), prefix };
+  return {
+    target,
+    sid: parseSidFromText(memo),
+    campaignId: parseCampaignIdFromText(memo),
+    prefix,
+  };
 }
 
 /// Exported for unit tests + admin UI "what would we extract from this?" probe.
@@ -96,6 +107,24 @@ export function parseSidFromText(text: string | null | undefined): string | null
   if (qm) return qm[1];
   // Form 2: `sid:abc123` token, bounded by whitespace or string edges.
   const sm = text.match(/(?:^|\s)sid[:.\-]([A-Za-z0-9_\-]{6,64})(?=\s|$)/);
+  if (sm) return sm[1];
+  return null;
+}
+
+/// Pull the campaign id out of a `cmp:` permanent-QR memo. Same SEPA-survival
+/// rules as `sid` (the `=` may arrive as `.`/`:`/`-`). The `[?&]` lookbehind on
+/// the query form means `?sid=…` is never mistaken for `id=…` (the char before
+/// `id` there is `s`, not `?`/`&`), and the token form requires a word boundary
+/// so `sid:…` doesn't match either.
+///
+///   cmp:0x<safe>?id=<campaign>   (preferred)
+///   cmp:0x<safe>?id.<campaign>   (post-SEPA-mapping form)
+///   cmp:0x<safe> id:<campaign>   (space-separated fallback)
+export function parseCampaignIdFromText(text: string | null | undefined): string | null {
+  if (!text) return null;
+  const qm = text.match(/[?&]id[=.:\-]([A-Za-z0-9_\-]{6,64})/);
+  if (qm) return qm[1];
+  const sm = text.match(/(?:^|\s)id[:.\-]([A-Za-z0-9_\-]{6,64})(?=\s|$)/);
   if (sm) return sm[1];
   return null;
 }

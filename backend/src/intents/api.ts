@@ -65,6 +65,39 @@ export function buildIntentApi(): Hono<{ Bindings: Env }> {
     return c.json(intentResponseJson(intent, origin));
   });
 
+  // Permanent campaign QR (`cmp:` protocol). Stateless: returns a REUSABLE
+  // SEPA EPC payload (blank amount → payer enters it) whose remittance encodes
+  // `cmp:0x<campaignSafe>?id=<campaignId>`. Many payments can use the same QR;
+  // each inbound Monerium order is forwarded to the Safe and reported to the
+  // merchant as a DISTINCT contribution (see emitCampaignContributionWebhook).
+  // No DB row is created here — it's a pure, idempotent QR generator.
+  api.get('/campaign-qr', (c) => {
+    const target = (c.req.query('target') ?? '').trim();
+    const id = (c.req.query('id') ?? '').trim();
+    const label = (c.req.query('label') ?? '').trim();
+    if (!ADDR_RE.test(target)) return c.json({ error: 'invalid_target_address' }, 400);
+    if (!/^[A-Za-z0-9_-]{6,64}$/.test(id)) return c.json({ error: 'invalid_campaign_id' }, 400);
+    const memo = `cmp:${target.toLowerCase()}?id=${id}`;
+    const epcText = buildEpcText({
+      beneficiaryName: MPT_BENEFICIARY_NAME,
+      iban: MPT_IBAN,
+      amountEur: null, // blank → reusable, payer-entered amount
+      purposeCode: 'OTHR',
+      remittanceInfo: memo,
+      bic: MPT_BIC,
+    });
+    return c.json({
+      campaign_id: id,
+      target_address: target.toLowerCase(),
+      label: label || null,
+      memo,
+      iban: MPT_IBAN,
+      beneficiary_name: MPT_BENEFICIARY_NAME,
+      bic: MPT_BIC,
+      epc_qr_data: epcText,
+    });
+  });
+
   api.get('/:sid', async (c) => {
     const sid = c.req.param('sid');
     const intent = await getIntent(c.env, sid);

@@ -41,7 +41,7 @@ import {
   markIntentPaid,
   sweepExpiredIntents,
 } from './intents/db';
-import { emitIntentPaidWebhook } from './intents/outbound';
+import { emitIntentPaidWebhook, emitCampaignContributionWebhook } from './intents/outbound';
 import { scanOnchainDonations } from './intents/onchainIndexer';
 import { fetchOgPreview } from './og/preview';
 import { renderCheckoutPage } from './checkout/page';
@@ -531,6 +531,19 @@ async function handleForward(
         const paidIntent = await getIntent(env, routing.sid);
         if (paidIntent) await emitIntentPaidWebhook(env, paidIntent);
       }
+    }
+    // Permanent campaign QR (`cmp:` protocol): no per-intent sid — every order
+    // is a distinct contribution. Idempotent because maybeForward only reaches
+    // here once per order (prior submitted/confirmed forwards are skipped).
+    if (routing.prefix === 'cmp' && routing.campaignId) {
+      await emitCampaignContributionWebhook(env, {
+        campaignId: routing.campaignId,
+        orderId: order.id,
+        amountCents,
+        currency: order.currency ?? 'eur',
+        targetAddress: routing.target,
+        forwardTxHash: result.txHash!,
+      });
     }
   } else {
     await updateForward(env, forwardId, {

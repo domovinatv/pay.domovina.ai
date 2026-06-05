@@ -68,6 +68,64 @@ export async function emitIntentPaidWebhook(
   }
 }
 
+/// Outbound "contribution.sepa" webhook for the PERMANENT campaign QR (`cmp:`
+/// protocol). Unlike `intent.paid`, there is no pre-created intent — every
+/// inbound Monerium order to a campaign's permanent QR fires one event, so the
+/// receiver records a DISTINCT contribution per payment. Idempotent: webhook-id
+/// is stable per Monerium order (`cmp_<orderId>`), and the receiver dedups on
+/// `monerium_order_id`. Same signing scheme as emitIntentPaidWebhook.
+export async function emitCampaignContributionWebhook(
+  env: Env,
+  args: {
+    campaignId: string;
+    orderId: string;
+    amountCents: number | null;
+    currency: string;
+    targetAddress: string;
+    forwardTxHash: string | null;
+  },
+): Promise<void> {
+  const url = env.INTENT_WEBHOOK_URL?.trim();
+  const secret = env.INTENT_WEBHOOK_SECRET?.trim();
+  if (!url || !secret) return; // not configured — silent no-op
+
+  const payload = {
+    type: 'contribution.sepa',
+    campaign_id: args.campaignId,
+    monerium_order_id: args.orderId,
+    amount_received_cents: args.amountCents,
+    currency: args.currency,
+    target_address: args.targetAddress,
+    forward_tx_hash: args.forwardTxHash,
+  };
+  const body = JSON.stringify(payload);
+  const id = `cmp_${args.orderId}`;
+  const timestamp = Math.floor(Date.now() / 1000).toString();
+  const keyBytes = decodeWebhookSecret(secret);
+  if (!keyBytes) {
+    console.error('campaign webhook: invalid INTENT_WEBHOOK_SECRET format');
+    return;
+  }
+  const signature = await hmacSha256Base64(keyBytes, `${id}.${timestamp}.${body}`);
+  try {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'webhook-id': id,
+        'webhook-timestamp': timestamp,
+        'webhook-signature': `v1,${signature}`,
+      },
+      body,
+    });
+    if (!res.ok) {
+      console.error(`campaign webhook ${id} → ${url} returned ${res.status}`);
+    }
+  } catch (e) {
+    console.error(`campaign webhook ${id} → ${url} failed: ${e}`);
+  }
+}
+
 function safeParse(s: string): unknown {
   try {
     return JSON.parse(s);
