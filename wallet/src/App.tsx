@@ -13,6 +13,7 @@ import { UiPreview } from './routes/UiPreview';
 import { Embed } from './routes/Embed';
 import { Link } from './routes/Link';
 import { LinkCallback } from './routes/LinkCallback';
+import { Recover } from './routes/Recover';
 import { BuildInfoFooter } from './components/BuildInfoFooter';
 
 export function App() {
@@ -38,6 +39,11 @@ export function App() {
             and finalizes the local PasskeyRecord. */}
       <Route path="/link" component={Link} />
       <Route path="/link-callback" component={LinkCallback} />
+
+      {/* Fund recovery for counterfactual passkey-owned Safes (e.g. pinka
+          campaign Safes). No active wallet needed — identifies the controlling
+          passkey via P-256 pubkey recovery. See routes/Recover.tsx. */}
+      <Route path="/recover" component={Recover} />
 
       <Route>
         {!safeAddress ? (

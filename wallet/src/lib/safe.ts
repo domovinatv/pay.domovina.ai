@@ -63,7 +63,10 @@ export async function predictSignerAddress(pubKey: P256PublicKey): Promise<Addre
  * Uses Safe protocol-kit which performs the CREATE2 derivation deterministically.
  * No deploy — the address is known even if no Safe contract exists yet at that address.
  */
-export async function predictSafeAddress(signerAddress: Address): Promise<Address> {
+export async function predictSafeAddress(
+  signerAddress: Address,
+  saltNonce = '0',
+): Promise<Address> {
   const protocolKit = await Safe.init({
     provider: gnosis.rpcUrls.default.http[0],
     predictedSafe: {
@@ -72,7 +75,10 @@ export async function predictSafeAddress(signerAddress: Address): Promise<Addres
         threshold: 1,
       },
       safeDeploymentConfig: {
-        saltNonce: '0',
+        // Default '0' = personal wallet. pinka per-campaign Safes pass
+        // keccak("pinka:campaign:<id>") as a decimal string; recovery
+        // (src/lib/recover.ts) must use the SAME salt to match the funded address.
+        saltNonce,
         safeVersion: '1.4.1',
       },
     },
