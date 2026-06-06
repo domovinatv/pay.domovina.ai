@@ -151,13 +151,21 @@ export async function identifyPasskeyForSafe(args: {
   saltNonce: string;
   rpIds: string[];
 }): Promise<IdentifyResult | null> {
-  for (const rpId of args.rpIds) {
+  // A WebAuthn rpId must be the current origin's host or a registrable parent of
+  // it. e.g. on wallet-staging.domovina.ai, 'domovina.ai' is valid but
+  // 'wallet.domovina.ai' is NOT (sibling, not an ancestor) — passing it throws
+  // SecurityError. Drop rpIds that don't apply to this origin.
+  const host = typeof window !== 'undefined' ? window.location.hostname : '';
+  const rpIds = args.rpIds.filter((r) => host === r || host.endsWith('.' + r));
+
+  for (const rpId of rpIds) {
     let got;
     try {
       got = await discoverableGet(rpId);
     } catch (e) {
+      const name = e instanceof DOMException ? e.name : '';
       const msg = e instanceof Error ? e.message : String(e);
-      if (/cancel|NotAllowed|abort|timed out/i.test(msg)) continue;
+      if (name === 'SecurityError' || /cancel|NotAllowed|abort|timed out|security/i.test(msg)) continue;
       throw e;
     }
     for (const pub of recoverPubkeys(got)) {
