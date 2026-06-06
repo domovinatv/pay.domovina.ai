@@ -7,6 +7,9 @@
 **Extends:** ADR 0011 (reuses the bootstrap mechanism + name=address). **Inherits from:**
 ADR 0001 (self-custody — the seed is never persisted/server-seen), ADR 0008 (threshold-1
 multi-owner is the recovery primitive — the seed owner is one such owner).
+**Validated in production by:** [Postmortem 0001](../postmortems/0001-trapped-funds-passkey-only-campaign-safe.md)
+— 4.16 EURe permanently trapped in a 1/1 passkey-only campaign Safe whose sole passkey
+was lost. The exact failure this ADR's default 1-of-2 mode is designed to prevent.
 
 ## Context
 
