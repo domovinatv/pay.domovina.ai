@@ -177,26 +177,13 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
     return json({ ok: false, error: 'saltNonce out of uint256 range' }, 400);
   }
 
-  // CREATE2 consistency guard. The relay trusts the client-supplied safeAddress
-  // for the (no-op-safe) hot path, but the cold path DEPLOYS a Safe whose address
-  // is fully determined by (signerAddress, saltNonce). If the client sends a
-  // safeAddress that doesn't match that derivation, the cold path would deploy a
-  // Safe at address X while execTransaction targets safeAddress Y (no code) —
-  // EVM returns status=1 with no revert and the EURe is stranded forever (see
-  // memory: evm-call-to-empty-address). Reject the inconsistent triple up-front.
-  const predictedSafe = predictSafeProxyAddress(body.signerAddress as Address, saltNonce);
-  if (predictedSafe.toLowerCase() !== body.safeAddress.toLowerCase()) {
-    return json(
-      {
-        ok: false,
-        error:
-          `safeAddress ${body.safeAddress} does not match the Safe derived from ` +
-          `signerAddress + saltNonce (${predictedSafe}). Refusing to deploy — this ` +
-          `would strand funds at the counterfactual address.`,
-      },
-      400,
-    );
-  }
+  // NOTE: the CREATE2 consistency guard (predictSafe(signer) === safeAddress) is
+  // enforced LATER, only on the cold path (see below), not unconditionally here.
+  // It must NOT run for an already-deployed Safe: ADR-0011/0012 bootstrap wallets
+  // have a Safe whose initializer owner is an ephemeral EOA, so safeAddress derives
+  // from the EOA, not from the passkey signer. predictSafe(signer) !== safeAddress
+  // for those — correct and expected — and they only ever take the hot path (the
+  // Safe is deployed at creation). Guarding here would reject all their sends.
 
   // Reject stub pubkeys early — cross-device-restored passkey records store
   // ('0','0') until the next signing event refreshes them, and sending with
@@ -327,6 +314,26 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
     }
 
     if (!safeDeployedPre) {
+      // CREATE2 consistency guard — cold path ONLY. The cold path deploys a Safe
+      // whose address is fully determined by (signerAddress, saltNonce) via
+      // buildSafeInitializer(signerAddress). If the client's safeAddress doesn't
+      // match, we'd deploy at X while execTransaction targets Y (no code) — EVM
+      // returns status=1 with no revert and the EURe is stranded forever (see
+      // memory: evm-call-to-empty-address). ADR-0011/0012 bootstrap wallets never
+      // reach here (deployed at creation), so this never rejects them.
+      const predictedSafe = predictSafeProxyAddress(signerAddress, saltNonce);
+      if (predictedSafe.toLowerCase() !== safeAddress.toLowerCase()) {
+        return json(
+          {
+            ok: false,
+            error:
+              `safeAddress ${safeAddress} does not match the Safe derived from ` +
+              `signerAddress + saltNonce (${predictedSafe}). Refusing to deploy — this ` +
+              `would strand funds at the counterfactual address.`,
+          },
+          400,
+        );
+      }
       // Safe is not deployed (per fresh getCode). Skip hot path entirely —
       // calling execTransaction on a code-less address silently succeeds
       // and the user's funds stay locked at the counterfactual address.

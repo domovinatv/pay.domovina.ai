@@ -233,6 +233,23 @@ export function purposeToKeychainName(purpose: string): string {
   return `${brand.copy.productName} · ${purpose}`;
 }
 
+/** Single-word, alphanumeric brand token for the address-as-name flow.
+ * "DOMOVINA Wallet" → "DOMOVINA". No spaces/punctuation so the keychain
+ * label is a clean `BRAND_0x…` string with no special characters. */
+function brandToken(): string {
+  return (brand.name.split(/\s+/)[0] || 'Wallet').replace(/[^A-Za-z0-9]/g, '');
+}
+
+/** Keychain label for the ADR-0011 "passkey name = Safe address" flow:
+ * `<BRAND>_<full safe address>` (e.g. `DOMOVINA_0x1234…cdef`). The full
+ * address is the portable, synced, immutable account identity; the brand
+ * token groups the entry. Fits the 64-char cap (9 + 42 = 51). Deliberately
+ * uses an underscore and no `·`/special chars — exact-match friendly across
+ * every password manager. See docs/decisions/0011-*.md. */
+export function addressKeychainName(safeAddress: string): string {
+  return `${brandToken()}_${safeAddress}`;
+}
+
 export async function createPasskey(
   label?: string,
 ): Promise<{

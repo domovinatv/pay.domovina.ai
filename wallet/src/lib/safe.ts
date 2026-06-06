@@ -91,7 +91,7 @@ const SAFE_NONCE_ABI = [
   },
 ] as const;
 
-const SAFE_TX_TYPES = {
+export const SAFE_TX_TYPES = {
   SafeTx: [
     { name: 'to', type: 'address' },
     { name: 'value', type: 'uint256' },

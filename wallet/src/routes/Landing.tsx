@@ -11,6 +11,9 @@ import {
   Archive,
   AlertTriangle,
   Check,
+  Copy,
+  Eye,
+  ShieldAlert,
 } from 'lucide-react';
 import type { Address } from 'viem';
 import { BrandHeader } from '../components/Brand';
@@ -25,12 +28,19 @@ import {
   lookupPasskey,
   pickExistingPasskey,
   purposeToKeychainName,
+  addressKeychainName,
   savePasskey,
   setActivePasskey,
   suggestPasskeyName,
   PASSKEY_PURPOSE_SUGGESTIONS,
   type PasskeyRecord,
 } from '../lib/passkey';
+import {
+  createBootstrapEoa,
+  signAttach,
+  submitBootstrapDeploy,
+  type OwnershipMode,
+} from '../lib/bootstrap';
 import { fetchEureBalances, formatEureShort } from '../lib/balances';
 import { predictSignerAddress, predictSafeAddress } from '../lib/safe';
 import { lookupWallet, registerWalletWithBackend } from '../lib/registry';
@@ -63,8 +73,16 @@ type Stage =
   | { kind: 'linking-create'; targetDomain: string; targetName: string } // enrolling the new requester-side passkey
   | { kind: 'linking-bridge'; iframeUrl: string; targetOrigin: string } // iframe path
   | { kind: 'linking-redirected' } // redirect path: page about to navigate
-  | { kind: 'created'; record: PasskeyRecord }
+  | { kind: 'created'; record: PasskeyRecord; recoverySeed?: string }
   | { kind: 'error'; message: string };
+
+/** What the naming step resolved to. 'custom' is the classic passkey-first flow
+ * (user types the keychain label). 'address' is the ADR 0011/0012 bootstrap where
+ * the Safe address becomes the passkey name; `ownership` picks swap (passkey-only)
+ * vs add (1-of-2 with a recovery seed). */
+type CreateChoice =
+  | { kind: 'custom'; name: string }
+  | { kind: 'address'; ownership: OwnershipMode };
 
 export function Landing() {
   const setIdentity = useWalletStore((s) => s.setIdentity);
@@ -115,11 +133,15 @@ export function Landing() {
     setStage(known.length > 0 ? { kind: 'welcome-known', known } : { kind: 'welcome' });
   }
 
-  async function confirmCreate(chosenName: string) {
+  async function confirmCreate(choice: CreateChoice) {
     setStage({ kind: 'creating' });
     haptic('tap');
     try {
-      const { credentialId, pubKey, keychainName, rpId } = await createPasskey(chosenName);
+      if (choice.kind === 'address') {
+        await createAddressNamedWallet(choice.ownership);
+        return;
+      }
+      const { credentialId, pubKey, keychainName, rpId } = await createPasskey(choice.name);
       const signerAddress = await predictSignerAddress(pubKey);
       const safeAddress = await predictSafeAddress(signerAddress);
 
@@ -149,6 +171,60 @@ export function Landing() {
       haptic('error');
       setStage({ kind: 'error', message: humanizeError(e, 'passkey') });
     }
+  }
+
+  /**
+   * ADR 0011/0012 bootstrap-atomic flow: mint an ephemeral BIP39 account, derive the
+   * Safe address from it (known BEFORE the passkey), create the passkey with that
+   * address as its keychain name, then deploy + attach the passkey signer in one
+   * relayed tx (swap = passkey-only, add = 1-of-2 with a recovery seed). The Safe
+   * address is only revealed once the deploy confirms.
+   */
+  async function createAddressNamedWallet(ownership: OwnershipMode) {
+    const eoa = await createBootstrapEoa();
+    const { credentialId, pubKey, keychainName, rpId } = await createPasskey(
+      addressKeychainName(eoa.safeAddress),
+    );
+    const { signerAddress, eoaSignature } = await signAttach({ eoa, pubKey, mode: ownership });
+
+    const res = await submitBootstrapDeploy({
+      safeAddress: eoa.safeAddress,
+      ownerEoa: eoa.address,
+      pubKeyX: pubKey.x.toString(),
+      pubKeyY: pubKey.y.toString(),
+      eoaSignature,
+      mode: ownership,
+    });
+    if (!res.ok) throw new Error(res.error);
+
+    const record: PasskeyRecord = {
+      credentialId,
+      pubKey: { x: pubKey.x.toString(), y: pubKey.y.toString() },
+      signerAddress,
+      safeAddress: eoa.safeAddress,
+      createdAt: new Date().toISOString(),
+      keychainName,
+      rpId,
+    };
+    savePasskey(record);
+
+    void registerWalletWithBackend({
+      credentialId,
+      pubKeyX: pubKey.x.toString(),
+      pubKeyY: pubKey.y.toString(),
+      signerAddress,
+      safeAddress: eoa.safeAddress,
+      rpId,
+    });
+
+    haptic('success');
+    // The mnemonic is handed to the created screen IN MEMORY only when it is a real
+    // 1-of-2 recovery key ('add'). It is never persisted and is dropped on unmount.
+    setStage({
+      kind: 'created',
+      record,
+      recoverySeed: ownership === 'add' ? eoa.mnemonic : undefined,
+    });
   }
 
   async function openKnown(record: PasskeyRecord) {
@@ -436,7 +512,11 @@ export function Landing() {
         {stage.kind === 'opening' && <OpeningView />}
 
         {stage.kind === 'created' && (
-          <CreatedView record={stage.record} onEnter={() => enterWalletAfterCreate(stage.record)} />
+          <CreatedView
+            record={stage.record}
+            recoverySeed={stage.recoverySeed}
+            onEnter={() => enterWalletAfterCreate(stage.record)}
+          />
         )}
 
         {stage.kind === 'error' && (
@@ -1008,6 +1088,8 @@ function ConfirmArchiveView({
   );
 }
 
+type CreateMode = 'address-1of2' | 'address-passkey' | 'custom';
+
 function NamingView({
   suggestedName,
   onCancel,
@@ -1015,17 +1097,16 @@ function NamingView({
 }: {
   suggestedName: string;
   onCancel: () => void;
-  onConfirm: (name: string) => void;
+  onConfirm: (choice: CreateChoice) => void;
 }) {
+  const [mode, setMode] = useState<CreateMode>('address-1of2');
   const [name, setName] = useState(suggestedName);
   const trimmed = name.trim();
   const tooShort = trimmed.length === 0;
   const tooLong = trimmed.length > 64;
-  const invalid = tooShort || tooLong;
 
   // Existing wallet labels — surfaced so the user picks something distinct
-  // from "Glavni" if they already have a Glavni. Read once on mount; the
-  // user is heading into a destination they cannot easily back out of.
+  // from "Glavni" if they already have a Glavni. Read once on mount.
   const existingLabels = useMemo(() => {
     return listKnownPasskeys()
       .map((r) => r.keychainName ?? (r.nameSuffix ? `wa_${r.nameSuffix}` : null))
@@ -1035,10 +1116,42 @@ function NamingView({
   const collides = existingLabels.some(
     (l) => l.localeCompare(trimmed, 'hr', { sensitivity: 'base' }) === 0,
   );
+  const customInvalid = tooShort || tooLong || collides;
+  const disabled = mode === 'custom' && customInvalid;
 
   function applyPurpose(purpose: string) {
     setName(purposeToKeychainName(purpose));
   }
+
+  function submit() {
+    if (mode === 'custom') {
+      if (customInvalid) return;
+      onConfirm({ kind: 'custom', name: trimmed });
+    } else {
+      onConfirm({ kind: 'address', ownership: mode === 'address-1of2' ? 'add' : 'swap' });
+    }
+  }
+
+  const brandTok = (brand.name.split(/\s+/)[0] || 'Wallet').replace(/[^A-Za-z0-9]/g, '');
+
+  const options: { id: CreateMode; title: string; desc: string; badge?: string }[] = [
+    {
+      id: 'address-1of2',
+      title: 'Passkey + recovery seed',
+      desc: 'Face ID za svaki dan + 12-riječni backup ključ (uvezeš ga u MetaMask ili app.safe.global). Isti Safe, dva potpisnika.',
+      badge: 'Preporuka',
+    },
+    {
+      id: 'address-passkey',
+      title: 'Samo passkey',
+      desc: 'Maksimalna sigurnost, bez seeda. Oporavak preko sinkronizacije passkeya (iCloud / Google) i dodatnih passkeyeva.',
+    },
+    {
+      id: 'custom',
+      title: 'Vlastiti naziv',
+      desc: 'Klasično — sam upišeš naziv passkeya kakav će stajati u OS Keychainu.',
+    },
+  ];
 
   return (
     <div className="flex flex-col gap-6 animate-route-enter">
@@ -1046,55 +1159,87 @@ function NamingView({
         <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-surface-sunken text-brand-navy-500">
           <KeyRound className="h-7 w-7" />
         </div>
-        <h2 className="text-2xl font-semibold text-ink-primary">
-          Kako ćeš zvati ovaj wallet?
-        </h2>
+        <h2 className="text-2xl font-semibold text-ink-primary">Kako kreirati wallet?</h2>
         <p className="text-sm text-ink-secondary max-w-sm mx-auto">
-          Ovaj naziv ostaje{' '}
-          <span className="font-semibold text-ink-primary">trajno spremljen</span> u
-          Apple Passwords / iCloud Keychain / Google Password Manageru.
-          Vidjet ćeš ga svaki put kad ti OS ponudi Face ID na bilo kojoj
-          <span className="whitespace-nowrap"> *.domovina.ai</span> stranici, pa odaberi nešto što ćeš{' '}
-          <span className="font-semibold text-ink-primary">prepoznati za 6 mjeseci</span>.
+          Naziv passkeya ostaje{' '}
+          <span className="font-semibold text-ink-primary">trajno</span> u Apple Passwords /
+          Google Password Manageru. Standardno ga vežemo na{' '}
+          <span className="font-semibold text-ink-primary">adresu novčanika</span> da ga uvijek
+          prepoznaš.
         </p>
       </div>
 
-      <Card padding="md" className="flex flex-col gap-4">
-        <Field
-          label="Naziv passkeya"
-          hint="Tap na predložak ispod ili upiši svoj. Naziv ostaje u OS Keychainu kako ga sada upišeš."
-          error={
-            tooLong
-              ? 'Maksimalno 64 znaka.'
-              : collides
-                ? 'Već imaš passkey s istim nazivom — odaberi drugi da se kasnije ne pomiješaju.'
-                : undefined
-          }
-        >
-          {(id) => (
-            <Input
-              id={id}
-              type="text"
-              autoFocus
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' && !invalid) onConfirm(trimmed);
-              }}
-              maxLength={80}
-              invalid={tooLong || collides}
-              autoComplete="off"
-              autoCorrect="off"
-              autoCapitalize="off"
-              spellCheck={false}
-            />
-          )}
-        </Field>
+      <Card padding="md" className="flex flex-col gap-2">
+        {options.map((o) => {
+          const active = mode === o.id;
+          return (
+            <button
+              key={o.id}
+              type="button"
+              onClick={() => setMode(o.id)}
+              className={
+                'flex items-start gap-3 rounded-xl border p-3 text-left transition active:scale-[0.99] ' +
+                (active
+                  ? 'border-brand-navy-500 bg-brand-navy-50/60 dark:bg-brand-navy-900/30'
+                  : 'border-surface-border bg-surface-sunken/40 hover:bg-surface-sunken')
+              }
+            >
+              <span
+                className={
+                  'mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full border ' +
+                  (active ? 'border-brand-navy-500 bg-brand-navy-500 text-white' : 'border-surface-border')
+                }
+              >
+                {active && <Check className="h-3 w-3" />}
+              </span>
+              <span className="flex flex-col gap-0.5">
+                <span className="flex items-center gap-2">
+                  <span className="font-medium text-ink-primary">{o.title}</span>
+                  {o.badge && (
+                    <span className="rounded-full bg-emerald-500/15 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-emerald-700 dark:text-emerald-400">
+                      {o.badge}
+                    </span>
+                  )}
+                </span>
+                <span className="text-xs text-ink-secondary leading-snug">{o.desc}</span>
+              </span>
+            </button>
+          );
+        })}
+      </Card>
 
-        <div className="flex flex-col gap-1.5">
-          <span className="text-[11px] uppercase tracking-widest text-ink-muted">
-            Brzi predlošci
-          </span>
+      {mode === 'custom' ? (
+        <Card padding="md" className="flex flex-col gap-4">
+          <Field
+            label="Naziv passkeya"
+            hint="Tap na predložak ili upiši svoj. Ostaje u OS Keychainu kako ga sada upišeš."
+            error={
+              tooLong
+                ? 'Maksimalno 64 znaka.'
+                : collides
+                  ? 'Već imaš passkey s istim nazivom — odaberi drugi.'
+                  : undefined
+            }
+          >
+            {(id) => (
+              <Input
+                id={id}
+                type="text"
+                autoFocus
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && !customInvalid) submit();
+                }}
+                maxLength={80}
+                invalid={tooLong || collides}
+                autoComplete="off"
+                autoCorrect="off"
+                autoCapitalize="off"
+                spellCheck={false}
+              />
+            )}
+          </Field>
           <div className="flex flex-wrap gap-1.5">
             {PASSKEY_PURPOSE_SUGGESTIONS.map((p) => {
               const candidate = purposeToKeychainName(p);
@@ -1113,52 +1258,32 @@ function NamingView({
                       ? 'bg-surface-sunken/60 text-ink-muted line-through cursor-not-allowed'
                       : 'bg-surface-sunken hover:bg-surface-border text-ink-secondary')
                   }
-                  title={taken ? 'Već postoji wallet s tim nazivom' : undefined}
                 >
                   {p}
                 </button>
               );
             })}
           </div>
-        </div>
-      </Card>
-
-      <Card
-        padding="md"
-        className="flex flex-col gap-2 border-dashed bg-surface-sunken/40"
-      >
-        <div className="flex items-center gap-1.5 text-[11px] uppercase tracking-widest text-ink-muted">
-          <KeyRound className="h-3 w-3" />
-          U OS Keychainu izgleda ovako
-        </div>
-        <div
-          className={
-            'font-mono text-base break-all leading-snug ' +
-            (trimmed ? 'text-ink-primary' : 'text-ink-muted')
-          }
-        >
-          {trimmed || 'upiši naziv…'}
-        </div>
-        {existingLabels.length > 0 && (
-          <div className="pt-1 flex flex-col gap-1 text-[11px] text-ink-muted leading-snug">
-            <span className="uppercase tracking-widest">
-              Već postoje na ovom uređaju
-            </span>
-            <span className="font-mono break-all">
-              {existingLabels.slice(0, 5).join(' · ')}
-              {existingLabels.length > 5 && ` · +${existingLabels.length - 5}`}
-            </span>
+        </Card>
+      ) : (
+        <Card padding="md" className="flex flex-col gap-2 border-dashed bg-surface-sunken/40">
+          <div className="flex items-center gap-1.5 text-[11px] uppercase tracking-widest text-ink-muted">
+            <KeyRound className="h-3 w-3" />U OS Keychainu izgleda ovako
           </div>
-        )}
-      </Card>
+          <div className="font-mono text-base break-all leading-snug text-ink-primary">
+            {brandTok}_0x⋯<span className="text-ink-muted"> (puna adresa, generira se pri kreiranju)</span>
+          </div>
+          {mode === 'address-1of2' && (
+            <p className="pt-1 text-xs text-ink-secondary leading-snug">
+              Nakon kreiranja možeš (ali ne moraš) pogledati 12-riječni recovery seed. Prikazuje
+              se <span className="font-semibold">samo jednom</span>.
+            </p>
+          )}
+        </Card>
+      )}
 
       <div className="flex flex-col gap-2">
-        <Button
-          onClick={() => onConfirm(trimmed)}
-          size="xl"
-          block
-          disabled={invalid || collides}
-        >
+        <Button onClick={submit} size="xl" block disabled={disabled}>
           <Fingerprint className="h-5 w-5" />
           Otvori Face ID i kreiraj
         </Button>
@@ -1204,7 +1329,31 @@ function OpeningView() {
   );
 }
 
-function CreatedView({ record, onEnter }: { record: PasskeyRecord; onEnter: () => void }) {
+function CreatedView({
+  record,
+  recoverySeed,
+  onEnter,
+}: {
+  record: PasskeyRecord;
+  recoverySeed?: string;
+  onEnter: () => void;
+}) {
+  const [revealed, setRevealed] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const words = recoverySeed ? recoverySeed.split(/\s+/) : [];
+
+  async function copySeed() {
+    if (!recoverySeed) return;
+    try {
+      await navigator.clipboard.writeText(recoverySeed);
+      setCopied(true);
+      haptic('success');
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      /* clipboard blocked — user can still read the words */
+    }
+  }
+
   return (
     <div className="flex flex-col gap-6 animate-route-enter">
       <div className="flex flex-col items-center gap-4">
@@ -1217,7 +1366,7 @@ function CreatedView({ record, onEnter }: { record: PasskeyRecord; onEnter: () =
         <div className="text-center flex flex-col gap-1">
           <h2 className="text-2xl font-semibold text-ink-primary">Tvoj wallet je spreman</h2>
           <p className="text-sm text-ink-secondary max-w-xs">
-            Passkey je u Keychain, Safe smart account je rezerviran na Gnosis Chainu.
+            Passkey je u Keychain, Safe smart account je live na Gnosis Chainu.
           </p>
         </div>
       </div>
@@ -1234,6 +1383,57 @@ function CreatedView({ record, onEnter }: { record: PasskeyRecord; onEnter: () =
           </p>
         )}
       </Card>
+
+      {recoverySeed && !revealed && (
+        <Card padding="md" className="flex flex-col gap-3 border-dashed">
+          <div className="flex flex-col gap-1">
+            <span className="flex items-center gap-1.5 text-sm font-medium text-ink-primary">
+              <ShieldCheck className="h-4 w-4 text-emerald-600" />
+              Recovery seed (neobavezno)
+            </span>
+            <p className="text-xs text-ink-secondary leading-snug">
+              12-riječni rezervni ključ — uvezeš ga u MetaMask ili app.safe.global i isti
+              Safe koristiš svugdje. Možeš preskočiti i ostati samo na passkeyu. Prikazuje se{' '}
+              <span className="font-semibold">samo sad</span>.
+            </p>
+          </div>
+          <Button onClick={() => setRevealed(true)} variant="secondary" size="md" block>
+            <Eye className="h-4 w-4" />
+            Prikaži recovery seed
+          </Button>
+        </Card>
+      )}
+
+      {recoverySeed && revealed && (
+        <Card padding="md" className="flex flex-col gap-3 border-brand-red-500/40">
+          <div className="flex items-start gap-2 text-xs text-brand-red-700 leading-snug">
+            <ShieldAlert className="h-4 w-4 shrink-0" />
+            <span>
+              Tko vidi ovih 12 riječi može potrošiti tvoj novac. Zapiši ih offline i nikom ih
+              ne pokazuj. Nikad se više neće prikazati.
+            </span>
+          </div>
+          <div className="grid grid-cols-3 gap-1.5">
+            {words.map((w, i) => (
+              <div
+                key={i}
+                className="flex items-baseline gap-1 rounded-lg bg-surface-sunken px-2 py-1.5 font-mono text-sm"
+              >
+                <span className="text-[10px] text-ink-muted">{i + 1}</span>
+                <span className="text-ink-primary break-all">{w}</span>
+              </div>
+            ))}
+          </div>
+          <Button onClick={copySeed} variant="secondary" size="md" block>
+            {copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
+            {copied ? 'Kopirano' : 'Kopiraj seed'}
+          </Button>
+          <p className="text-[11px] text-ink-muted leading-snug">
+            MetaMask: Uvezi račun → Tajna fraza za oporavak (SRP). Ovaj ključ je drugi
+            potpisnik (1-od-2) — wallet i dalje radi i bez njega, preko passkeya.
+          </p>
+        </Card>
+      )}
 
       <Button onClick={onEnter} size="xl" block>
         Otvori wallet

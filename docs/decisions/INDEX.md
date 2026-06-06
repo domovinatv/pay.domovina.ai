@@ -47,7 +47,8 @@ history.
 | [0008](0008-multi-passkey-same-safe.md) | Multi-passkey, multi-domain Safe ownership | 2026-05-26 | ✅ Accepted | ✅ Implemented (intra-RP ExpandAccess + cross-TLD peer linking) |
 | [0009](0009-iframe-sdk-third-party-embedding.md) | Iframe SDK for third-party dApp embedding | 2026-05-26 | ✅ Accepted | 🟢 MVP shipped; signMessage + in-iframe onboarding deferred |
 | [0010](0010-open-wallet-vision.md) | Open-Wallet vision (wallet-wasp as seed for open-source WASP wallet template) | 2026-05-26 | 🔬 Accepted (vision) | ⏳ Incubation in `experiments/wallet-wasp/`; rename criteria documented |
-| [0011](0011-passkey-name-equals-safe-address.md) | Passkey name = Safe address (bootstrap-atomic-swap deploy) | 2026-06-06 | ✅ Accepted (direction) | ⏳ Planned — name=address binding + ephemeral-EOA atomic deploy; reverse-bridge for legacy |
+| [0011](0011-passkey-name-equals-safe-address.md) | Passkey name = Safe address (bootstrap-atomic-swap deploy) | 2026-06-06 | ✅ Accepted (direction) | 🟢 Coded on `feat/passkey-name-equals-safe-address` (untested on-chain) |
+| [0012](0012-recovery-seed-second-owner-interop.md) | Recovery seed as optional 2nd owner (1-of-2) + app.safe.global interop | 2026-06-06 | ✅ Accepted (direction) | 🟢 Coded (swap/add modes, default 1-of-2); on-chain test + backend registry pending |
 
 ---
 
