@@ -240,6 +240,13 @@ function brandToken(): string {
   return (brand.name.split(/\s+/)[0] || 'Wallet').replace(/[^A-Za-z0-9]/g, '');
 }
 
+/** Fixed identity name for the ADR-0013 "one passkey = identity" model. The user
+ * has a single everyday passkey; its keychain label is stable (e.g. "DOMOVINA
+ * Wallet"), not per-Safe. Accounts (Safes) are named in-app, not in the manager. */
+export function identityKeychainName(): string {
+  return brand.copy.productName;
+}
+
 /** Keychain label for the ADR-0011 "passkey name = Safe address" flow:
  * `<BRAND>_<full safe address>` (e.g. `DOMOVINA_0x1234…cdef`). The full
  * address is the portable, synced, immutable account identity; the brand

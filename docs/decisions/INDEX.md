@@ -49,6 +49,7 @@ history.
 | [0010](0010-open-wallet-vision.md) | Open-Wallet vision (wallet-wasp as seed for open-source WASP wallet template) | 2026-05-26 | 🔬 Accepted (vision) | ⏳ Incubation in `experiments/wallet-wasp/`; rename criteria documented |
 | [0011](0011-passkey-name-equals-safe-address.md) | Passkey name = Safe address (bootstrap-atomic-swap deploy) | 2026-06-06 | ✅ Accepted (direction) | 🟢 Coded on `feat/passkey-name-equals-safe-address` (untested on-chain) |
 | [0012](0012-recovery-seed-second-owner-interop.md) | Recovery seed as optional 2nd owner (1-of-2) + app.safe.global interop | 2026-06-06 | ✅ Accepted (direction) | 🟢 Coded (swap/add modes, default 1-of-2); on-chain test + backend registry pending |
+| [0013](0013-passkey-as-identity-safe-as-account.md) | Passkey = identity, Safe = account (one daily passkey, many accounts) | 2026-06-07 | ✅ Accepted (direction) | 🟢 First slice coded (single-identity creation + simplified homepage); multi-account next. Supersedes 0011 name=address as default |
 
 ---
 

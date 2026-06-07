@@ -17,43 +17,25 @@ import {
 } from 'lucide-react';
 import type { Address } from 'viem';
 import { BrandHeader } from '../components/Brand';
-import { AddressChip, Button, Card, Field, Input } from '../ui';
+import { AddressChip, Button, Card } from '../ui';
 import { useWalletStore } from '../state/store';
 import { haptic } from '../lib/haptic';
 import { humanizeError } from '../lib/errors';
 import {
   archivePasskey,
   createPasskey,
+  identityKeychainName,
   listKnownPasskeys,
   lookupPasskey,
   pickExistingPasskey,
-  purposeToKeychainName,
-  addressKeychainName,
   savePasskey,
   setActivePasskey,
-  suggestPasskeyName,
-  PASSKEY_PURPOSE_SUGGESTIONS,
   type PasskeyRecord,
 } from '../lib/passkey';
-import {
-  createBootstrapEoa,
-  signAttach,
-  submitBootstrapDeploy,
-  type OwnershipMode,
-} from '../lib/bootstrap';
+import { createBootstrapEoa, signAttach, submitBootstrapDeploy } from '../lib/bootstrap';
 import { fetchEureBalances, formatEureShort } from '../lib/balances';
-import { predictSignerAddress, predictSafeAddress } from '../lib/safe';
 import { lookupWallet, registerWalletWithBackend } from '../lib/registry';
 import { brand } from '../app/brand';
-import {
-  buildLinkAuthorizeUrl,
-  isSafariLike,
-  parseLinkMessage,
-  stashPendingLink,
-} from '../lib/linking';
-import { getLinkTargets } from '../app/brand';
-import type { BrandConfig } from '../brands/_shared/types';
-import { Link2 } from 'lucide-react';
 
 /** Above this count we surface a discouragement hint inline and gate
  * creation behind an explicit confirmation step. Three is the threshold
@@ -66,23 +48,11 @@ type Stage =
   | { kind: 'welcome-known'; known: PasskeyRecord[] }
   | { kind: 'confirm-create-many'; existingCount: number }
   | { kind: 'confirm-archive'; record: PasskeyRecord }
-  | { kind: 'naming'; suggestedName: string }
+  | { kind: 'naming' }
   | { kind: 'creating' }
   | { kind: 'opening' }
-  | { kind: 'pick-link-target'; targets: BrandConfig[] } // N-to-N: which peer authorizes
-  | { kind: 'linking-create'; targetDomain: string; targetName: string } // enrolling the new requester-side passkey
-  | { kind: 'linking-bridge'; iframeUrl: string; targetOrigin: string } // iframe path
-  | { kind: 'linking-redirected' } // redirect path: page about to navigate
   | { kind: 'created'; record: PasskeyRecord; recoverySeed?: string }
   | { kind: 'error'; message: string };
-
-/** What the naming step resolved to. 'custom' is the classic passkey-first flow
- * (user types the keychain label). 'address' is the ADR 0011/0012 bootstrap where
- * the Safe address becomes the passkey name; `ownership` picks swap (passkey-only)
- * vs add (1-of-2 with a recovery seed). */
-type CreateChoice =
-  | { kind: 'custom'; name: string }
-  | { kind: 'address'; ownership: OwnershipMode };
 
 export function Landing() {
   const setIdentity = useWalletStore((s) => s.setIdentity);
@@ -113,12 +83,12 @@ export function Landing() {
       setStage({ kind: 'confirm-create-many', existingCount: known.length });
       return;
     }
-    setStage({ kind: 'naming', suggestedName: suggestPasskeyName() });
+    setStage({ kind: 'naming' });
   }
 
   function proceedToNaming() {
     haptic('tap');
-    setStage({ kind: 'naming', suggestedName: suggestPasskeyName() });
+    setStage({ kind: 'naming' });
   }
 
   function requestArchive(record: PasskeyRecord) {
@@ -133,23 +103,39 @@ export function Landing() {
     setStage(known.length > 0 ? { kind: 'welcome-known', known } : { kind: 'welcome' });
   }
 
-  async function confirmCreate(choice: CreateChoice) {
+  /**
+   * ADR 0013: create the ONE identity passkey (fixed name) + a 1-of-2 recovery
+   * seed. Reuses the ADR 0012 bootstrap 'add' flow — deploy Safe(owner=ephemeral
+   * EOA) then addOwner(passkeySigner) → owners=[passkey, EOA]. The EOA's 12-word
+   * mnemonic is the recovery key (shown reveal-on-tap on the next screen, never
+   * persisted). The passkey keychain name is the fixed brand identity, not the
+   * address — with one passkey there's nothing to disambiguate.
+   */
+  async function confirmCreate() {
     setStage({ kind: 'creating' });
     haptic('tap');
     try {
-      if (choice.kind === 'address') {
-        await createAddressNamedWallet(choice.ownership);
-        return;
-      }
-      const { credentialId, pubKey, keychainName, rpId } = await createPasskey(choice.name);
-      const signerAddress = await predictSignerAddress(pubKey);
-      const safeAddress = await predictSafeAddress(signerAddress);
+      const eoa = await createBootstrapEoa();
+      const { credentialId, pubKey, keychainName, rpId } = await createPasskey(
+        identityKeychainName(),
+      );
+      const { signerAddress, eoaSignature } = await signAttach({ eoa, pubKey, mode: 'add' });
+
+      const res = await submitBootstrapDeploy({
+        safeAddress: eoa.safeAddress,
+        ownerEoa: eoa.address,
+        pubKeyX: pubKey.x.toString(),
+        pubKeyY: pubKey.y.toString(),
+        eoaSignature,
+        mode: 'add',
+      });
+      if (!res.ok) throw new Error(res.error);
 
       const record: PasskeyRecord = {
         credentialId,
         pubKey: { x: pubKey.x.toString(), y: pubKey.y.toString() },
         signerAddress,
-        safeAddress,
+        safeAddress: eoa.safeAddress,
         createdAt: new Date().toISOString(),
         keychainName,
         rpId,
@@ -161,70 +147,16 @@ export function Landing() {
         pubKeyX: pubKey.x.toString(),
         pubKeyY: pubKey.y.toString(),
         signerAddress,
-        safeAddress,
+        safeAddress: eoa.safeAddress,
         rpId,
       });
 
       haptic('success');
-      setStage({ kind: 'created', record });
+      setStage({ kind: 'created', record, recoverySeed: eoa.mnemonic });
     } catch (e) {
       haptic('error');
       setStage({ kind: 'error', message: humanizeError(e, 'passkey') });
     }
-  }
-
-  /**
-   * ADR 0011/0012 bootstrap-atomic flow: mint an ephemeral BIP39 account, derive the
-   * Safe address from it (known BEFORE the passkey), create the passkey with that
-   * address as its keychain name, then deploy + attach the passkey signer in one
-   * relayed tx (swap = passkey-only, add = 1-of-2 with a recovery seed). The Safe
-   * address is only revealed once the deploy confirms.
-   */
-  async function createAddressNamedWallet(ownership: OwnershipMode) {
-    const eoa = await createBootstrapEoa();
-    const { credentialId, pubKey, keychainName, rpId } = await createPasskey(
-      addressKeychainName(eoa.safeAddress),
-    );
-    const { signerAddress, eoaSignature } = await signAttach({ eoa, pubKey, mode: ownership });
-
-    const res = await submitBootstrapDeploy({
-      safeAddress: eoa.safeAddress,
-      ownerEoa: eoa.address,
-      pubKeyX: pubKey.x.toString(),
-      pubKeyY: pubKey.y.toString(),
-      eoaSignature,
-      mode: ownership,
-    });
-    if (!res.ok) throw new Error(res.error);
-
-    const record: PasskeyRecord = {
-      credentialId,
-      pubKey: { x: pubKey.x.toString(), y: pubKey.y.toString() },
-      signerAddress,
-      safeAddress: eoa.safeAddress,
-      createdAt: new Date().toISOString(),
-      keychainName,
-      rpId,
-    };
-    savePasskey(record);
-
-    void registerWalletWithBackend({
-      credentialId,
-      pubKeyX: pubKey.x.toString(),
-      pubKeyY: pubKey.y.toString(),
-      signerAddress,
-      safeAddress: eoa.safeAddress,
-      rpId,
-    });
-
-    haptic('success');
-    // The mnemonic is handed to the created screen IN MEMORY only when it is a real
-    // 1-of-2 recovery key ('add'). It is never persisted and is dropped on unmount.
-    setStage({
-      kind: 'created',
-      record,
-      recoverySeed: ownership === 'add' ? eoa.mnemonic : undefined,
-    });
   }
 
   async function openKnown(record: PasskeyRecord) {
@@ -301,145 +233,13 @@ export function Landing() {
     setStage(known.length > 0 ? { kind: 'welcome-known', known } : { kind: 'welcome' });
   }
 
-  async function openLegacy() {
-    await openExisting({ legacyOnly: true });
-  }
-
-  /**
-   * Cross-TLD linking entry point. PEER-TO-PEER: any brand build can be
-   * the requester, any other brand can be the authorizer. Step 1 shows
-   * a picker of known sibling brands so the user chooses which existing
-   * wallet they want to grow (e.g. zupa user wants to link to their
-   * sportklub Safe).
-   */
-  function pickLinkTarget() {
-    haptic('tap');
-    const targets = getLinkTargets();
-    setStage({ kind: 'pick-link-target', targets });
-  }
-
-  /**
-   * After the target peer is chosen: enroll a fresh passkey under THIS
-   * build's RP, then open the authorizer's `/link` page so the user
-   * can sign addOwnerWithThreshold on whichever Safe they choose there.
-   * Iframe path on non-Safari, redirect path on Safari (ITP partitions
-   * third-party iframe storage on Safari, breaking WebAuthn there).
-   */
-  async function startLinkExisting(target: { domain: string; name: string }) {
-    haptic('tap');
-    setStage({ kind: 'linking-create', targetDomain: target.domain, targetName: target.name });
-    try {
-      // 1. Enroll a new passkey under this tenant's RP.
-      const { credentialId, pubKey, keychainName, rpId } = await createPasskey(
-        suggestPasskeyName(),
-      );
-      const signerAddress = await predictSignerAddress(pubKey);
-
-      const pubKeyX = pubKey.x.toString();
-      const pubKeyY = pubKey.y.toString();
-
-      const safariPath = isSafariLike();
-
-      if (safariPath) {
-        // Redirect path: stash the new passkey in sessionStorage so
-        // /link-callback can read it back after the round-trip, then
-        // hop to the chosen target's authorize page.
-        stashPendingLink({
-          credentialId,
-          pubKeyX,
-          pubKeyY,
-          signerAddress,
-          keychainName,
-          rpId,
-          stashedAt: Date.now(),
-        });
-        const returnUrl = `${window.location.origin}/link-callback`;
-        const url = buildLinkAuthorizeUrl({
-          targetDomain: target.domain,
-          newSigner: signerAddress as Address,
-          newCredentialId: credentialId,
-          newPubKeyX: pubKeyX,
-          newPubKeyY: pubKeyY,
-          newRpId: rpId,
-          newLabel: keychainName,
-          returnMode: 'redirect',
-          returnUrl,
-        });
-        setStage({ kind: 'linking-redirected' });
-        window.location.href = url;
-        return;
-      }
-
-      // iframe path: render an iframe to the chosen target's authorize
-      // page, listen for the postMessage result, persist the PasskeyRecord
-      // when it arrives.
-      const iframeUrl = buildLinkAuthorizeUrl({
-        targetDomain: target.domain,
-        newSigner: signerAddress as Address,
-        newCredentialId: credentialId,
-        newPubKeyX: pubKeyX,
-        newPubKeyY: pubKeyY,
-        newRpId: rpId,
-        newLabel: keychainName,
-        returnMode: 'postMessage',
-        parentOrigin: window.location.origin,
-      });
-      const targetOrigin = `https://${target.domain}`;
-
-      // We persist the new passkey to localStorage as soon as the target
-      // peer confirms the link — see the message handler below.
-      function handler(event: MessageEvent) {
-        if (event.origin !== targetOrigin) return;
-        const msg = parseLinkMessage(event.data);
-        if (!msg) return;
-        if (msg.type === 'link-result') {
-          window.removeEventListener('message', handler);
-          const record: PasskeyRecord = {
-            credentialId,
-            pubKey: { x: pubKeyX, y: pubKeyY },
-            signerAddress: signerAddress as Address,
-            safeAddress: msg.safeAddress,
-            createdAt: new Date().toISOString(),
-            keychainName,
-            rpId,
-          };
-          savePasskey(record);
-          void registerWalletWithBackend({
-            credentialId,
-            pubKeyX,
-            pubKeyY,
-            signerAddress: signerAddress as Address,
-            safeAddress: msg.safeAddress,
-            rpId,
-          });
-          haptic('success');
-          setStage({ kind: 'created', record });
-        } else if (msg.type === 'link-error') {
-          window.removeEventListener('message', handler);
-          haptic('error');
-          setStage({ kind: 'error', message: msg.error });
-        }
-      }
-      window.addEventListener('message', handler);
-      setStage({ kind: 'linking-bridge', iframeUrl, targetOrigin });
-    } catch (e) {
-      haptic('error');
-      setStage({ kind: 'error', message: humanizeError(e, 'passkey') });
-    }
-  }
-
   return (
     <div className="min-h-full flex flex-col px-6 max-w-md mx-auto pt-safe pb-safe">
       <BrandHeader />
 
       <main className="flex-1 flex flex-col justify-center gap-8 pb-12">
         {stage.kind === 'welcome' && (
-          <WelcomeView
-            onCreate={startCreate}
-            onCrossDevice={() => openExisting()}
-            onLegacy={openLegacy}
-            onLinkExisting={pickLinkTarget}
-          />
+          <WelcomeView onCreate={startCreate} onCrossDevice={() => openExisting()} />
         )}
 
         {stage.kind === 'welcome-known' && (
@@ -448,38 +248,7 @@ export function Landing() {
             onOpenKnown={openKnown}
             onCreate={startCreate}
             onCrossDevice={() => openExisting()}
-            onLegacy={openLegacy}
-            onLinkExisting={pickLinkTarget}
             onRequestArchive={requestArchive}
-          />
-        )}
-
-        {stage.kind === 'pick-link-target' && (
-          <PickLinkTargetView
-            targets={stage.targets}
-            onPick={(t) => startLinkExisting({ domain: t.domain, name: t.name })}
-            onPickCustom={(domain) =>
-              startLinkExisting({ domain, name: domain })
-            }
-            onCancel={resetToWelcome}
-          />
-        )}
-
-        {stage.kind === 'linking-create' && (
-          <ProgressInline
-            title="Otvori Face ID"
-            subtitle={`Kreiram passkey ovog walleta prije linkanja na ${stage.targetName}.`}
-          />
-        )}
-
-        {stage.kind === 'linking-bridge' && (
-          <LinkingBridgeView iframeUrl={stage.iframeUrl} onCancel={resetToWelcome} />
-        )}
-
-        {stage.kind === 'linking-redirected' && (
-          <ProgressInline
-            title="Preusmjeravam na DOMOVINA Wallet…"
-            subtitle="Tamo ćeš odobriti linkanje pa te vraćamo natrag."
           />
         )}
 
@@ -500,11 +269,7 @@ export function Landing() {
         )}
 
         {stage.kind === 'naming' && (
-          <NamingView
-            suggestedName={stage.suggestedName}
-            onCancel={resetToWelcome}
-            onConfirm={confirmCreate}
-          />
+          <ConfirmCreateView onCancel={resetToWelcome} onConfirm={confirmCreate} />
         )}
 
         {stage.kind === 'creating' && <CreatingView />}
@@ -560,14 +325,9 @@ async function healStubPubKey(record: PasskeyRecord): Promise<PasskeyRecord> {
 function WelcomeView({
   onCreate,
   onCrossDevice,
-  onLegacy,
-  onLinkExisting,
 }: {
   onCreate: () => void;
   onCrossDevice: () => void;
-  onLegacy: () => void;
-  /** Only set on TENANT builds (non-default brand). undefined on master. */
-  onLinkExisting?: () => void;
 }) {
   return (
     <div className="flex flex-col gap-8 animate-route-enter">
@@ -580,7 +340,7 @@ function WelcomeView({
         <FeatureRow
           icon={<KeyRound />}
           title="Passkey, ne ključ"
-          description="Tvoj passkey živi u iCloud Keychain / 1Password."
+          description="Tvoj passkey živi u iCloud Keychain / Google Password Manageru."
         />
         <FeatureRow
           icon={<ShieldCheck />}
@@ -599,18 +359,9 @@ function WelcomeView({
           <Plus className="h-5 w-5" />
           Kreiraj wallet
         </Button>
-        <Button onClick={onCrossDevice} variant="secondary" size="lg" block>
+        <Button onClick={onCrossDevice} variant="ghost" size="sm" block>
           <RefreshCw className="h-4 w-4" />
-          Otvori postojeći passkey
-        </Button>
-        {onLinkExisting && (
-          <Button onClick={onLinkExisting} variant="secondary" size="lg" block>
-            <Link2 className="h-4 w-4" />
-            Linkaj postojeći wallet
-          </Button>
-        )}
-        <Button onClick={onLegacy} variant="ghost" size="sm" block>
-          Ne vidim ga — stari passkey (wallet.domovina.ai)
+          Već imam passkey
         </Button>
       </div>
     </div>
@@ -622,17 +373,12 @@ function WelcomeKnownView({
   onOpenKnown,
   onCreate,
   onCrossDevice,
-  onLegacy,
-  onLinkExisting,
   onRequestArchive,
 }: {
   known: PasskeyRecord[];
   onOpenKnown: (record: PasskeyRecord) => void;
   onCreate: () => void;
   onCrossDevice: () => void;
-  onLegacy: () => void;
-  /** Only set on TENANT builds. undefined on master. */
-  onLinkExisting?: () => void;
   onRequestArchive: (record: PasskeyRecord) => void;
 }) {
   const activeCred = useWalletStore((s) => s.credentialId);
@@ -689,22 +435,13 @@ function WelcomeKnownView({
       {tooManyHint}
 
       <div className="flex flex-col gap-2 pt-1">
-        <Button onClick={onCreate} variant="ghost" size="md" block>
-          <Plus className="h-4 w-4" />
-          Kreiraj novi wallet
-        </Button>
         <Button onClick={onCrossDevice} variant="ghost" size="sm" block>
           <RefreshCw className="h-4 w-4" />
-          Otvori drugi passkey (iCloud / Google sync)
+          Otvori s drugog uređaja (iCloud / Google sync)
         </Button>
-        {onLinkExisting && (
-          <Button onClick={onLinkExisting} variant="ghost" size="sm" block>
-            <Link2 className="h-4 w-4" />
-            Linkaj još jedan wallet (drugi domen)
-          </Button>
-        )}
-        <Button onClick={onLegacy} variant="ghost" size="sm" block>
-          Ne vidim ga — stari passkey (wallet.domovina.ai)
+        <Button onClick={onCreate} variant="ghost" size="sm" block>
+          <Plus className="h-4 w-4" />
+          Kreiraj novi wallet
         </Button>
       </div>
     </div>
@@ -822,168 +559,6 @@ function WalletCard({
   );
 }
 
-function PickLinkTargetView({
-  targets,
-  onPick,
-  onPickCustom,
-  onCancel,
-}: {
-  targets: BrandConfig[];
-  onPick: (t: BrandConfig) => void;
-  onPickCustom: (domain: string) => void;
-  onCancel: () => void;
-}) {
-  const [customMode, setCustomMode] = useState(false);
-  const [customDomain, setCustomDomain] = useState('');
-
-  function trySubmitCustom() {
-    const cleaned = customDomain.trim().replace(/^https?:\/\//, '').replace(/\/$/, '');
-    if (!cleaned || !/^[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/.test(cleaned)) return;
-    if (cleaned === window.location.hostname) return; // can't link to self
-    onPickCustom(cleaned);
-  }
-
-  return (
-    <div className="flex flex-col gap-4 animate-route-enter">
-      <div className="text-center flex flex-col gap-2">
-        <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-surface-sunken text-brand-primary">
-          <Link2 className="h-7 w-7" />
-        </div>
-        <h2 className="text-2xl font-semibold text-ink-primary">Iz kojeg walleta linkaš?</h2>
-        <p className="text-sm text-ink-secondary max-w-sm mx-auto">
-          Odaberi wallet u kojem već imaš Safe. Otvorit ćemo ga, autenticirat ćeš se,
-          i ovaj <span className="font-medium text-ink-primary">{brand.name}</span> postat
-          će dodatni potpisnik istog Safe-a (threshold = 1).
-        </p>
-      </div>
-
-      {!customMode && (
-        <div className="flex flex-col gap-2">
-          {targets.map((t) => (
-            <button
-              key={t.id}
-              type="button"
-              onClick={() => onPick(t)}
-              className="text-left flex items-center gap-3 rounded-2xl border border-surface-border bg-surface-raised hover:bg-surface-sunken active:scale-[0.99] transition p-4"
-            >
-              <div
-                aria-hidden
-                className="h-10 w-10 rounded-2xl shrink-0 ring-1 ring-black/5"
-                style={{ background: `linear-gradient(135deg, ${t.colors.primary}, ${t.colors.accent})` }}
-              />
-              <div className="flex flex-col leading-tight min-w-0 flex-1">
-                <span className="font-medium text-ink-primary truncate">{t.name}</span>
-                <span className="text-xs text-ink-muted font-mono truncate">{t.domain}</span>
-              </div>
-              <ChevronRight className="h-5 w-5 text-ink-muted shrink-0" />
-            </button>
-          ))}
-          <button
-            type="button"
-            onClick={() => setCustomMode(true)}
-            className="text-left flex items-center gap-3 rounded-2xl border border-dashed border-surface-border bg-surface-base hover:bg-surface-sunken active:scale-[0.99] transition p-4"
-          >
-            <div className="flex flex-col leading-tight min-w-0 flex-1">
-              <span className="font-medium text-ink-secondary">Drugi wallet (custom URL)</span>
-              <span className="text-xs text-ink-muted">Za wallete čije domene nisu u listi.</span>
-            </div>
-            <ChevronRight className="h-5 w-5 text-ink-muted shrink-0" />
-          </button>
-        </div>
-      )}
-
-      {customMode && (
-        <Card padding="md" className="flex flex-col gap-3">
-          <Field
-            label="Domena ciljnog walleta"
-            hint="Npr. wallet.example.com — bez https://"
-            error={
-              customDomain && customDomain.trim() === window.location.hostname
-                ? 'Ne možeš linkati ovaj wallet sam sa sobom.'
-                : undefined
-            }
-          >
-            {(id) => (
-              <Input
-                id={id}
-                type="text"
-                autoFocus
-                value={customDomain}
-                onChange={(e) => setCustomDomain(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') trySubmitCustom();
-                }}
-                placeholder="wallet.example.com"
-                autoComplete="off"
-                autoCorrect="off"
-                autoCapitalize="off"
-                spellCheck={false}
-              />
-            )}
-          </Field>
-          <Button onClick={trySubmitCustom} size="lg" block>
-            <Link2 className="h-4 w-4" />
-            Otvori autorizaciju
-          </Button>
-          <Button onClick={() => setCustomMode(false)} variant="ghost" size="sm" block>
-            Natrag na listu
-          </Button>
-        </Card>
-      )}
-
-      <Button onClick={onCancel} variant="ghost" size="md" block>
-        Otkaži
-      </Button>
-    </div>
-  );
-}
-
-function LinkingBridgeView({ iframeUrl, onCancel }: { iframeUrl: string; onCancel: () => void }) {
-  return (
-    <div className="flex flex-col gap-3 animate-route-enter">
-      <Card padding="md" className="flex flex-col gap-2">
-        <div className="flex items-center gap-2 text-brand-primary">
-          <Link2 className="h-5 w-5" />
-          <h2 className="font-semibold">Linkanje s DOMOVINA Walletom</h2>
-        </div>
-        <p className="text-sm text-ink-secondary">
-          U okvirima ispod otvori se DOMOVINA Wallet. Tamo odaberi Safe na
-          koji želiš spojiti ovaj {brand.name} i potpiši Face ID-em.
-          Kad završi, automatski se vraćamo ovamo.
-        </p>
-      </Card>
-      <div className="rounded-3xl overflow-hidden border border-surface-border bg-surface-raised shadow-card">
-        <iframe
-          src={iframeUrl}
-          title="DOMOVINA Wallet linking"
-          allow="publickey-credentials-get; publickey-credentials-create"
-          className="block w-full h-[520px] bg-surface-base"
-        />
-      </div>
-      <Button onClick={onCancel} variant="ghost" size="md" block>
-        Otkaži linkanje
-      </Button>
-    </div>
-  );
-}
-
-function ProgressInline({ title, subtitle }: { title: string; subtitle: string }) {
-  return (
-    <div className="flex flex-col items-center justify-center gap-4 py-12 animate-route-enter">
-      <div className="relative">
-        <div className="absolute inset-0 rounded-full bg-brand-primary/20 animate-ping" />
-        <div className="relative flex h-20 w-20 items-center justify-center rounded-full bg-brand-primary text-brand-primary-fg">
-          <Fingerprint className="h-10 w-10" />
-        </div>
-      </div>
-      <div className="text-center flex flex-col gap-1">
-        <p className="font-semibold text-ink-primary text-lg">{title}</p>
-        <p className="text-sm text-ink-secondary max-w-xs">{subtitle}</p>
-      </div>
-    </div>
-  );
-}
-
 function ConfirmCreateManyView({
   existingCount,
   onCancel,
@@ -1088,202 +663,43 @@ function ConfirmArchiveView({
   );
 }
 
-type CreateMode = 'address-1of2' | 'address-passkey' | 'custom';
 
-function NamingView({
-  suggestedName,
+function ConfirmCreateView({
   onCancel,
   onConfirm,
 }: {
-  suggestedName: string;
   onCancel: () => void;
-  onConfirm: (choice: CreateChoice) => void;
+  onConfirm: () => void;
 }) {
-  const [mode, setMode] = useState<CreateMode>('address-1of2');
-  const [name, setName] = useState(suggestedName);
-  const trimmed = name.trim();
-  const tooShort = trimmed.length === 0;
-  const tooLong = trimmed.length > 64;
-
-  // Existing wallet labels — surfaced so the user picks something distinct
-  // from "Glavni" if they already have a Glavni. Read once on mount.
-  const existingLabels = useMemo(() => {
-    return listKnownPasskeys()
-      .map((r) => r.keychainName ?? (r.nameSuffix ? `wa_${r.nameSuffix}` : null))
-      .filter((s): s is string => !!s);
-  }, []);
-
-  const collides = existingLabels.some(
-    (l) => l.localeCompare(trimmed, 'hr', { sensitivity: 'base' }) === 0,
-  );
-  const customInvalid = tooShort || tooLong || collides;
-  const disabled = mode === 'custom' && customInvalid;
-
-  function applyPurpose(purpose: string) {
-    setName(purposeToKeychainName(purpose));
-  }
-
-  function submit() {
-    if (mode === 'custom') {
-      if (customInvalid) return;
-      onConfirm({ kind: 'custom', name: trimmed });
-    } else {
-      onConfirm({ kind: 'address', ownership: mode === 'address-1of2' ? 'add' : 'swap' });
-    }
-  }
-
-  const brandTok = (brand.name.split(/\s+/)[0] || 'Wallet').replace(/[^A-Za-z0-9]/g, '');
-
-  const options: { id: CreateMode; title: string; desc: string; badge?: string }[] = [
-    {
-      id: 'address-1of2',
-      title: 'Passkey + recovery seed',
-      desc: 'Face ID za svaki dan + 12-riječni backup ključ (uvezeš ga u MetaMask ili app.safe.global). Isti Safe, dva potpisnika.',
-      badge: 'Preporuka',
-    },
-    {
-      id: 'address-passkey',
-      title: 'Samo passkey',
-      desc: 'Maksimalna sigurnost, bez seeda. Oporavak preko sinkronizacije passkeya (iCloud / Google) i dodatnih passkeyeva.',
-    },
-    {
-      id: 'custom',
-      title: 'Vlastiti naziv',
-      desc: 'Klasično — sam upišeš naziv passkeya kakav će stajati u OS Keychainu.',
-    },
-  ];
-
   return (
     <div className="flex flex-col gap-6 animate-route-enter">
       <div className="text-center flex flex-col gap-2">
         <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-surface-sunken text-brand-navy-500">
-          <KeyRound className="h-7 w-7" />
+          <Fingerprint className="h-7 w-7" />
         </div>
-        <h2 className="text-2xl font-semibold text-ink-primary">Kako kreirati wallet?</h2>
+        <h2 className="text-2xl font-semibold text-ink-primary">Kreiraj {brand.copy.productName}</h2>
         <p className="text-sm text-ink-secondary max-w-sm mx-auto">
-          Naziv passkeya ostaje{' '}
-          <span className="font-semibold text-ink-primary">trajno</span> u Apple Passwords /
-          Google Password Manageru. Standardno ga vežemo na{' '}
-          <span className="font-semibold text-ink-primary">adresu novčanika</span> da ga uvijek
-          prepoznaš.
+          Otvorit ćemo Face ID i napraviti tvoj passkey. Dobit ćeš i{' '}
+          <span className="font-semibold text-ink-primary">12-riječni recovery ključ</span> kao
+          rezervu (možeš ga uvesti u MetaMask). Wallet radi i bez njega — passkey je glavni.
         </p>
       </div>
 
-      <Card padding="md" className="flex flex-col gap-2">
-        {options.map((o) => {
-          const active = mode === o.id;
-          return (
-            <button
-              key={o.id}
-              type="button"
-              onClick={() => setMode(o.id)}
-              className={
-                'flex items-start gap-3 rounded-xl border p-3 text-left transition active:scale-[0.99] ' +
-                (active
-                  ? 'border-brand-navy-500 bg-brand-navy-50/60 dark:bg-brand-navy-900/30'
-                  : 'border-surface-border bg-surface-sunken/40 hover:bg-surface-sunken')
-              }
-            >
-              <span
-                className={
-                  'mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full border ' +
-                  (active ? 'border-brand-navy-500 bg-brand-navy-500 text-white' : 'border-surface-border')
-                }
-              >
-                {active && <Check className="h-3 w-3" />}
-              </span>
-              <span className="flex flex-col gap-0.5">
-                <span className="flex items-center gap-2">
-                  <span className="font-medium text-ink-primary">{o.title}</span>
-                  {o.badge && (
-                    <span className="rounded-full bg-emerald-500/15 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-emerald-700 dark:text-emerald-400">
-                      {o.badge}
-                    </span>
-                  )}
-                </span>
-                <span className="text-xs text-ink-secondary leading-snug">{o.desc}</span>
-              </span>
-            </button>
-          );
-        })}
+      <Card padding="md" className="flex flex-col gap-3">
+        <FeatureRow
+          icon={<KeyRound />}
+          title="Jedan passkey"
+          description="Tvoj jedini ključ za prijavu — u iCloud / Google sync."
+        />
+        <FeatureRow
+          icon={<ShieldCheck />}
+          title="Recovery ključ"
+          description="Rezerva za MetaMask / app.safe.global. Prikaže se jednom."
+        />
       </Card>
 
-      {mode === 'custom' ? (
-        <Card padding="md" className="flex flex-col gap-4">
-          <Field
-            label="Naziv passkeya"
-            hint="Tap na predložak ili upiši svoj. Ostaje u OS Keychainu kako ga sada upišeš."
-            error={
-              tooLong
-                ? 'Maksimalno 64 znaka.'
-                : collides
-                  ? 'Već imaš passkey s istim nazivom — odaberi drugi.'
-                  : undefined
-            }
-          >
-            {(id) => (
-              <Input
-                id={id}
-                type="text"
-                autoFocus
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' && !customInvalid) submit();
-                }}
-                maxLength={80}
-                invalid={tooLong || collides}
-                autoComplete="off"
-                autoCorrect="off"
-                autoCapitalize="off"
-                spellCheck={false}
-              />
-            )}
-          </Field>
-          <div className="flex flex-wrap gap-1.5">
-            {PASSKEY_PURPOSE_SUGGESTIONS.map((p) => {
-              const candidate = purposeToKeychainName(p);
-              const taken = existingLabels.some(
-                (l) => l.localeCompare(candidate, 'hr', { sensitivity: 'base' }) === 0,
-              );
-              return (
-                <button
-                  key={p}
-                  type="button"
-                  onClick={() => applyPurpose(p)}
-                  disabled={taken}
-                  className={
-                    'rounded-full text-xs px-3 py-1 transition active:scale-95 ' +
-                    (taken
-                      ? 'bg-surface-sunken/60 text-ink-muted line-through cursor-not-allowed'
-                      : 'bg-surface-sunken hover:bg-surface-border text-ink-secondary')
-                  }
-                >
-                  {p}
-                </button>
-              );
-            })}
-          </div>
-        </Card>
-      ) : (
-        <Card padding="md" className="flex flex-col gap-2 border-dashed bg-surface-sunken/40">
-          <div className="flex items-center gap-1.5 text-[11px] uppercase tracking-widest text-ink-muted">
-            <KeyRound className="h-3 w-3" />U OS Keychainu izgleda ovako
-          </div>
-          <div className="font-mono text-base break-all leading-snug text-ink-primary">
-            {brandTok}_0x⋯<span className="text-ink-muted"> (puna adresa, generira se pri kreiranju)</span>
-          </div>
-          {mode === 'address-1of2' && (
-            <p className="pt-1 text-xs text-ink-secondary leading-snug">
-              Nakon kreiranja možeš (ali ne moraš) pogledati 12-riječni recovery seed. Prikazuje
-              se <span className="font-semibold">samo jednom</span>.
-            </p>
-          )}
-        </Card>
-      )}
-
       <div className="flex flex-col gap-2">
-        <Button onClick={submit} size="xl" block disabled={disabled}>
+        <Button onClick={onConfirm} size="xl" block>
           <Fingerprint className="h-5 w-5" />
           Otvori Face ID i kreiraj
         </Button>
