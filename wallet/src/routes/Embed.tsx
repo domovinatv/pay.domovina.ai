@@ -1,13 +1,19 @@
 import { useEffect, useRef, useState } from 'react';
 import { parseUnits, encodeFunctionData, erc20Abi, isAddress, type Address } from 'viem';
-import { Fingerprint, ExternalLink } from 'lucide-react';
+import { Fingerprint, KeyRound, Plus } from 'lucide-react';
 import { Button, Card } from '../ui';
 import {
   getActivePasskey,
   listKnownPasskeys,
+  lookupPasskey,
+  pickExistingPasskey,
   recordRpId,
+  savePasskey,
+  setActivePasskey,
   signWithPasskey,
+  type PasskeyRecord,
 } from '../lib/passkey';
+import { lookupWallet } from '../lib/registry';
 import {
   encodeWebAuthnSignature,
   getSafeTxHash,
@@ -29,12 +35,15 @@ type SendResult = {
 };
 
 type Command =
-  | { type: 'connect'; requestId: number; parentOrigin: string }
+  | { type: 'connect'; requestId: number; parentOrigin: string; returnUrl?: string }
   | { type: 'send'; requestId: number; parentOrigin: string; to: string; amount: string };
+
+type ConnectCmd = Extract<Command, { type: 'connect' }>;
 
 type Stage =
   | { kind: 'waiting' }
-  | { kind: 'no-wallet' }
+  | { kind: 'choose'; cmd: ConnectCmd; error?: string }
+  | { kind: 'connecting' }
   | { kind: 'send-confirm'; cmd: Extract<Command, { type: 'send' }>; to: Address; value: bigint }
   | { kind: 'send-busy' }
   | { kind: 'success'; title: string; subtitle: string };
@@ -107,25 +116,16 @@ export function Embed() {
     }
 
     if (cmd.type === 'connect') {
+      // Wallet already known on this device → resolve instantly, no prompt.
       const active = getActivePasskey() ?? listKnownPasskeys()[0] ?? null;
-      if (!active) {
-        showIframe();
-        setStage({ kind: 'no-wallet' });
-        postError(
-          parentOrigin,
-          cmd.requestId,
-          'Nema postavljenog walleta. Otvori https://wallet.domovina.ai i kreiraj ga, pa pokušaj ponovno.',
-        );
+      if (active) {
+        resolveConnect(cmd as ConnectCmd, active);
         return;
       }
-      const result: ConnectResult = {
-        safeAddress: active.safeAddress,
-        signerAddress: active.signerAddress,
-        credentialId: active.credentialId,
-        keychainName: active.keychainName,
-      };
-      postResult(parentOrigin, cmd.requestId, result);
-      hideIframe();
+      // Otherwise surface the branded sheet. WebAuthn (and any OS chooser) only
+      // fires after the user taps "Imam novčanik" — never before this point.
+      showIframe();
+      setStage({ kind: 'choose', cmd: cmd as ConnectCmd });
       return;
     }
 
@@ -156,6 +156,71 @@ export function Embed() {
       showIframe();
       setStage({ kind: 'send-confirm', cmd, to: cmd.to as Address, value });
     }
+  }
+
+  function resolveConnect(cmd: ConnectCmd, record: PasskeyRecord) {
+    const result: ConnectResult = {
+      safeAddress: record.safeAddress,
+      signerAddress: record.signerAddress,
+      credentialId: record.credentialId,
+      keychainName: record.keychainName,
+    };
+    postResult(cmd.parentOrigin, cmd.requestId, result);
+    hideIframe();
+    setStage({ kind: 'waiting' });
+  }
+
+  /// "Imam novčanik": discoverable passkey get under our RP (surfaces synced
+  /// iCloud/Google passkeys too), resolve to a wallet via the local registry or
+  /// the backend, persist it, and return. Fires only on the user's tap, so the
+  /// OS chooser now has DOMOVINA context. On cancel/failure we stay on the sheet.
+  async function chooseExisting(cmd: ConnectCmd) {
+    setStage({ kind: 'connecting' });
+    try {
+      const { credentialId } = await pickExistingPasskey();
+      let record = lookupPasskey(credentialId);
+      if (!record) {
+        const remote = await lookupWallet(credentialId);
+        if (!remote) {
+          throw new Error(
+            'Ovaj passkey nije registriran. Kreiraj novčanik ili ga otvori na izvornom uređaju.',
+          );
+        }
+        record = {
+          credentialId,
+          pubKey: { x: remote.pub_key_x, y: remote.pub_key_y },
+          signerAddress: remote.signer_address,
+          safeAddress: remote.safe_address,
+          createdAt: remote.created_at,
+          rpId: remote.rp_id,
+        };
+        savePasskey(record); // also sets active
+      } else {
+        setActivePasskey(record.credentialId);
+      }
+      haptic('success');
+      resolveConnect(cmd, record);
+    } catch (e) {
+      haptic('error');
+      setStage({ kind: 'choose', cmd, error: humanizeError(e, 'passkey') });
+    }
+  }
+
+  /// "Kreiraj novčanik": hand off to wallet.domovina.ai (full-page, first-party)
+  /// to create the passkey + Safe, then return to the host with the identity in
+  /// the URL. The host SDK navigates the top window (we can't cross-origin).
+  function chooseCreate(cmd: ConnectCmd) {
+    const ret = cmd.returnUrl ?? '';
+    const url = `${window.location.origin}/?dw_connect=1&dw_return=${encodeURIComponent(ret)}`;
+    if (window.parent && window.parent !== window) {
+      window.parent.postMessage({ type: '__domovina_redirect__', url }, cmd.parentOrigin);
+    }
+  }
+
+  function dismissConnect(cmd: ConnectCmd) {
+    postError(cmd.parentOrigin, cmd.requestId, 'Korisnik je odustao');
+    hideIframe();
+    setStage({ kind: 'waiting' });
   }
 
   async function confirmSend(cmd: Extract<Command, { type: 'send' }>, to: Address, value: bigint) {
@@ -231,20 +296,39 @@ export function Embed() {
     <div className="min-h-full flex flex-col items-center justify-center p-4 bg-black/40 backdrop-blur-sm">
       {stage.kind === 'waiting' && null}
 
-      {stage.kind === 'no-wallet' && (
-        <Card padding="md" className="max-w-sm w-full flex flex-col gap-3">
-          <h2 className="text-lg font-semibold text-ink-primary">DOMOVINA Wallet</h2>
-          <p className="text-sm text-ink-secondary">
-            Nemaš kreiran wallet na ovom uređaju. Otvori sljedeći link i nastavi tamo:
-          </p>
-          <a
-            href="https://wallet.domovina.ai"
-            target="_blank"
-            rel="noreferrer"
-            className="inline-flex items-center gap-1 text-brand-navy-500 hover:underline text-sm"
-          >
-            wallet.domovina.ai <ExternalLink className="h-3 w-3" />
-          </a>
+      {stage.kind === 'choose' && (
+        <Card padding="md" className="max-w-sm w-full flex flex-col gap-4">
+          <div className="flex flex-col gap-1">
+            <h2 className="text-lg font-semibold text-ink-primary">Poveži DOMOVINA novčanik</h2>
+            <p className="text-sm text-ink-secondary">
+              Poveži se sa svojim novčanikom da nastaviš
+              {stage.cmd.parentOrigin
+                ? ` na ${hostnameFromOrigin(stage.cmd.parentOrigin)}`
+                : ''}
+              .
+            </p>
+          </div>
+          <div className="flex flex-col gap-2">
+            <Button onClick={() => chooseExisting(stage.cmd)} size="lg" block>
+              <KeyRound className="h-5 w-5" />
+              Imam novčanik
+            </Button>
+            <Button onClick={() => chooseCreate(stage.cmd)} variant="secondary" size="lg" block>
+              <Plus className="h-5 w-5" />
+              Kreiraj novčanik
+            </Button>
+          </div>
+          {stage.error && <p className="text-sm text-brand-red-500">{stage.error}</p>}
+          <Button onClick={() => dismissConnect(stage.cmd)} variant="ghost" size="md" block>
+            Odustani
+          </Button>
+        </Card>
+      )}
+
+      {stage.kind === 'connecting' && (
+        <Card padding="md" className="max-w-sm w-full flex flex-col items-center gap-3">
+          <Fingerprint className="h-10 w-10 text-brand-navy-500 animate-pulse" />
+          <p className="text-sm text-ink-secondary text-center">Odaberi svoj passkey…</p>
         </Card>
       )}
 

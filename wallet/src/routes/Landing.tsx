@@ -63,8 +63,54 @@ type Stage =
   | { kind: 'created'; record: PasskeyRecord; recoverySeed?: string }
   | { kind: 'error'; message: string };
 
+/** Origins allowed to receive a connect-return redirect (wallet identity in the
+ * URL). Conservative allowlist — prevents this page being used as an open
+ * redirector. Ecosystem tenants + pinka.io + localhost (dev). */
+const RETURN_ALLOWLIST: readonly RegExp[] = [
+  /^https:\/\/([a-z0-9-]+\.)*domovina\.ai$/i,
+  /^https:\/\/([a-z0-9-]+\.)*pinka\.io$/i,
+  /^http:\/\/localhost(:\d+)?$/i,
+];
+
+function isAllowedReturn(url: string): boolean {
+  try {
+    return RETURN_ALLOWLIST.some((re) => re.test(new URL(url).origin));
+  } catch {
+    return false;
+  }
+}
+
+/** Read the connect-return target from our own URL (`?dw_connect=1&dw_return=…`),
+ * validated against the allowlist. Null when this isn't an SDK connect handoff. */
+function readConnectReturn(): string | null {
+  if (typeof window === 'undefined') return null;
+  const p = new URLSearchParams(window.location.search);
+  if (p.get('dw_connect') !== '1') return null;
+  const ret = p.get('dw_return');
+  return ret && isAllowedReturn(ret) ? ret : null;
+}
+
+/** Hand the wallet identity back to the host (e.g. pinka.io) and leave. The host
+ * SDK's connect() reads these params, resolves, and strips them. */
+function finishConnectReturn(returnUrl: string, record: PasskeyRecord): void {
+  const u = new URL(returnUrl);
+  u.searchParams.set('dw_return', '1');
+  u.searchParams.set('dw_safe', record.safeAddress);
+  u.searchParams.set('dw_signer', record.signerAddress);
+  u.searchParams.set('dw_cred', record.credentialId);
+  window.location.replace(u.toString());
+}
+
 export function Landing() {
   const setAccount = useWalletStore((s) => s.setAccount);
+  // When opened via the SDK "Kreiraj novčanik" handoff, redirect back to the
+  // host with the wallet identity instead of entering the wallet UI.
+  const connectReturn = useMemo(() => readConnectReturn(), []);
+  function maybeReturn(record: PasskeyRecord): boolean {
+    if (!connectReturn) return false;
+    finishConnectReturn(connectReturn, record);
+    return true;
+  }
   const [stage, setStage] = useState<Stage>(() => {
     const known = listKnownPasskeys();
     return known.length > 0 ? { kind: 'welcome-known', known } : { kind: 'welcome' };
@@ -226,6 +272,7 @@ export function Landing() {
     const healed = await healStubPubKey(record);
     setActivePasskey(healed.credentialId);
     setActiveAccountAddress(healed.safeAddress);
+    if (maybeReturn(healed)) return;
     setAccount(bootstrapAccountView(healed));
   }
 
@@ -267,6 +314,9 @@ export function Landing() {
     }
     setActivePasskey(record.credentialId);
     setActiveAccountAddress(record.safeAddress);
+    // SDK connect handoff: if opened via "Kreiraj/Imam novčanik" from a host
+    // page, redirect the wallet identity back instead of entering the UI.
+    if (maybeReturn(record)) return;
     setAccount(bootstrapAccountView(record));
   }
 
@@ -285,6 +335,7 @@ export function Landing() {
   function enterWalletAfterCreate(record: PasskeyRecord) {
     setActivePasskey(record.credentialId);
     setActiveAccountAddress(record.safeAddress);
+    if (maybeReturn(record)) return;
     setAccount(bootstrapAccountView(record));
   }
 
@@ -296,6 +347,22 @@ export function Landing() {
   return (
     <div className="min-h-full flex flex-col px-6 max-w-md mx-auto pt-safe pb-safe">
       <BrandHeader />
+
+      {connectReturn && (
+        <div className="mt-4 rounded-2xl border border-surface-border bg-surface-raised px-4 py-3 text-sm text-ink-secondary">
+          Povezuješ se s{' '}
+          <span className="font-medium text-ink-primary">
+            {(() => {
+              try {
+                return new URL(connectReturn).hostname;
+              } catch {
+                return 'aplikacijom';
+              }
+            })()}
+          </span>
+          . Kreiraj ili odaberi novčanik — vraćamo te natrag.
+        </div>
+      )}
 
       <main className="flex-1 flex flex-col justify-center gap-8 pb-12">
         {stage.kind === 'welcome' && (
