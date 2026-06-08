@@ -15,11 +15,18 @@
  * iframe shows itself fullscreen for any step that needs user attention
  * (passkey prompts, Send confirmation).
  *
- * connect() is RoR-first: when the browser supports WebAuthn Related Origin
- * Requests, we run the passkey ceremony natively on the host page under RP ID
- * `domovina.ai` (domovina.ai/.well-known/webauthn lists this origin), resolve
- * the credential -> signer/Safe via the public wallet registry, and skip the
- * iframe entirely. Any unsupported browser / failure falls back to the iframe.
+ * connect() is iframe-first and BRANDED-first: the wallet's own embed UI (under
+ * wallet.domovina.ai) decides what to show. If a wallet already exists it
+ * resolves silently; otherwise it surfaces a DOMOVINA-branded sheet and the
+ * passkey ceremony only fires AFTER the user taps "Imam novčanik" — so the OS
+ * passkey chooser never appears before any context. "Kreiraj novčanik" redirects
+ * the top window to wallet.domovina.ai and returns here with the wallet identity
+ * in the URL (consumed transparently by connect() on the way back).
+ *
+ * Why not RoR-first: running the native passkey ceremony on the host page summons
+ * the OS/extension credential chooser (LastPass, Apple Passwords, …) with zero
+ * DOMOVINA framing and, with empty allowCredentials, chains every provider in
+ * turn. Gating WebAuthn behind the branded sheet fixes that.
  * send() always uses the iframe (signing needs the wallet's viem/Safe code).
  */
 (function () {
@@ -27,13 +34,6 @@
 
   const WALLET_ORIGIN = 'https://wallet.domovina.ai';
   const EMBED_PATH = '/embed';
-  // Ecosystem RP ID — the same parent-domain RP the wallet uses for every
-  // *.domovina.ai page (wallet/src/lib/constants.ts deriveRpId). RoR lets a
-  // third-party origin (e.g. pinka.io) reuse this RP's passkey natively.
-  const ECOSYSTEM_RP_ID = 'domovina.ai';
-  // Public wallet registry (credentialId -> signer/Safe). Same backend the
-  // wallet itself calls (mpt.domovina.ai). MUST allow the host origin via CORS.
-  const REGISTRY_API = 'https://mpt.domovina.ai';
 
   /** @type {HTMLIFrameElement | null} */
   let iframe = null;
@@ -92,6 +92,13 @@
       iframe.setAttribute('aria-hidden', 'true');
       return;
     }
+    // The embed asks the host to navigate the TOP window (it can't cross-origin
+    // navigate the parent itself). Used by the "Kreiraj novčanik" branch, which
+    // sends the user to wallet.domovina.ai and returns with identity params.
+    if (data.type === '__domovina_redirect__' && typeof data.url === 'string') {
+      if (data.url.indexOf(WALLET_ORIGIN + '/') === 0) window.location.assign(data.url);
+      return;
+    }
     if (data.requestId && pending.has(data.requestId)) {
       const { resolve, reject } = pending.get(data.requestId);
       pending.delete(data.requestId);
@@ -103,7 +110,9 @@
   function postCommand(cmd) {
     ensureIframe();
     const requestId = nextId++;
-    const message = { ...cmd, requestId, parentOrigin: location.origin };
+    // returnUrl lets the embed build a "create wallet" redirect that comes back
+    // to exactly where the user started (consumed by consumeReturnParams below).
+    const message = { ...cmd, requestId, parentOrigin: location.origin, returnUrl: location.href };
     return new Promise((resolve, reject) => {
       pending.set(requestId, { resolve, reject });
       const send = () => iframe.contentWindow.postMessage(message, WALLET_ORIGIN);
@@ -112,81 +121,36 @@
     });
   }
 
-  function bufToHex(buf) {
-    const bytes = new Uint8Array(buf);
-    let hex = '';
-    for (let i = 0; i < bytes.length; i++) hex += bytes[i].toString(16).padStart(2, '0');
-    return hex;
-  }
-
-  // Decide whether to attempt Related Origin Requests. getClientCapabilities is
-  // Chrome/Edge-only; when it definitively reports relatedOrigins we trust it,
-  // otherwise (Safari, Firefox, older Chrome) we optimistically TRY — an
-  // unsupported browser rejects credentials.get for a cross-origin rpId fast and
-  // without UI, so the iframe fallback kicks in cleanly.
-  async function shouldTryRoR() {
+  // On returning from a "Kreiraj novčanik" redirect, wallet.domovina.ai appends
+  // the new wallet identity to our URL. Read it, strip the params from the
+  // address bar (history.replaceState — no reload), and resolve connect() with
+  // it. Returns null when this isn't a return navigation.
+  function consumeReturnParams() {
     try {
-      if (
-        window.PublicKeyCredential &&
-        typeof PublicKeyCredential.getClientCapabilities === 'function'
-      ) {
-        const caps = await PublicKeyCredential.getClientCapabilities();
-        if (caps && typeof caps.relatedOrigins === 'boolean') return caps.relatedOrigins;
-      }
+      const u = new URL(window.location.href);
+      const p = u.searchParams;
+      if (p.get('dw_return') !== '1') return null;
+      const safeAddress = p.get('dw_safe');
+      const signerAddress = p.get('dw_signer');
+      for (const k of ['dw_return', 'dw_safe', 'dw_signer', 'dw_cred']) p.delete(k);
+      const clean = u.pathname + (p.toString() ? '?' + p.toString() : '') + u.hash;
+      window.history.replaceState(null, '', clean);
+      if (!safeAddress || !signerAddress) return null;
+      return { safeAddress, signerAddress };
     } catch (_) {
-      /* fall through to optimistic */
+      return null;
     }
-    return true;
-  }
-
-  // Native cross-origin connect: run the passkey ceremony here (under RP
-  // `domovina.ai` via RoR), then resolve credentialId -> signer/Safe through the
-  // public wallet registry. No iframe, no Safari storage-access dance. Throws on
-  // any gap so connect() can fall back to the iframe bridge.
-  async function connectViaRoR() {
-    if (!window.PublicKeyCredential || !navigator.credentials) throw new Error('no_webauthn');
-    const challenge = new Uint8Array(32);
-    crypto.getRandomValues(challenge);
-    const assertion = await navigator.credentials.get({
-      publicKey: {
-        challenge: challenge,
-        rpId: ECOSYSTEM_RP_ID,
-        userVerification: 'preferred',
-        timeout: 60000,
-        // empty allowCredentials -> the platform surfaces all discoverable
-        // domovina.ai passkeys (incl. iCloud/Google-synced ones on a fresh
-        // device, which the iframe's localStorage-only path cannot see).
-      },
-    });
-    if (!assertion || !assertion.rawId) throw new Error('no_assertion');
-    // Canonical credentialId == '0x' + lowercase hex of rawId (matches
-    // wallet/src/lib/passkey.ts normalizeCredentialId + the registry key).
-    const credentialId = '0x' + bufToHex(assertion.rawId);
-    const res = await fetch(REGISTRY_API + '/api/wallets/' + encodeURIComponent(credentialId));
-    if (!res.ok) throw new Error('registry_lookup_' + res.status); // 404 -> not registered
-    const v = await res.json();
-    if (!v || !v.safe_address || !v.signer_address) throw new Error('registry_incomplete');
-    return { safeAddress: v.safe_address, signerAddress: v.signer_address };
   }
 
   const api = {
-    /** Resolve the user's wallet identity. RoR-first (native passkey prompt on
-     * the host page); falls back to the iframe bridge on any unsupported
-     * browser or failure. The iframe path reads the wallet's own localStorage
-     * and only shows UI if no wallet exists. */
+    /** Resolve the user's wallet identity through the branded embed. If the user
+     * just returned from creating a wallet (URL carries dw_return), resolve from
+     * those params immediately. Otherwise the embed resolves silently from wallet
+     * storage, or shows the branded sheet (passkey prompt only after a tap). */
     connect() {
-      return (async () => {
-        if (await shouldTryRoR()) {
-          try {
-            return await connectViaRoR();
-          } catch (_) {
-            // RoR unsupported / cancelled / credential not in registry — fall
-            // back to the iframe, which resolves silently from wallet storage
-            // or surfaces the proper "create a wallet" UI.
-          }
-        }
-        return postCommand({ type: 'connect' });
-      })();
+      const returned = consumeReturnParams();
+      if (returned) return Promise.resolve(returned);
+      return postCommand({ type: 'connect' });
     },
     /** Send EURe (or native xDAI in a future revision). Shows the iframe for
      * the user to confirm the amount and authorize with Face ID. */
@@ -197,7 +161,7 @@
       return postCommand({ type: 'send', to, amount });
     },
     /** For diagnostics / debug. */
-    _version: '0.2.0',
+    _version: '0.3.0',
   };
 
   Object.defineProperty(window, 'Domovina', { value: api, writable: false });
