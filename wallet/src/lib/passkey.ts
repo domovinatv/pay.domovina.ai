@@ -39,6 +39,17 @@ export type PasskeyRecord = {
    * (currently `domovina.ai` for any *.domovina.ai page — see constants.ts).
    */
   rpId?: string;
+  /**
+   * ADR 0013 — the ONE reusable recovery owner (an EOA *address*, never the
+   * mnemonic) that co-owns every account derived under this identity. Born as
+   * the ephemeral bootstrap EOA at wallet creation (the 12-word seed shown
+   * once); its address is public, so persisting it is self-custody-safe (the
+   * mnemonic stays only with the user). Required to mint additional accounts as
+   * 1-of-2 `[passkeySigner, recoveryOwner]` Safes — see src/lib/accounts.ts.
+   * Absent on legacy records created before ADR 0013; "Novi račun" is gated on
+   * its presence.
+   */
+  recoveryOwner?: `0x${string}`;
 };
 
 export function recordRpId(record: PasskeyRecord): string {

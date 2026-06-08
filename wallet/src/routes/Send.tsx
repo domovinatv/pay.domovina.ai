@@ -28,7 +28,8 @@ import { relayTx, getRelayStatus, type RelayStatus } from '../lib/relay';
 import { getEureBalance } from '../lib/balance';
 
 export function Send() {
-  const { safeAddress, credentialId, signerAddress, balance, setBalance } = useWalletStore();
+  const { safeAddress, credentialId, signerAddress, balance, setBalance, saltNonce, recoveryOwner, accountKind } =
+    useWalletStore();
   const { toast } = useToast();
   const [to, setTo] = useState('');
   const [amount, setAmount] = useState('');
@@ -279,6 +280,12 @@ export function Send() {
       console.log('[Send] step 9: signature encoded', { signatureLen: signature.length });
 
       console.log('[Send] step 10: POST /api/relay…');
+      // ADR 0013: a DERIVED account is a counterfactual 1-of-2 [signer,
+      // recoveryOwner] Safe — pass its saltNonce + recoveryOwner so the relay's
+      // cold path deploys the matching 2-owner Safe on first send. A BOOTSTRAP
+      // account is already deployed (hot path) and needs neither — omit both so
+      // its behaviour is byte-for-byte what it was before this slice.
+      const derived = accountKind === 'derived';
       const result = await relayTx({
         safeAddress,
         signerAddress,
@@ -288,6 +295,8 @@ export function Send() {
         value: '0',
         data,
         signature,
+        ...(derived && saltNonce != null ? { saltNonce } : {}),
+        ...(derived && recoveryOwner ? { recoveryOwner } : {}),
       });
       console.log('[Send] step 11: relay result', result);
 

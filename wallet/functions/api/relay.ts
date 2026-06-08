@@ -139,6 +139,15 @@ type Body = {
    * EURe (see memory: evm-call-to-empty-address).
    */
   saltNonce?: string;
+  /**
+   * Optional reusable recovery owner (ADR 0013 derived account). When present,
+   * the cold-path Safe is deployed 1-of-2 with owners [signerAddress,
+   * recoveryOwner] (threshold 1) instead of 1/1 [signerAddress]. The address
+   * derivation + CREATE2 guard use the same 2-owner initializer, so a mismatch
+   * is rejected rather than stranding funds. Absent → single-owner Safe (the
+   * bootstrap/pinka/personal-default behaviour, unchanged).
+   */
+  recoveryOwner?: string;
 };
 
 const UINT256_MAX = (1n << 256n) - 1n;
@@ -175,6 +184,24 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
   }
   if (saltNonce < 0n || saltNonce > UINT256_MAX) {
     return json({ ok: false, error: 'saltNonce out of uint256 range' }, 400);
+  }
+
+  // Optional ADR-0013 recovery owner. Validate up-front so a malformed value
+  // fails loudly here rather than producing a wrong 2-owner initializer (and a
+  // different counterfactual address) deep in the cold path.
+  let recoveryOwner: Address | null = null;
+  if (body.recoveryOwner != null) {
+    if (!isAddress(body.recoveryOwner)) {
+      return json({ ok: false, error: 'Invalid recoveryOwner' }, 400);
+    }
+    const ro = body.recoveryOwner.toLowerCase();
+    if (ro === body.signerAddress.toLowerCase()) {
+      return json({ ok: false, error: 'recoveryOwner === signerAddress' }, 400);
+    }
+    if (ro === body.safeAddress.toLowerCase()) {
+      return json({ ok: false, error: 'recoveryOwner === safeAddress' }, 400);
+    }
+    recoveryOwner = body.recoveryOwner as Address;
   }
 
   // NOTE: the CREATE2 consistency guard (predictSafe(signer) === safeAddress) is
@@ -230,6 +257,10 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
 
     const safeAddress = body.safeAddress as Address;
     const signerAddress = body.signerAddress as Address;
+    // The owner set the cold path deploys + the CREATE2 guard checks against.
+    // 2 owners (1-of-2) for an ADR-0013 derived account, else the legacy single
+    // owner. Order is significant — must match the client's predict (accounts.ts).
+    const coldOwners: Address[] = recoveryOwner ? [signerAddress, recoveryOwner] : [signerAddress];
 
     // Pre-flight deploy check on the Safe address.
     //
@@ -289,7 +320,7 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
         });
       }
       if (!skipSafe) {
-        const initializer = buildSafeInitializer(signerAddress);
+        const initializer = buildSafeInitializer(coldOwners);
         ops.push({
           to: SAFE_PROXY_FACTORY,
           value: 0n,
@@ -315,21 +346,22 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
 
     if (!safeDeployedPre) {
       // CREATE2 consistency guard — cold path ONLY. The cold path deploys a Safe
-      // whose address is fully determined by (signerAddress, saltNonce) via
-      // buildSafeInitializer(signerAddress). If the client's safeAddress doesn't
-      // match, we'd deploy at X while execTransaction targets Y (no code) — EVM
-      // returns status=1 with no revert and the EURe is stranded forever (see
-      // memory: evm-call-to-empty-address). ADR-0011/0012 bootstrap wallets never
-      // reach here (deployed at creation), so this never rejects them.
-      const predictedSafe = predictSafeProxyAddress(signerAddress, saltNonce);
+      // whose address is fully determined by (coldOwners, saltNonce) via
+      // buildSafeInitializer(coldOwners) — 1 owner (personal/pinka) or 2 owners
+      // (ADR-0013 derived: [signer, recoveryOwner]). If the client's safeAddress
+      // doesn't match, we'd deploy at X while execTransaction targets Y (no code)
+      // — EVM returns status=1 with no revert and the EURe is stranded forever
+      // (see memory: evm-call-to-empty-address). ADR-0011/0012 bootstrap wallets
+      // never reach here (deployed at creation), so this never rejects them.
+      const predictedSafe = predictSafeProxyAddress(coldOwners, saltNonce);
       if (predictedSafe.toLowerCase() !== safeAddress.toLowerCase()) {
         return json(
           {
             ok: false,
             error:
               `safeAddress ${safeAddress} does not match the Safe derived from ` +
-              `signerAddress + saltNonce (${predictedSafe}). Refusing to deploy — this ` +
-              `would strand funds at the counterfactual address.`,
+              `owners [${coldOwners.join(', ')}] + saltNonce (${predictedSafe}). Refusing ` +
+              `to deploy — this would strand funds at the counterfactual address.`,
           },
           400,
         );
@@ -414,17 +446,21 @@ function encodeVerifiers(): bigint {
 }
 
 /**
- * Safe v1.4.1 `setup` calldata for a 1/1 Safe owned solely by signerAddress.
- * Used both for the cold-path deploy AND the CREATE2 guard, so they can never
- * drift — the predicted address is only meaningful if the initializer here is
- * byte-identical to the one actually deployed.
+ * Safe v1.4.1 `setup` calldata for a threshold-1 Safe owned by `owners` (in the
+ * given ORDER — order is part of the CREATE2 preimage). A single-element array is
+ * the legacy 1/1 case (bootstrap/pinka/personal); a 2-element [signer,
+ * recoveryOwner] array is an ADR-0013 derived account. Used both for the cold-
+ * path deploy AND the CREATE2 guard, so they can never drift — the predicted
+ * address is only meaningful if the initializer here is byte-identical to the one
+ * actually deployed. The client must build owners in the SAME order (see
+ * src/lib/accounts.ts derivedOwners()).
  */
-function buildSafeInitializer(signerAddress: Address): Hex {
+function buildSafeInitializer(owners: Address[]): Hex {
   return encodeFunctionData({
     abi: SAFE_SETUP_ABI,
     functionName: 'setup',
     args: [
-      [signerAddress],
+      owners,
       1n,
       zeroAddress,
       '0x',
@@ -437,14 +473,15 @@ function buildSafeInitializer(signerAddress: Address): Hex {
 }
 
 /**
- * Deterministic counterfactual Safe address for (signerAddress, saltNonce) under
- * the v1.4.1 SafeProxyFactory. Mirrors `createProxyWithNonce`'s CREATE2:
+ * Deterministic counterfactual Safe address for (owners, saltNonce) under the
+ * v1.4.1 SafeProxyFactory. Mirrors `createProxyWithNonce`'s CREATE2:
  *   salt = keccak256(keccak256(initializer) ++ saltNonce)
  *   addr = CREATE2(factory, salt, keccak256(creationCode ++ singleton))
- * Verified against protocol-kit (the client's derivation) for salt 0 + campaign salts.
+ * Verified against protocol-kit (the client's derivation) for salt 0 + campaign
+ * salts (1-owner); the 2-owner form shares the same code path + initializer shape.
  */
-function predictSafeProxyAddress(signerAddress: Address, saltNonce: bigint): Address {
-  const initializer = buildSafeInitializer(signerAddress);
+function predictSafeProxyAddress(owners: Address[], saltNonce: bigint): Address {
+  const initializer = buildSafeInitializer(owners);
   const salt = keccak256(
     encodePacked(['bytes32', 'uint256'], [keccak256(initializer), saltNonce]),
   );

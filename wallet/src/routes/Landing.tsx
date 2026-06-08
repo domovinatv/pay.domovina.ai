@@ -33,6 +33,7 @@ import {
   type PasskeyRecord,
 } from '../lib/passkey';
 import { createBootstrapEoa, signAttach, submitBootstrapDeploy } from '../lib/bootstrap';
+import { bootstrapAccountView, setActiveAccountAddress } from '../lib/accounts';
 import { fetchEureBalances, formatEureShort } from '../lib/balances';
 import { lookupWallet, registerWalletWithBackend } from '../lib/registry';
 import { brand } from '../app/brand';
@@ -55,7 +56,7 @@ type Stage =
   | { kind: 'error'; message: string };
 
 export function Landing() {
-  const setIdentity = useWalletStore((s) => s.setIdentity);
+  const setAccount = useWalletStore((s) => s.setAccount);
   const [stage, setStage] = useState<Stage>(() => {
     const known = listKnownPasskeys();
     return known.length > 0 ? { kind: 'welcome-known', known } : { kind: 'welcome' };
@@ -139,6 +140,11 @@ export function Landing() {
         createdAt: new Date().toISOString(),
         keychainName,
         rpId,
+        // ADR 0013: the bootstrap EOA becomes the ONE reusable recovery owner
+        // that co-owns every future derived account under this identity. We
+        // persist only its public address — the mnemonic (shown once below)
+        // is never written. Without this, "Novi račun" stays disabled.
+        recoveryOwner: eoa.address,
       };
       savePasskey(record);
 
@@ -149,6 +155,7 @@ export function Landing() {
         signerAddress,
         safeAddress: eoa.safeAddress,
         rpId,
+        recoveryOwner: eoa.address,
       });
 
       haptic('success');
@@ -166,11 +173,8 @@ export function Landing() {
     // state. See [[feedback-webauthn-ios-pending-race]].
     const healed = await healStubPubKey(record);
     setActivePasskey(healed.credentialId);
-    setIdentity({
-      credentialId: healed.credentialId,
-      signerAddress: healed.signerAddress,
-      safeAddress: healed.safeAddress,
-    });
+    setActiveAccountAddress(healed.safeAddress);
+    setAccount(bootstrapAccountView(healed));
   }
 
   async function openExisting(opts: { legacyOnly?: boolean } = {}) {
@@ -208,11 +212,8 @@ export function Landing() {
         record = await healStubPubKey(record);
       }
       setActivePasskey(record.credentialId);
-      setIdentity({
-        credentialId: record.credentialId,
-        signerAddress: record.signerAddress,
-        safeAddress: record.safeAddress,
-      });
+      setActiveAccountAddress(record.safeAddress);
+      setAccount(bootstrapAccountView(record));
     } catch (e) {
       haptic('error');
       setStage({ kind: 'error', message: humanizeError(e, 'passkey') });
@@ -221,11 +222,8 @@ export function Landing() {
 
   function enterWalletAfterCreate(record: PasskeyRecord) {
     setActivePasskey(record.credentialId);
-    setIdentity({
-      credentialId: record.credentialId,
-      signerAddress: record.signerAddress,
-      safeAddress: record.safeAddress,
-    });
+    setActiveAccountAddress(record.safeAddress);
+    setAccount(bootstrapAccountView(record));
   }
 
   function resetToWelcome() {

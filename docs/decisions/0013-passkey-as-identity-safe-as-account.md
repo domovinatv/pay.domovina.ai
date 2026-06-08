@@ -1,8 +1,9 @@
 # ADR 0013 — Passkey = identity, Safe = account (one daily passkey, many accounts)
 
-**Status:** Accepted (direction). First slice implemented (single-identity creation +
-homepage simplification); multi-account (many Safes per passkey) is the next slice.
-**Date:** 2026-06-07
+**Status:** Accepted (direction). First slice (single-identity creation + homepage
+simplification) and multi-account slice (many Safes per passkey) both implemented on
+`feat/passkey-name-equals-safe-address`; untested on-chain.
+**Date:** 2026-06-07 (multi-account slice 2026-06-08)
 **Decision owners:** Matija Stepanic, ITalk d.o.o.
 **Supersedes (as default):** ADR 0011 (passkey name = Safe address) — demoted from
 default to an optional/niche mode. **Keeps:** ADR 0012 recovery seed (but as ONE
@@ -109,7 +110,39 @@ homepage (can return in Settings later if needed).
 | `identityKeychainName()` fixed identity name | ✅ |
 | Creation default = one identity passkey + 1-of-2 recovery seed (reuse ADR 0012 'add') | ✅ |
 | Homepage simplification + remove Linkaj/Legacy buttons | ✅ |
-| Multi-account: registry keyed by safeAddress, "new account" mints Safe under same signer | ⏳ next slice |
-| One reusable recovery owner across all accounts | ⏳ next slice |
-| Cross-device: backend maps credentialId → many Safes | ⏳ next slice (backend, out of repo) |
-| In-app account names/colors + PRF metadata backup | ⏳ future (ADR 0012 Decision 4) |
+| Multi-account: registry keyed by safeAddress, "new account" mints Safe under same signer | ✅ coded ([[#multi-account-implementation]]), untested on-chain |
+| One reusable recovery owner across all accounts | ✅ coded — `PasskeyRecord.recoveryOwner` persisted at creation; reused for every derived account |
+| Cross-device: backend maps credentialId → many Safes | ⏳ client sends best-effort (`registerAccountWithBackend`); backend route out of repo |
+| In-app account names/colors + PRF metadata backup | 🟢 names done (per-account, in-app); colors/PRF backup future (ADR 0012 Decision 4) |
+
+### Multi-account implementation (2026-06-08) {#multi-account-implementation}
+
+Chosen account-derivation model: **2-owner from birth** (Option A). A new account is a
+counterfactual **1-of-2 `[passkeySigner, recoveryOwner]`** Safe at the next saltNonce —
+the reusable recovery owner is baked into the CREATE2 address, so funds are **never
+passkey-only** (closes the Postmortem 0001 trap that the ADR's literal `predict(signer,
+saltN)` 1/1 phrasing would have reopened). Deploys lazily on first send via the relay
+cold path; minting is pure-local (no Face ID, no gas).
+
+- **Registry** — `src/lib/accounts.ts` (`domovina_accounts_v3`, keyed by safeAddress)
+  layers derived accounts over the existing per-identity `PasskeyRecord` store
+  (untouched). `WalletAccount` unifies bootstrap (the EOA-owned creation Safe, hot path)
+  + derived (cold path). `deriveAccount()` predicts `[signer, recoveryOwner]` at
+  `nextSaltNonce()`.
+- **Relay** — `functions/api/relay.ts` `buildSafeInitializer(owners[])` +
+  `predictSafeProxyAddress(owners[], salt)` generalised to 1- or 2-owner; new
+  `recoveryOwner` body field; cold-path CREATE2 guard checks the 2-owner address.
+  Owner order `[signer, recoveryOwner]` is canonical on both client + relay.
+- **Send** passes `saltNonce` + `recoveryOwner` only for derived accounts; bootstrap
+  sends are byte-identical to before.
+- **UI** — `WalletSwitcherSheet` lists all accounts + "Novi račun" (name chips, gated on
+  `recoveryOwner` presence); reachable from the home account-name chip + Settings.
+
+**Known gaps (follow-ups):** (1) a derived account that is funded-but-never-sent-from is
+counterfactual, so seed→MetaMask/app.safe.global interop only works AFTER first-send
+deploys it (funds are still recoverable — the seed co-owns the address — but an EOA-
+signed cold-path deploy path is not yet built). (2) Cross-device restore of derived
+accounts needs the out-of-repo backend to map credentialId → many Safes. (3) The 2-owner
+CREATE2 address match (protocol-kit client vs hand-built relay initializer) is **untested
+on-chain** — the cold-path guard refuses on any drift, so the failure mode is a loud
+rejection, not stranded funds.

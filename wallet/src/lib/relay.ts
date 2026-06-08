@@ -25,6 +25,15 @@ export type RelayRequest = {
    * funded at.
    */
   saltNonce?: string;
+  /**
+   * ADR 0013 — for a DERIVED account, the reusable recovery owner address that
+   * co-owns it (1-of-2 `[signerAddress, recoveryOwner]`). When present, the relay
+   * cold path builds a 2-owner setup() initializer so the deployed Safe matches
+   * the counterfactual address the client predicted with the same two owners.
+   * Omit for bootstrap accounts (already deployed, hot path) and 1-owner Safes
+   * (pinka / personal-default).
+   */
+  recoveryOwner?: Address;
 };
 
 export type RelayResponse =

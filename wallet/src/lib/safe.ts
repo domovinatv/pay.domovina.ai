@@ -59,21 +59,27 @@ export async function predictSignerAddress(pubKey: P256PublicKey): Promise<Addre
 }
 
 /**
- * Predict the counterfactual Safe 1/1 address with signerAddress as the only owner.
+ * Predict the counterfactual Safe address for an explicit owner set + threshold.
  * Uses Safe protocol-kit which performs the CREATE2 derivation deterministically.
- * No deploy — the address is known even if no Safe contract exists yet at that address.
+ * No deploy — the address is known even if no Safe contract exists yet there.
+ *
+ * IMPORTANT: the owner ORDER is part of the CREATE2 preimage (the setup()
+ * initializer encodes the array verbatim). The relayer's hand-built initializer
+ * (functions/api/relay.ts buildSafeInitializer) MUST pass owners in the SAME
+ * order or it deploys a different address than the one funded — the relay's
+ * cold-path CREATE2 guard exists precisely to catch any such drift before it
+ * strands funds. The canonical order for an ADR-0013 account is
+ * `[passkeySigner, recoveryOwner]` (see src/lib/accounts.ts derivedOwners()).
  */
-export async function predictSafeAddress(
-  signerAddress: Address,
+export async function predictSafeAddressForOwners(
+  owners: Address[],
+  threshold: number,
   saltNonce = '0',
 ): Promise<Address> {
   const protocolKit = await Safe.init({
     provider: gnosis.rpcUrls.default.http[0],
     predictedSafe: {
-      safeAccountConfig: {
-        owners: [signerAddress],
-        threshold: 1,
-      },
+      safeAccountConfig: { owners, threshold },
       safeDeploymentConfig: {
         // Default '0' = personal wallet. pinka per-campaign Safes pass
         // keccak("pinka:campaign:<id>") as a decimal string; recovery
@@ -85,6 +91,19 @@ export async function predictSafeAddress(
   });
   const addr = await protocolKit.getAddress();
   return addr as Address;
+}
+
+/**
+ * Predict the counterfactual Safe 1/1 address with signerAddress as the only
+ * owner. Thin wrapper over predictSafeAddressForOwners for the single-owner
+ * cases (bootstrap EOA Safe, pinka campaign Safe, /recover). ADR-0013 derived
+ * accounts use the 2-owner form directly.
+ */
+export async function predictSafeAddress(
+  signerAddress: Address,
+  saltNonce = '0',
+): Promise<Address> {
+  return predictSafeAddressForOwners([signerAddress], 1, saltNonce);
 }
 
 const SAFE_NONCE_ABI = [

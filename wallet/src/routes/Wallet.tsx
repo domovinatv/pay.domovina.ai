@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
 import { useLocation } from 'wouter';
-import { ArrowDownToLine, ArrowUpFromLine, Phone, ShieldCheck } from 'lucide-react';
+import { ArrowDownToLine, ArrowUpFromLine, Phone, ShieldCheck, Layers, ChevronDown } from 'lucide-react';
 import { Badge, BalanceDisplay, Button, Card, Section } from '../ui';
 import { ActivityFeed } from '../components/ActivityFeed';
+import { WalletSwitcherSheet } from '../components/WalletSwitcherSheet';
 import { useWalletStore } from '../state/store';
 import { getEureBalance } from '../lib/balance';
 import { lookupWallet, registerWalletWithBackend } from '../lib/registry';
@@ -17,7 +18,8 @@ type PhoneVerification = {
 
 export function Wallet() {
   const [, setLocation] = useLocation();
-  const { safeAddress, credentialId, balance, setBalance } = useWalletStore();
+  const { safeAddress, credentialId, balance, setBalance, accountName } = useWalletStore();
+  const [switcherOpen, setSwitcherOpen] = useState(false);
   const [phones, setPhones] = useState<PhoneVerification[]>([]);
   const [totalVerifications, setTotalVerifications] = useState<number>(0);
   const [lastSync, setLastSync] = useState<number | null>(null);
@@ -108,6 +110,16 @@ export function Wallet() {
 
   return (
     <div className="flex flex-col gap-6">
+      <button
+        type="button"
+        onClick={() => setSwitcherOpen(true)}
+        className="self-start inline-flex items-center gap-1.5 rounded-pill border border-surface-border bg-surface-raised px-3 py-1.5 text-sm font-medium text-ink-secondary hover:bg-surface-sunken active:scale-95 transition"
+      >
+        <Layers className="h-4 w-4 text-brand-navy-500" />
+        <span className="max-w-[60vw] truncate">{accountName || 'Račun'}</span>
+        <ChevronDown className="h-4 w-4 text-ink-muted" />
+      </button>
+
       <Card padding="lg" elevation="elevated" className="flex flex-col gap-6">
         <BalanceDisplay
           amount={balance === null ? null : Number(balance)}
@@ -205,6 +217,8 @@ export function Wallet() {
       <p className="text-center text-xs text-ink-muted pt-2">
         Gnosis Chain · Safe smart account
       </p>
+
+      <WalletSwitcherSheet open={switcherOpen} onOpenChange={setSwitcherOpen} />
     </div>
   );
 }

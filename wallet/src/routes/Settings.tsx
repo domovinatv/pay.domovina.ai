@@ -21,7 +21,8 @@ import { WalletSwitcherSheet } from '../components/WalletSwitcherSheet';
 import { useTheme, type ThemeMode } from '../lib/theme';
 import { useWalletStore } from '../state/store';
 import { lookupWallet } from '../lib/registry';
-import { listKnownPasskeys, getActivePasskey } from '../lib/passkey';
+import { getActivePasskey } from '../lib/passkey';
+import { listAllAccounts } from '../lib/accounts';
 
 const REPO_URL = 'https://github.com/domovinatv/pay.domovina.ai';
 const ADR_LINKS = [
@@ -43,12 +44,11 @@ export function Settings() {
   const { safeAddress, signerAddress, credentialId, reset } = useWalletStore();
   const [phoneSummary, setPhoneSummary] = useState<PhoneSummary | null>(null);
   const [switcherOpen, setSwitcherOpen] = useState(false);
-  const [knownCount, setKnownCount] = useState(0);
+  const [accountCount, setAccountCount] = useState(0);
   const [passkeyLabel, setPasskeyLabel] = useState<string | undefined>();
 
   useEffect(() => {
-    const known = listKnownPasskeys();
-    setKnownCount(known.length);
+    setAccountCount(listAllAccounts().length);
     const active = getActivePasskey();
     if (active?.keychainName) setPasskeyLabel(active.keychainName);
     else if (active?.nameSuffix) setPasskeyLabel(`DOMOVINA wa_${active.nameSuffix}`);
@@ -81,26 +81,28 @@ export function Settings() {
 
   return (
     <div className="flex flex-col gap-8">
-      {knownCount > 1 && (
-        <Section title="Wallet">
-          <button
-            type="button"
-            onClick={() => setSwitcherOpen(true)}
-            className="text-left rounded-3xl bg-surface-raised border border-surface-border shadow-card p-5 hover:bg-surface-sunken transition flex items-center gap-3"
-          >
-            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-surface-sunken text-brand-navy-500">
-              <WalletIcon className="h-5 w-5" />
-            </div>
-            <div className="flex-1 flex flex-col leading-tight">
-              <span className="font-medium text-ink-primary">Promijeni wallet</span>
-              <span className="text-sm text-ink-secondary">
-                {knownCount} walleta na ovom uređaju
-              </span>
-            </div>
-            <ChevronRight className="h-4 w-4 text-ink-muted" />
-          </button>
-        </Section>
-      )}
+      <Section title="Računi">
+        <button
+          type="button"
+          onClick={() => setSwitcherOpen(true)}
+          className="text-left rounded-3xl bg-surface-raised border border-surface-border shadow-card p-5 hover:bg-surface-sunken transition flex items-center gap-3"
+        >
+          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-surface-sunken text-brand-navy-500">
+            <WalletIcon className="h-5 w-5" />
+          </div>
+          <div className="flex-1 flex flex-col leading-tight">
+            <span className="font-medium text-ink-primary">
+              {accountCount > 1 ? 'Promijeni račun' : 'Računi'}
+            </span>
+            <span className="text-sm text-ink-secondary">
+              {accountCount > 1
+                ? `${accountCount} računa · dodaj novi pod istim passkeyem`
+                : 'Otvori ili dodaj račun pod istim passkeyem'}
+            </span>
+          </div>
+          <ChevronRight className="h-4 w-4 text-ink-muted" />
+        </button>
+      </Section>
 
       <Section title="Račun">
         <Card padding="md" className="flex flex-col divide-y divide-surface-border">
@@ -248,11 +250,11 @@ export function Settings() {
       <WalletSwitcherSheet
         open={switcherOpen}
         onOpenChange={setSwitcherOpen}
-        onSwitched={(record) => {
+        onSwitched={(account) => {
           toast({
             variant: 'success',
-            title: 'Otvoren wallet',
-            description: `${record.safeAddress.slice(0, 6)}…${record.safeAddress.slice(-4)}`,
+            title: `Otvoren račun · ${account.name}`,
+            description: `${account.safeAddress.slice(0, 6)}…${account.safeAddress.slice(-4)}`,
           });
           setLocation('/');
         }}

@@ -42,6 +42,10 @@ export async function registerWalletWithBackend(args: {
   signerAddress: Address;
   safeAddress: Address;
   rpId: string;
+  /** ADR 0013 reusable recovery owner address (public; never the mnemonic).
+   * Lets the backend later rebuild the identity's derived accounts on a new
+   * device. Optional — older/unupgraded backends ignore the extra field. */
+  recoveryOwner?: Address;
 }): Promise<WalletRegistryView | null> {
   console.log('[registry] register POST', { ...args, pubKeyX: args.pubKeyX.slice(0, 12) + '…' });
   try {
@@ -57,6 +61,43 @@ export async function registerWalletWithBackend(args: {
   } catch (e) {
     console.warn('[registry] register threw', e);
     return null;
+  }
+}
+
+/**
+ * ADR 0013 — best-effort registration of an ADDITIONAL account (Safe) under an
+ * existing identity. Posts to a per-credential sub-collection so it can never
+ * clobber the identity's primary (bootstrap) wallet record, which the backend
+ * keys by credentialId. The backend must map credentialId → MANY safeAddresses
+ * for cross-device restore of derived accounts to work; until it implements
+ * this route the call 404s and we ignore it (the account still works locally
+ * and deploys via the relay cold path on first send). Mnemonic is never sent —
+ * only the recovery owner ADDRESS, which is public.
+ */
+export async function registerAccountWithBackend(args: {
+  credentialId: string;
+  safeAddress: Address;
+  saltNonce: string;
+  recoveryOwner: Address;
+}): Promise<boolean> {
+  try {
+    const res = await fetch(
+      `${PAYMENT_INTENT_API_BASE}/api/wallets/${encodeURIComponent(args.credentialId)}/accounts`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          safeAddress: args.safeAddress,
+          saltNonce: args.saltNonce,
+          recoveryOwner: args.recoveryOwner,
+        }),
+      },
+    );
+    console.log(`[registry] register account ${args.safeAddress.slice(0, 10)}… → ${res.status}`);
+    return res.ok;
+  } catch (e) {
+    console.warn('[registry] register account threw', e);
+    return false;
   }
 }
 

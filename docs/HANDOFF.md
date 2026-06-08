@@ -1,4 +1,4 @@
-# Handoff — wallet passkey/identity work (as of 2026-06-07)
+# Handoff — wallet passkey/identity work (as of 2026-06-08)
 
 Session handoff for the wallet self-custody work. Durable rationale lives in the
 ADRs + postmortem referenced below; this file is the "where we are / what's next".
@@ -38,26 +38,45 @@ ADRs + postmortem referenced below; this file is the "where we are / what's next
   passkey). Recoverable via `/recover` ONLY if the original passkey ever resurfaces;
   written off as a standing lesson. This is why ADR 0012's 1-of-2 default exists.
 
-## Next slice (ADR 0013) — multi-account: many Safes under ONE passkey
+## Multi-account slice (ADR 0013) — SHIPPED 2026-06-08 (on branch, staging)
 
-The heart of the model, not yet built. Requires:
-1. **Re-key the local registry by `safeAddress`** (today `wallet/src/lib/passkey.ts` keys by
-   `credentialId`, which hardcodes 1 passkey = 1 Safe). A record gains a `saltNonce`.
-2. **"New account"** mints a Safe = `predictSafe(signer, saltN)` under the EXISTING passkey
-   (no new WebAuthn create). The passkey already exists → no bootstrap-EOA needed.
-3. **Send** passes each account's `saltNonce` to `/api/relay` (the relay already supports it).
-4. **One reusable recovery owner** (seed) co-owns all the user's accounts (not a fresh EOA
-   per Safe).
-5. **Backend** `/api/wallets` (mpt.domovina.ai, OUT OF REPO) must map `credentialId → MANY
-   Safes` and accept an EOA-derived `safeAddress` for cross-device restore.
+Many Safes under ONE passkey, with the **2-owner-from-birth** model (Option A): a new
+account is a counterfactual **1-of-2 `[passkeySigner, recoveryOwner]`** Safe at the next
+saltNonce. The reusable recovery owner (the bootstrap seed's EOA address, now persisted
+as `PasskeyRecord.recoveryOwner`) is baked into the CREATE2 address, so derived-account
+funds are **never passkey-only** — deliberately deviating from the ADR's literal
+`predict(signer, saltN)` 1/1 phrasing, which would have reopened the Postmortem 0001 trap.
+Minting is pure-local (no Face ID, no gas); the Safe deploys lazily on first send.
+
+- **`wallet/src/lib/accounts.ts`** (NEW) — `domovina_accounts_v3` keyed by safeAddress,
+  layered over the untouched `PasskeyRecord` store. `WalletAccount` = bootstrap (hot path)
+  ∪ derived (cold path). `deriveAccount()` / `nextSaltNonce()` / `listAllAccounts()` /
+  active-account tracking (`domovina_active_account`). Canonical owner order
+  `[signer, recoveryOwner]` via `derivedOwners()`.
+- **`functions/api/relay.ts`** — `buildSafeInitializer(owners[])` +
+  `predictSafeProxyAddress(owners[], salt)` generalised to 1-or-2 owners; new
+  `recoveryOwner` body field; cold-path CREATE2 guard checks the 2-owner address.
+- **`Send.tsx`** passes `saltNonce` + `recoveryOwner` for derived accounts only.
+- **`state/store.ts`** carries `saltNonce`/`recoveryOwner`/`accountKind`/`accountName`;
+  `setAccount(WalletAccount)`. **`Landing.tsx`** persists `recoveryOwner` at creation +
+  enters via `setAccount(bootstrapAccountView(...))`.
+- **UI** — `WalletSwitcherSheet` rewritten to accounts + "Novi račun" (name chips, gated
+  on `recoveryOwner`); reachable from the home account-name chip + Settings (ungated).
 
 ## Open follow-ups
 
+- **Derived-account seed interop**: a funded-but-never-sent derived Safe is counterfactual,
+  so seed→MetaMask/app.safe.global works only AFTER first-send deploys it. Funds are still
+  recoverable (seed co-owns the address) but the **EOA-signed cold-path deploy** path is
+  not built yet. Build it so a lost-passkey-before-first-send derived account is recoverable.
+- **Backend** `/api/wallets` (mpt.domovina.ai, OUT OF REPO) must (a) map `credentialId →
+  MANY Safes` (client now POSTs `…/{credentialId}/accounts` best-effort via
+  `registerAccountWithBackend`) and (b) accept EOA-derived `safeAddress` + persist
+  `recoveryOwner` — else cross-device restore of derived/1-of-2 wallets breaks.
+- **On-chain test** (staging): 2-owner CREATE2 address match (protocol-kit vs relay), a
+  derived-account first-send deploy, and bootstrap creation + recovery. All UNTESTED.
 - **pinka per-campaign Safes are still 1/1 passkey-only** (`pinka-finance/app/lib/chain/safe.ts`)
   → same trap as Postmortem 0001. Add an alternative recovery owner before real money flows.
-- **Backend** registry must accept EOA-derived `safeAddress` (else cross-device restore of
-  bootstrap/1-of-2 wallets breaks).
-- **On-chain test** of creation + recovery on staging.
 - **PR** `feat/passkey-name-equals-safe-address` → `main` (then `ship:default` to stable).
 
 ## Test on wallet-staging.domovina.ai
@@ -65,6 +84,12 @@ The heart of the model, not yet built. Requires:
 - Home → simplified (Kreiraj wallet + Već imam passkey).
 - Create → Face ID → "Prikaži recovery seed" → import the 12 words into MetaMask → must
   resolve to the SAME Safe (1-of-2 owner).
+- **Multi-account:** home → tap the account-name chip (or Settings → Računi) → "Novi račun"
+  → name it → a new derived account appears instantly (no Face ID). Fund it, then Send a
+  small amount → first send must cold-path deploy the **2-owner** Safe and transfer in one
+  tx (check the relay did NOT reject on the CREATE2 guard — that would mean the protocol-kit
+  vs relay 2-owner initializer drifted). Switch back to the bootstrap account → its send
+  must still hot-path exactly as before.
 - `/recover?safe=<0x>&campaign=<id>&to=<dest>` → Face ID → identify → withdraw.
 
 ## Key constraints (don't relearn the hard way)
