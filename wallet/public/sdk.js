@@ -198,6 +198,32 @@
     }
   }
 
+  // The connected identity (safe + signer) is cached in the HOST page's
+  // first-party localStorage so repeat connects are instant — no iframe, no
+  // redirect, no re-prompt. Cleared via Domovina.disconnect().
+  const STORE_KEY = 'domovina_connected_v1';
+  function storeIdentity(id) {
+    try {
+      localStorage.setItem(
+        STORE_KEY,
+        JSON.stringify({ safeAddress: id.safeAddress, signerAddress: id.signerAddress }),
+      );
+    } catch (_) {
+      /* private mode / blocked storage — non-fatal, just no fast path */
+    }
+  }
+  function loadStoredIdentity() {
+    try {
+      const v = JSON.parse(localStorage.getItem(STORE_KEY) || 'null');
+      if (v && v.safeAddress && v.signerAddress) {
+        return { safeAddress: v.safeAddress, signerAddress: v.signerAddress };
+      }
+    } catch (_) {
+      /* ignore */
+    }
+    return null;
+  }
+
   const api = {
     /** Mount the wallet iframe INLINE inside `container` (an HTMLElement in the
      * host page, e.g. a div below the connect button) instead of the default
@@ -216,16 +242,41 @@
       }
       return api;
     },
-    /** Resolve the user's wallet identity through the branded embed. If the user
-     * just returned from creating a wallet (URL carries dw_return), resolve from
-     * those params immediately. Otherwise the embed resolves silently from wallet
-     * storage, or shows the branded sheet (passkey prompt only after a tap).
-     * Pass { container } to mount the embed inline (same as calling mount first). */
+    /** Resolve the user's wallet identity.
+     *
+     * Best-practice cross-origin handoff (like "Sign in with …"): the passkey
+     * ceremony runs FIRST-PARTY on the full wallet.domovina.ai page, where the
+     * native/extension credential chooser displays reliably — unlike inside a
+     * cross-origin iframe (ITP/storage-partitioning + extensions break it).
+     *
+     * Resolution order:
+     *  1. returning from the wallet (URL has dw_return) → cache + resolve;
+     *  2. already connected on this host (cached) → resolve instantly, no prompt;
+     *  3. otherwise full-page redirect to the wallet (create OR open existing,
+     *     native), which returns here via dw_* params.
+     * Pass { force:true } to skip the cache and re-pick a wallet. */
     connect(opts) {
-      if (opts && opts.container) api.mount(opts.container);
       const returned = consumeReturnParams();
-      if (returned) return Promise.resolve(returned);
-      return postCommand({ type: 'connect' });
+      if (returned) {
+        storeIdentity(returned);
+        return Promise.resolve(returned);
+      }
+      if (!(opts && opts.force)) {
+        const stored = loadStoredIdentity();
+        if (stored) return Promise.resolve(stored);
+      }
+      const url =
+        WALLET_ORIGIN + '/?dw_connect=1&dw_return=' + encodeURIComponent(location.href);
+      window.location.assign(url);
+      return new Promise(function () {}); // navigation in progress; never resolves
+    },
+    /** Forget the cached connection so the next connect() re-picks a wallet. */
+    disconnect() {
+      try {
+        localStorage.removeItem(STORE_KEY);
+      } catch (_) {
+        /* ignore */
+      }
     },
     /** Send EURe (or native xDAI in a future revision). Shows the iframe for
      * the user to confirm the amount and authorize with Face ID. */
@@ -236,7 +287,7 @@
       return postCommand({ type: 'send', to, amount });
     },
     /** For diagnostics / debug. */
-    _version: '0.5.0',
+    _version: '0.6.0',
   };
 
   Object.defineProperty(window, 'Domovina', { value: api, writable: false });
