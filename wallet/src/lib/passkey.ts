@@ -251,11 +251,77 @@ function brandToken(): string {
   return (brand.name.split(/\s+/)[0] || 'Wallet').replace(/[^A-Za-z0-9]/g, '');
 }
 
-/** Fixed identity name for the ADR-0013 "one passkey = identity" model. The user
- * has a single everyday passkey; its keychain label is stable (e.g. "DOMOVINA
- * Wallet"), not per-Safe. Accounts (Safes) are named in-app, not in the manager. */
+/**
+ * Fixed identity name for the ADR-0013 "one passkey = identity" model. The user
+ * has a single everyday passkey; its keychain label is STABLE and VERSIONED, not
+ * per-Safe. Accounts (Safes) are named in-app, not in the manager.
+ *
+ * Why a literal slug ('domovina-wallet-v1'), not `brand.copy.productName`
+ * ("DOMOVINA Wallet"): pre-fix builds created a fresh random `user.id` on every
+ * `create()` (see createPasskey), so Apple Passwords / Google PM — which dedupe
+ * on `(rpId, user.id)`, NOT on the display name — happily stored TWO identical
+ * "DOMOVINA Wallet" entries. The version suffix makes the single canonical entry
+ * visually distinct from any stale pre-fix duplicates the user must delete by
+ * hand (WebAuthn has no reliable RP-driven delete). Bump to -v2 only on a
+ * deliberate identity-scheme change. */
 export function identityKeychainName(): string {
-  return brand.copy.productName;
+  return 'domovina-wallet-v1';
+}
+
+/** OS the current browser most likely surfaces its native passkey store from.
+ * Used only to TAILOR the provider-setup hint — WebAuthn gives the RP no way to
+ * read or choose the actual provider, so this is best-effort UA sniffing. */
+export type PasskeyPlatform = 'apple' | 'android' | 'windows' | 'other';
+
+export function detectPasskeyPlatform(): PasskeyPlatform {
+  if (typeof navigator === 'undefined') return 'other';
+  const ua = navigator.userAgent;
+  // iPadOS 13+ reports as Mac; treat any touch-capable "Mac" as Apple mobile too.
+  if (/iPhone|iPad|iPod/.test(ua)) return 'apple';
+  if (/Android/.test(ua)) return 'android';
+  if (/Macintosh|Mac OS X/.test(ua)) return 'apple';
+  if (/Windows/.test(ua)) return 'windows';
+  return 'other';
+}
+
+/**
+ * Platform-specific guidance for which password manager will service passkeys —
+ * and how to make the user's preferred one the default.
+ *
+ * HARD WebAuthn LIMIT (be honest in the UI): the relying party CANNOT name,
+ * filter, or exclude a specific credential manager (Apple Passwords vs 1Password
+ * vs LastPass vs Google PM). `authenticatorAttachment: 'platform'` only drops
+ * roaming/USB security keys and the cross-device hybrid flow; third-party
+ * managers register as *system* providers and still count as "platform". Which
+ * provider actually answers is decided by the OS default-provider setting, which
+ * only the USER can change. This copy points them at that setting. */
+export function passkeyProviderHint(): { title: string; steps: string } {
+  switch (detectPasskeyPlatform()) {
+    case 'apple':
+      return {
+        title: 'Koji store sprema passkey?',
+        steps:
+          'Postavke → Aplikacije → Lozinke → Opcije lozinki → "Automatski popunjavaj" — odaberi Lozinke (iCloud) da Apple Passwords bude primarni. Ako ti je tu uključen 1Password/LastPass, on će preuzeti zahtjev.',
+      };
+    case 'android':
+      return {
+        title: 'Koji store sprema passkey?',
+        steps:
+          'Postavke → Lozinke i računi → Zadana usluga za pristupne ključeve → odaberi Google Password Manager (ili svoj željeni menadžer).',
+      };
+    case 'windows':
+      return {
+        title: 'Koji store sprema passkey?',
+        steps:
+          'Windows sprema passkey lokalno (Windows Hello) ili nudi izbor uređaja. Za sinkronizirani passkey koristi telefon (Google/Apple) preko QR-a kad ga sustav ponudi.',
+      };
+    default:
+      return {
+        title: 'Koji store sprema passkey?',
+        steps:
+          'Tvoj passkey sprema sustavski menadžer lozinki. Koji točno — biraš u postavkama OS-a (zadani menadžer pristupnih ključeva), ne u ovoj aplikaciji.',
+      };
+  }
 }
 
 /** Keychain label for the ADR-0011 "passkey name = Safe address" flow:
@@ -270,6 +336,16 @@ export function addressKeychainName(safeAddress: string): string {
 
 export async function createPasskey(
   label?: string,
+  opts: {
+    /** Credential IDs already known for this identity (from the local registry).
+     * Passed as WebAuthn `excludeCredentials` so the authenticator REFUSES to
+     * mint a duplicate on a device that already holds one of them — it throws
+     * `InvalidStateError` instead, which is a SAFE failure (the existing passkey
+     * and its keys are untouched; nothing is overwritten). This is the belt to
+     * the get-first probe's suspenders: the probe catches the synced-but-
+     * local-cleared case, excludeCredentials catches the same-device re-tap. */
+    excludeCredentialIds?: string[];
+  } = {},
 ): Promise<{
   credentialId: string;
   pubKey: P256PublicKey;
@@ -278,6 +354,11 @@ export async function createPasskey(
 }> {
   const challenge = crypto.getRandomValues(new Uint8Array(32));
   const userId = crypto.getRandomValues(new Uint8Array(16));
+
+  const excludeCredentials = (opts.excludeCredentialIds ?? []).map((id) => ({
+    id: hexToBuf(id),
+    type: 'public-key' as const,
+  }));
 
   // The label is what the user sees in iCloud Keychain / Google Password
   // Manager and in our own UI. If the caller didn't pass one (e.g. legacy
@@ -297,9 +378,20 @@ export async function createPasskey(
           { alg: -7, type: 'public-key' },   // ES256 — what we actually use
           { alg: -257, type: 'public-key' }, // RS256 — listed only to silence Chromium warning
         ],
+        // Already-known credentials for this identity → authenticator throws
+        // InvalidStateError rather than minting a duplicate. Empty for a fresh
+        // device (the get-first probe covers the synced-but-uncached case).
+        excludeCredentials,
         authenticatorSelection: {
           userVerification: 'required',
           residentKey: 'required',
+          // Keep the passkey in the device's NATIVE synced store and drop
+          // USB/NFC security keys + the cross-device hybrid flow. NOTE: this
+          // does NOT exclude OS-registered third-party managers (1Password,
+          // LastPass) — they count as platform providers and WebAuthn gives the
+          // RP no way to filter them. Provider choice lives in OS settings; see
+          // passkeyProviderHint().
+          authenticatorAttachment: 'platform',
         },
         attestation: 'none',
         timeout: 60_000,
@@ -367,6 +459,28 @@ async function pickForRpId(rpId: string, label: string): Promise<string | null> 
  * case, callers pass { legacyOnly: true } to force the LEGACY_RP_ID picker
  * directly (wired to the "Stari wallet (prije svibnja 2026)" UI button).
  */
+/**
+ * Get-first probe for the "create wallet" path. Runs a discoverable get() under
+ * the current RP ID (then legacy) and returns the picked credentialId, or null
+ * if the user dismisses or has no passkey for this RP. NEVER throws — the caller
+ * branches on the result: a hit means "you already have an identity, load it,
+ * don't create"; a miss means "ask once more, then create".
+ *
+ * This is the ONLY thing that catches the duplicate-creation footgun on a device
+ * where the passkey is synced via iCloud/Google but localStorage was cleared
+ * (so excludeCredentials would be empty). A null result is ambiguous (dismiss
+ * vs genuinely-absent), so callers must confirm before creating, not create
+ * silently — see Landing.confirmCreate. */
+export async function probeExistingPasskey(): Promise<string | null> {
+  const primary = await pickForRpId(RP_ID, 'probe-primary');
+  if (primary) return primary;
+  if (RP_ID !== LEGACY_RP_ID) {
+    const legacy = await pickForRpId(LEGACY_RP_ID, 'probe-legacy');
+    if (legacy) return legacy;
+  }
+  return null;
+}
+
 export async function pickExistingPasskey(
   opts: { legacyOnly?: boolean } = {},
 ): Promise<{ credentialId: string }> {
