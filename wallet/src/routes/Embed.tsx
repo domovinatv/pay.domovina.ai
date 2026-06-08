@@ -129,6 +129,13 @@ export function Embed() {
   function hideIframe() {
     if (window.parent && window.parent !== window) window.parent.postMessage(HIDE_MESSAGE, '*');
   }
+  // Ask the host to (un)expand an inline embed to fullscreen. No-op when the
+  // embed is already fullscreen (the SDK guards on inline mode).
+  function setHostFullscreen(on: boolean) {
+    if (window.parent && window.parent !== window) {
+      window.parent.postMessage({ type: '__domovina_fullscreen__', on }, '*');
+    }
+  }
 
   async function handleCommand(cmd: Command, parentOrigin: string) {
     // Safari ITP partitions third-party iframe storage by default. Request
@@ -212,6 +219,10 @@ export function Embed() {
   /// OS chooser now has DOMOVINA context. On cancel/failure we stay on the sheet.
   async function chooseExisting(cmd: ConnectCmd) {
     setStage({ kind: 'connecting' });
+    // Expand to fullscreen for the ceremony: the password-manager chooser
+    // (LastPass etc.) renders INSIDE this iframe, and a short inline panel would
+    // clip it so the user only sees its top and can't dismiss it.
+    setHostFullscreen(true);
     try {
       const { credentialId } = await pickExistingPasskey();
       let record = lookupPasskey(credentialId);
@@ -235,9 +246,11 @@ export function Embed() {
         setActivePasskey(record.credentialId);
       }
       haptic('success');
+      setHostFullscreen(false);
       resolveConnect(cmd, record);
     } catch (e) {
       haptic('error');
+      setHostFullscreen(false);
       setStage({ kind: 'choose', cmd, error: humanizeError(e, 'passkey') });
     }
   }
@@ -369,10 +382,21 @@ export function Embed() {
       )}
 
       {stage.kind === 'connecting' && (
-        <Card padding="md" className="max-w-sm w-full flex flex-col items-center gap-3">
-          <Fingerprint className="h-10 w-10 text-brand-navy-500 animate-pulse" />
-          <p className="text-sm text-ink-secondary text-center">Odaberi svoj passkey…</p>
-        </Card>
+        // During the ceremony the iframe is fullscreen; center the spinner with a
+        // light scrim so it reads as a modal auth moment (in inline mode only —
+        // fullscreen mode already centers via the root overlay).
+        <div
+          className={
+            INLINE
+              ? 'min-h-screen w-full flex items-center justify-center bg-black/30 backdrop-blur-sm'
+              : ''
+          }
+        >
+          <Card padding="md" className="max-w-sm w-full flex flex-col items-center gap-3">
+            <Fingerprint className="h-10 w-10 text-brand-navy-500 animate-pulse" />
+            <p className="text-sm text-ink-secondary text-center">Odaberi svoj passkey…</p>
+          </Card>
+        </div>
       )}
 
       {stage.kind === 'send-confirm' && (

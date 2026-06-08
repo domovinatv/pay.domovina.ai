@@ -47,6 +47,12 @@
   /** @type {HTMLElement | null} */
   let inlineContainer = null;
   let inlineMode = false;
+  // While a passkey ceremony runs, an inline embed temporarily goes fullscreen so
+  // the OS/extension credential UI (LastPass, Apple/Google) — which a password
+  // manager extension injects INSIDE our iframe — isn't clipped by the short
+  // inline panel. `expanded` suppresses resize handling during that window.
+  let expanded = false;
+  let lastInlineHeight = 0;
 
   const INLINE_STYLE = [
     'display:none',
@@ -72,6 +78,9 @@
     'background:transparent',
     'color-scheme:light dark',
   ].join(';');
+  // Same as fullscreen but shown — used to temporarily un-clip an inline embed
+  // during a passkey ceremony (the provider UI renders inside the iframe).
+  const EXPAND_STYLE = FULLSCREEN_STYLE.replace('display:none', 'display:block');
 
   function ensureIframe() {
     if (iframe) return iframe;
@@ -118,7 +127,25 @@
     // Inline auto-resize: the embed reports its content height so the iframe is
     // exactly as tall as the panel — no inner scrollbars, no clipped content.
     if (data.type === '__domovina_resize__' && inlineMode && typeof data.height === 'number') {
-      iframe.style.height = Math.max(0, Math.ceil(data.height)) + 'px';
+      // Ignore resizes while expanded — the ceremony layout is full-viewport and
+      // would otherwise be remembered as the collapsed panel height.
+      if (!expanded) {
+        lastInlineHeight = Math.max(0, Math.ceil(data.height));
+        iframe.style.height = lastInlineHeight + 'px';
+      }
+      return;
+    }
+    // Temporarily expand an inline embed to fullscreen for a passkey ceremony,
+    // then collapse back so the provider chooser isn't clipped by the panel.
+    if (data.type === '__domovina_fullscreen__' && inlineMode) {
+      expanded = !!data.on;
+      if (expanded) {
+        iframe.style.cssText = EXPAND_STYLE;
+      } else {
+        iframe.style.cssText = INLINE_STYLE;
+        iframe.style.display = 'block';
+        iframe.style.height = lastInlineHeight + 'px';
+      }
       return;
     }
     // The embed asks the host to navigate the TOP window (it can't cross-origin
@@ -209,7 +236,7 @@
       return postCommand({ type: 'send', to, amount });
     },
     /** For diagnostics / debug. */
-    _version: '0.4.0',
+    _version: '0.5.0',
   };
 
   Object.defineProperty(window, 'Domovina', { value: api, writable: false });
