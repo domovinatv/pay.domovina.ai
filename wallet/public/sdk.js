@@ -41,31 +41,53 @@
   let nextId = 1;
   const pending = new Map();
   const queue = [];
+  // When the host calls mount(el), the iframe lives INLINE inside `el` (in the
+  // page flow, below the connect button) instead of a fixed fullscreen overlay,
+  // and its height tracks the embed's content via __domovina_resize__.
+  /** @type {HTMLElement | null} */
+  let inlineContainer = null;
+  let inlineMode = false;
+
+  const INLINE_STYLE = [
+    'display:none',
+    'width:100%',
+    'height:0',
+    'border:0',
+    'margin:0',
+    'padding:0',
+    'overflow:hidden',
+    'background:transparent',
+    'color-scheme:light dark',
+  ].join(';');
+  const FULLSCREEN_STYLE = [
+    'position:fixed',
+    'inset:0',
+    'width:100%',
+    'height:100%',
+    'border:0',
+    'margin:0',
+    'padding:0',
+    'z-index:2147483647',
+    'display:none',
+    'background:transparent',
+    'color-scheme:light dark',
+  ].join(';');
 
   function ensureIframe() {
     if (iframe) return iframe;
+    inlineMode = !!inlineContainer;
     iframe = document.createElement('iframe');
-    iframe.src = WALLET_ORIGIN + EMBED_PATH;
+    // ?inline=1 tells the embed to render as an integrated panel (no dark
+    // backdrop / fullscreen centering) and to report its content height.
+    iframe.src = WALLET_ORIGIN + EMBED_PATH + (inlineMode ? '?inline=1' : '');
     iframe.title = 'DOMOVINA Wallet';
     // WebAuthn inside iframe requires explicit permission delegation. Without
     // this, navigator.credentials.{create,get} inside the iframe throws
     // NotAllowedError on most browsers.
     iframe.allow = 'publickey-credentials-get *; publickey-credentials-create *; clipboard-read *; clipboard-write *';
     iframe.setAttribute('aria-hidden', 'true');
-    iframe.style.cssText = [
-      'position:fixed',
-      'inset:0',
-      'width:100%',
-      'height:100%',
-      'border:0',
-      'margin:0',
-      'padding:0',
-      'z-index:2147483647',
-      'display:none',
-      'background:transparent',
-      'color-scheme:light dark',
-    ].join(';');
-    document.body.appendChild(iframe);
+    iframe.style.cssText = inlineMode ? INLINE_STYLE : FULLSCREEN_STYLE;
+    (inlineMode ? inlineContainer : document.body).appendChild(iframe);
 
     window.addEventListener('message', onMessage);
     return iframe;
@@ -89,7 +111,14 @@
     }
     if (data.type === '__domovina_hide__') {
       iframe.style.display = 'none';
+      if (inlineMode) iframe.style.height = '0';
       iframe.setAttribute('aria-hidden', 'true');
+      return;
+    }
+    // Inline auto-resize: the embed reports its content height so the iframe is
+    // exactly as tall as the panel — no inner scrollbars, no clipped content.
+    if (data.type === '__domovina_resize__' && inlineMode && typeof data.height === 'number') {
+      iframe.style.height = Math.max(0, Math.ceil(data.height)) + 'px';
       return;
     }
     // The embed asks the host to navigate the TOP window (it can't cross-origin
@@ -143,11 +172,30 @@
   }
 
   const api = {
+    /** Mount the wallet iframe INLINE inside `container` (an HTMLElement in the
+     * host page, e.g. a div below the connect button) instead of the default
+     * fixed fullscreen overlay. The iframe renders as an integrated panel and
+     * auto-resizes to its content (no scrollbars). Call BEFORE connect(). Pass
+     * null to revert to fullscreen. Returns the API for chaining. */
+    mount(container) {
+      inlineContainer = container && container.nodeType === 1 ? container : null;
+      if (!iframe) {
+        ensureIframe(); // pre-create inline so it's ready when connect() runs
+      } else if (inlineContainer && iframe.parentElement !== inlineContainer) {
+        // Iframe already existed (e.g. created fullscreen) — re-home it inline.
+        inlineMode = true;
+        iframe.style.cssText = INLINE_STYLE;
+        inlineContainer.appendChild(iframe);
+      }
+      return api;
+    },
     /** Resolve the user's wallet identity through the branded embed. If the user
      * just returned from creating a wallet (URL carries dw_return), resolve from
      * those params immediately. Otherwise the embed resolves silently from wallet
-     * storage, or shows the branded sheet (passkey prompt only after a tap). */
-    connect() {
+     * storage, or shows the branded sheet (passkey prompt only after a tap).
+     * Pass { container } to mount the embed inline (same as calling mount first). */
+    connect(opts) {
+      if (opts && opts.container) api.mount(opts.container);
       const returned = consumeReturnParams();
       if (returned) return Promise.resolve(returned);
       return postCommand({ type: 'connect' });
@@ -161,7 +209,7 @@
       return postCommand({ type: 'send', to, amount });
     },
     /** For diagnostics / debug. */
-    _version: '0.3.0',
+    _version: '0.4.0',
   };
 
   Object.defineProperty(window, 'Domovina', { value: api, writable: false });

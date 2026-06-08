@@ -52,9 +52,45 @@ const READY_MESSAGE = { type: '__domovina_iframe_ready__' };
 const SHOW_MESSAGE = { type: '__domovina_show__' };
 const HIDE_MESSAGE = { type: '__domovina_hide__' };
 
+// Inline mode: the SDK loads /embed?inline=1 when the host mounted the iframe
+// in-page (below the connect button). We then render as an integrated panel
+// (no dark fullscreen backdrop) and report our content height so the iframe
+// auto-sizes — no inner scrollbars.
+const INLINE =
+  typeof window !== 'undefined' &&
+  new URLSearchParams(window.location.search).get('inline') === '1';
+
 export function Embed() {
   const parentOriginRef = useRef<string | null>(null);
+  const rootRef = useRef<HTMLDivElement | null>(null);
   const [stage, setStage] = useState<Stage>({ kind: 'waiting' });
+
+  // Inline panel setup: keep the embed page transparent (so the host bg shows
+  // through, seamless) and stream content height to the host iframe.
+  useEffect(() => {
+    if (!INLINE || !rootRef.current) return;
+    const el = rootRef.current;
+    const html = document.documentElement;
+    const body = document.body;
+    const prev = { html: html.style.background, body: body.style.background, margin: body.style.margin };
+    html.style.background = 'transparent';
+    body.style.background = 'transparent';
+    body.style.margin = '0';
+    const post = () =>
+      window.parent?.postMessage(
+        { type: '__domovina_resize__', height: el.getBoundingClientRect().height },
+        '*',
+      );
+    const ro = new ResizeObserver(post);
+    ro.observe(el);
+    post();
+    return () => {
+      ro.disconnect();
+      html.style.background = prev.html;
+      body.style.background = prev.body;
+      body.style.margin = prev.margin;
+    };
+  }, []);
 
   useEffect(() => {
     function onMessage(event: MessageEvent) {
@@ -293,7 +329,14 @@ export function Embed() {
   // ── Render
 
   return (
-    <div className="min-h-full flex flex-col items-center justify-center p-4 bg-black/40 backdrop-blur-sm">
+    <div
+      ref={rootRef}
+      className={
+        INLINE
+          ? 'flex flex-col p-2'
+          : 'min-h-full flex flex-col items-center justify-center p-4 bg-black/40 backdrop-blur-sm'
+      }
+    >
       {stage.kind === 'waiting' && null}
 
       {stage.kind === 'choose' && (
