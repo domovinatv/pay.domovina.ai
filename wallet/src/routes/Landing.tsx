@@ -81,23 +81,28 @@ function isAllowedReturn(url: string): boolean {
 }
 
 /** Read the connect-return target from our own URL (`?dw_connect=1&dw_return=…`),
- * validated against the allowlist. Null when this isn't an SDK connect handoff. */
-function readConnectReturn(): string | null {
+ * validated against the allowlist. `state` is the host's single-use CSRF token,
+ * echoed back unchanged. Null when this isn't an SDK connect handoff. */
+type ConnectReturn = { url: string; state: string | null };
+function readConnectReturn(): ConnectReturn | null {
   if (typeof window === 'undefined') return null;
   const p = new URLSearchParams(window.location.search);
   if (p.get('dw_connect') !== '1') return null;
   const ret = p.get('dw_return');
-  return ret && isAllowedReturn(ret) ? ret : null;
+  if (!ret || !isAllowedReturn(ret)) return null;
+  return { url: ret, state: p.get('dw_state') };
 }
 
 /** Hand the wallet identity back to the host (e.g. pinka.io) and leave. The host
- * SDK's connect() reads these params, resolves, and strips them. */
-function finishConnectReturn(returnUrl: string, record: PasskeyRecord): void {
-  const u = new URL(returnUrl);
+ * SDK's connect() CSRF-checks dw_state, reads these params, resolves, and strips
+ * them. */
+function finishConnectReturn(cr: ConnectReturn, record: PasskeyRecord): void {
+  const u = new URL(cr.url);
   u.searchParams.set('dw_return', '1');
   u.searchParams.set('dw_safe', record.safeAddress);
   u.searchParams.set('dw_signer', record.signerAddress);
   u.searchParams.set('dw_cred', record.credentialId);
+  if (cr.state) u.searchParams.set('dw_state', cr.state);
   window.location.replace(u.toString());
 }
 
@@ -354,7 +359,7 @@ export function Landing() {
           <span className="font-medium text-ink-primary">
             {(() => {
               try {
-                return new URL(connectReturn).hostname;
+                return new URL(connectReturn.url).hostname;
               } catch {
                 return 'aplikacijom';
               }

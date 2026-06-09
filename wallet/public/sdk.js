@@ -34,6 +34,12 @@
 
   const WALLET_ORIGIN = 'https://wallet.domovina.ai';
   const EMBED_PATH = '/embed';
+  // Ecosystem RP ID — the parent-domain RP every *.domovina.ai passkey uses.
+  // Related Origin Requests (RoR) let a listed third-party origin (pinka.io, via
+  // domovina.ai/.well-known/webauthn) run the passkey ceremony NATIVELY in-page.
+  const ECOSYSTEM_RP_ID = 'domovina.ai';
+  // Public wallet registry (credentialId -> signer/Safe), CORS-open to tenants.
+  const REGISTRY_API = 'https://mpt.domovina.ai';
 
   /** @type {HTMLIFrameElement | null} */
   let iframe = null;
@@ -188,14 +194,87 @@
       if (p.get('dw_return') !== '1') return null;
       const safeAddress = p.get('dw_safe');
       const signerAddress = p.get('dw_signer');
-      for (const k of ['dw_return', 'dw_safe', 'dw_signer', 'dw_cred']) p.delete(k);
+      const state = p.get('dw_state');
+      for (const k of ['dw_return', 'dw_safe', 'dw_signer', 'dw_cred', 'dw_state']) p.delete(k);
       const clean = u.pathname + (p.toString() ? '?' + p.toString() : '') + u.hash;
       window.history.replaceState(null, '', clean);
+      // CSRF: the returned state must match the single-use token we generated
+      // before redirecting. A crafted return URL (attacker-chosen safe/signer)
+      // has no matching token → ignored. (Identity decides the campaign Safe owner.)
+      let expected = null;
+      try {
+        expected = sessionStorage.getItem(STATE_KEY);
+        sessionStorage.removeItem(STATE_KEY);
+      } catch (_) {
+        /* ignore */
+      }
+      if (!expected || !state || state !== expected) return null;
       if (!safeAddress || !signerAddress) return null;
       return { safeAddress, signerAddress };
     } catch (_) {
       return null;
     }
+  }
+
+  function bufToHex(buf) {
+    const bytes = new Uint8Array(buf);
+    let hex = '';
+    for (let i = 0; i < bytes.length; i++) hex += bytes[i].toString(16).padStart(2, '0');
+    return hex;
+  }
+
+  // Single-use CSRF token for the redirect handoff (sessionStorage survives the
+  // same-tab round-trip to the wallet and back).
+  const STATE_KEY = 'domovina_connect_state';
+  function newState() {
+    const a = new Uint8Array(16);
+    crypto.getRandomValues(a);
+    return bufToHex(a.buffer);
+  }
+  function redirectToWallet() {
+    let state = '';
+    try {
+      state = newState();
+      sessionStorage.setItem(STATE_KEY, state);
+    } catch (_) {
+      /* sessionStorage blocked — proceed without CSRF token (wallet still
+         allowlists the return origin; identity is verified there) */
+    }
+    const url =
+      WALLET_ORIGIN +
+      '/?dw_connect=1' +
+      (state ? '&dw_state=' + encodeURIComponent(state) : '') +
+      '&dw_return=' +
+      encodeURIComponent(location.href);
+    window.location.assign(url);
+  }
+
+  // Related Origin Requests: run the passkey ceremony NATIVELY on the host page
+  // (top-level → the OS/extension chooser renders correctly, unlike in an
+  // iframe) under RP `domovina.ai`, then resolve credentialId -> signer/Safe via
+  // the public registry. Throws on any gap so connect() falls back to redirect.
+  // Called synchronously from connect() to preserve the click's user activation.
+  async function tryRoR() {
+    if (!(window.PublicKeyCredential && navigator.credentials)) return null;
+    const challenge = new Uint8Array(32);
+    crypto.getRandomValues(challenge);
+    // Empty allowCredentials → platform surfaces all discoverable domovina.ai
+    // passkeys (incl. iCloud/Google-synced ones created on any ecosystem site).
+    const assertion = await navigator.credentials.get({
+      publicKey: {
+        challenge: challenge,
+        rpId: ECOSYSTEM_RP_ID,
+        userVerification: 'preferred',
+        timeout: 60000,
+      },
+    });
+    if (!assertion || !assertion.rawId) return null;
+    const credentialId = '0x' + bufToHex(assertion.rawId);
+    const res = await fetch(REGISTRY_API + '/api/wallets/' + encodeURIComponent(credentialId));
+    if (!res.ok) throw new Error('registry_' + res.status); // 404 → not registered
+    const v = await res.json();
+    if (!v || !v.safe_address || !v.signer_address) throw new Error('registry_incomplete');
+    return { safeAddress: v.safe_address, signerAddress: v.signer_address };
   }
 
   // The connected identity (safe + signer) is cached in the HOST page's
@@ -250,10 +329,14 @@
      * cross-origin iframe (ITP/storage-partitioning + extensions break it).
      *
      * Resolution order:
-     *  1. returning from the wallet (URL has dw_return) → cache + resolve;
+     *  1. returning from the wallet (URL has dw_return, CSRF-checked) → cache + resolve;
      *  2. already connected on this host (cached) → resolve instantly, no prompt;
-     *  3. otherwise full-page redirect to the wallet (create OR open existing,
-     *     native), which returns here via dw_* params.
+     *  3. Related Origin Requests — run the passkey ceremony NATIVELY in-page (no
+     *     navigation; works because pinka.io is listed in domovina.ai/.well-known/
+     *     webauthn). MUST be called from a user gesture (the connect button) so the
+     *     ceremony keeps the click's activation;
+     *  4. on any RoR gap (unsupported browser, cancelled, no passkey, registry
+     *     miss) → full-page redirect to the wallet (create OR open existing).
      * Pass { force:true } to skip the cache and re-pick a wallet. */
     connect(opts) {
       const returned = consumeReturnParams();
@@ -265,10 +348,21 @@
         const stored = loadStoredIdentity();
         if (stored) return Promise.resolve(stored);
       }
-      const url =
-        WALLET_ORIGIN + '/?dw_connect=1&dw_return=' + encodeURIComponent(location.href);
-      window.location.assign(url);
-      return new Promise(function () {}); // navigation in progress; never resolves
+      // Run RoR synchronously from here so navigator.credentials.get() inherits
+      // the connect button's transient activation (no awaits before the call).
+      return (async function () {
+        try {
+          const id = await tryRoR();
+          if (id) {
+            storeIdentity(id);
+            return id;
+          }
+        } catch (_) {
+          /* unsupported / cancelled / not registered → redirect fallback */
+        }
+        redirectToWallet();
+        return new Promise(function () {}); // navigation in progress; never resolves
+      })();
     },
     /** Forget the cached connection so the next connect() re-picks a wallet. */
     disconnect() {
@@ -287,7 +381,7 @@
       return postCommand({ type: 'send', to, amount });
     },
     /** For diagnostics / debug. */
-    _version: '0.6.0',
+    _version: '0.7.0',
   };
 
   Object.defineProperty(window, 'Domovina', { value: api, writable: false });
