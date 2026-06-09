@@ -12,6 +12,14 @@ Durable design knowledge for this repo. Read these before touching connect/onboa
   user.id; OS-sheet-title tells you the ceremony; etc.). State diagram.
 - **[deploy-and-pwa.md](./deploy-and-pwa.md)** — deploy command + the service-worker
   staleness / MIME-error traps that repeatedly looked like "my fix didn't ship".
+- **[relayer-threat-model.md](./relayer-threat-model.md)** — what the gas-sponsoring
+  relayer can/can't do (custody invariant vs. xDAI-drain threat), why payloads are
+  offline-forgeable, the layered abuse defenses (per-signer / per-IP / global budget /
+  Turnstile), the KV-atomicity residual, and the `/embed` origin-trust rule. Flow +
+  sequence diagrams.
+- **[relayer-architecture.md](./relayer-architecture.md)** — the shared `functions/_lib`
+  module (single source of CREATE2 truth) and why drift strands funds; the hot-vs-cold
+  send decision flow; request lifecycle; editing rules. Module + flow diagrams.
 - **[STAGING.md](./STAGING.md)** — staging environment notes.
 
 Open follow-ups (backend/architectural) live in the agent memory `wallet-audit-followups`.
