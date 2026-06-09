@@ -35,7 +35,14 @@ export function UpdateBanner() {
 
   function applyUpdate() {
     haptic('tap');
+    // updateServiceWorker(true) skips the waiting SW and reloads on
+    // `controllerchange` (which unloads this page, cancelling the timer below).
+    // BUT across rapid deploys the waiting worker can already be gone by the time
+    // the user taps — then there's nothing to skip, controllerchange never fires,
+    // and the tap appears to "do nothing". Force a reload as a fallback so the
+    // user is never stuck on the banner.
     void updateServiceWorker(true);
+    setTimeout(() => window.location.reload(), 2000);
   }
 
   function dismiss() {

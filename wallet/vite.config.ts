@@ -98,7 +98,15 @@ export default defineConfig({
       },
       workbox: {
         globPatterns: ['**/*.{js,css,html,svg,png,woff2}'],
+        // Purge precaches from superseded SW revisions so a stale entry can't
+        // linger and serve old/missing assets after a deploy.
+        cleanupOutdatedCaches: true,
         navigateFallback: '/index.html',
+        // The SPA navigateFallback must apply ONLY to navigations — never to
+        // hashed assets or well-known files. Without this, a request for a
+        // just-deployed/renamed asset that misses the cache falls back to
+        // index.html (text/html) and the browser rejects it with a MIME error.
+        navigateFallbackDenylist: [/^\/assets\//, /^\/\.well-known\//, /\.[a-z0-9]+$/i],
         runtimeCaching: [
           {
             urlPattern: /^https:\/\/pay\.domovina\.ai\/api\//,
