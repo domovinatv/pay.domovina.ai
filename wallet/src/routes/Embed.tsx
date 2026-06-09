@@ -35,7 +35,15 @@ type SendResult = { txHash: string };
 
 type Stage =
   | { kind: 'waiting' }
-  | { kind: 'send-confirm'; cmd: SendCmd; to: Address; value: bigint; record: PasskeyRecord }
+  | {
+      kind: 'send-confirm';
+      cmd: SendCmd;
+      /** VERIFIED parent origin (event.origin), never the spoofable cmd.parentOrigin. */
+      origin: string;
+      to: Address;
+      value: bigint;
+      record: PasskeyRecord;
+    }
   | { kind: 'send-busy' }
   | { kind: 'success'; title: string; subtitle: string };
 
@@ -127,6 +135,17 @@ export function Embed() {
       /* non-fatal */
     }
 
+    // Origin spoofing guard: the message payload carries its own `parentOrigin`
+    // field, but that is attacker-controlled. The ONLY trustworthy origin is
+    // `event.origin` (here `parentOrigin`, the verified arg). A malicious embedder
+    // could claim parentOrigin:'https://app.safe.global' from evil.com to make the
+    // confirm card show a trusted app name. Reject any mismatch and, from here on,
+    // use the verified origin everywhere (display + postMessage targetOrigin).
+    if (cmd.parentOrigin && cmd.parentOrigin !== parentOrigin) {
+      postError(parentOrigin, cmd.requestId, 'Origin mismatch — odbijeno.');
+      return;
+    }
+
     if (!isAddress(cmd.to)) {
       postError(parentOrigin, cmd.requestId, 'Invalid recipient address');
       return;
@@ -160,10 +179,16 @@ export function Embed() {
     // Surface the iframe with a confirm card. Face ID fires only after the user
     // taps Confirm in-iframe so we have transient activation.
     showIframe();
-    setStage({ kind: 'send-confirm', cmd, to: cmd.to as Address, value, record });
+    setStage({ kind: 'send-confirm', cmd, origin: parentOrigin, to: cmd.to as Address, value, record });
   }
 
-  async function confirmSend(cmd: SendCmd, to: Address, value: bigint, record: PasskeyRecord) {
+  async function confirmSend(
+    cmd: SendCmd,
+    origin: string,
+    to: Address,
+    value: bigint,
+    record: PasskeyRecord,
+  ) {
     setStage({ kind: 'send-busy' });
     try {
       const data = encodeFunctionData({ abi: erc20Abi, functionName: 'transfer', args: [to, value] });
@@ -191,7 +216,7 @@ export function Embed() {
       if (!result.ok) throw new Error(result.error);
 
       const out: SendResult = { txHash: result.txHash };
-      postResult(cmd.parentOrigin, cmd.requestId, out);
+      postResult(origin, cmd.requestId, out);
       haptic('success');
       setStage({
         kind: 'success',
@@ -205,7 +230,7 @@ export function Embed() {
     } catch (e) {
       haptic('error');
       const msg = humanizeError(e, 'passkey');
-      postError(cmd.parentOrigin, cmd.requestId, msg);
+      postError(origin, cmd.requestId, msg);
       setStage({ kind: 'success', title: 'Slanje neuspješno', subtitle: msg });
       setTimeout(() => {
         hideIframe();
@@ -214,8 +239,8 @@ export function Embed() {
     }
   }
 
-  function dismissSend(cmd: SendCmd) {
-    postError(cmd.parentOrigin, cmd.requestId, 'Korisnik je odustao');
+  function dismissSend(cmd: SendCmd, origin: string) {
+    postError(origin, cmd.requestId, 'Korisnik je odustao');
     hideIframe();
     setStage({ kind: 'waiting' });
   }
@@ -232,18 +257,18 @@ export function Embed() {
           <div className="text-sm text-ink-secondary flex flex-col gap-1">
             <Row label="Iznos" value={`${stage.cmd.amount} EURe`} />
             <Row label="Prima" value={shortAddr(stage.to)} mono />
-            <Row label="Aplikacija" value={hostnameFromOrigin(stage.cmd.parentOrigin)} />
+            <Row label="Aplikacija" value={hostnameFromOrigin(stage.origin)} />
           </div>
           <div className="flex flex-col gap-2 pt-2">
             <Button
-              onClick={() => confirmSend(stage.cmd, stage.to, stage.value, stage.record)}
+              onClick={() => confirmSend(stage.cmd, stage.origin, stage.to, stage.value, stage.record)}
               size="lg"
               block
             >
               <Fingerprint className="h-5 w-5" />
               Potpiši Face ID-om
             </Button>
-            <Button onClick={() => dismissSend(stage.cmd)} variant="ghost" size="md" block>
+            <Button onClick={() => dismissSend(stage.cmd, stage.origin)} variant="ghost" size="md" block>
               Odustani
             </Button>
           </div>
