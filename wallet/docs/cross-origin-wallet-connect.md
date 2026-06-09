@@ -1,6 +1,8 @@
 # Cross-origin passkey-wallet connect — design, rationale & best practices
 
-**Status:** adopted (full-page redirect handoff shipped in `sdk.js` v0.6.0).
+**Status:** adopted & shipped in `sdk.js` **v0.7.0** — RoR-first in-page connect
+with full-page redirect fallback, and a CSRF `dw_state` token on the redirect
+handoff. (v0.6.0 was redirect-only.)
 **Last researched:** 2026-06-09 (web research with citations, see Sources).
 **Applies to:** the DOMOVINA Wallet SDK (`public/sdk.js`, `/embed`, `Landing.tsx`)
 consumed by tenant dApps on other registrable domains (e.g. `pinka.io`).
@@ -87,72 +89,82 @@ the default and treats popup as a reluctant fallback. We chose **redirect** beca
 is the most robust across mobile/PWA and has no COOP/opener fragility; our connect is
 "step 1" so the page-reload cost is minimal.
 
-## What we ship (sdk.js v0.6.0)
+## What we ship (sdk.js v0.7.0)
 
 `Domovina.connect()`:
-1. **Returning** (`?dw_return=1` in the URL) → cache identity + resolve.
+1. **Returning** (`?dw_return=1`) → CSRF-check `dw_state` → cache identity + resolve.
 2. **Cached** on this host (first-party `localStorage` `domovina_connected_v1`) →
    resolve instantly, no prompt.
-3. **Else** full-page redirect to
-   `wallet.domovina.ai/?dw_connect=1&dw_return=<hostUrl>`; the wallet runs the
-   ceremony first-party (create **or** open existing, native chooser), then redirects
-   back with `?dw_return=1&dw_safe=&dw_signer=&dw_cred=`.
+3. **RoR in-page** — `navigator.credentials.get({ rpId:'domovina.ai' })` run on the
+   host page from the connect-button gesture (top-level → native chooser renders
+   correctly; discovers any synced ecosystem passkey, incl. cross-tenant) →
+   `credentialId` → registry (`mpt.domovina.ai`) → cache + resolve. No navigation.
+4. **Fallback** (RoR unsupported / cancelled / no passkey / registry miss) →
+   full-page redirect to `wallet.domovina.ai/?dw_connect=1&dw_state=…&dw_return=<hostUrl>`;
+   the wallet runs the ceremony first-party (create **or** open existing), then
+   redirects back with `?dw_return=1&dw_state=…&dw_safe=&dw_signer=&dw_cred=`.
 
-`Landing.tsx` returns the identity at every "wallet ready" exit (open known / open
-existing / after create), with an **exact-origin allowlist** on `dw_return`
-(`*.domovina.ai`, `*.pinka.io`, localhost) to prevent open-redirect. The host SDK
-consumes the params and **strips them via `history.replaceState`**. `Domovina.disconnect()`
-clears the cache (dApp surfaces "Promijeni novčanik"). The `/embed` iframe is retained
-only for `send()`; connect no longer uses it.
+To keep the click's user activation, the dApp calls `preloadWallet()` on mount
+(warms SDK + Safe-App probe) and `connect()` invokes `get()` synchronously (no
+awaits before the call). `Landing.tsx` returns the identity at every "wallet ready"
+exit (open known / open existing / after create), echoing `dw_state` back, with an
+**exact-origin allowlist** on `dw_return` (`*.domovina.ai`, `*.pinka.io`, localhost).
+The host SDK CSRF-checks `dw_state` (single-use, sessionStorage) and **strips the
+params via `history.replaceState`**. `Domovina.disconnect()` clears the cache (dApp
+surfaces "Promijeni novčanik"). The `/embed` iframe is retained only for `send()`.
 
 ## Security hardening checklist (redirect-return handoff)
 
-Already done: ✅ exact-origin allowlist on `dw_return`; ✅ `replaceState` scrub of the
-return params; ✅ HTTPS both ends; ✅ identity cached in first-party storage.
+Done: ✅ exact-origin allowlist on `dw_return`; ✅ `replaceState` scrub of the return
+params; ✅ HTTPS both ends; ✅ identity cached in first-party storage; ✅ **`state`/CSRF
+token** (`dw_state`, ≥128-bit, single-use sessionStorage, echoed by the wallet,
+host-verified before accepting the identity — shipped v0.7.0).
 
-Recommended to add:
-- [ ] **`state`/CSRF token.** Generate a ≥128-bit random `dw_state` on the dApp, stash
-  in `sessionStorage`, send outbound, require it echoed back, reject on mismatch,
-  single-use. Without it, an attacker can hand a victim a crafted return URL that
-  **injects an attacker-controlled wallet identity** — which here decides the campaign
-  Safe owner, so it matters.
+Optional further hardening (not done):
 - [ ] **Move the return values to the URL fragment (`#…`)** instead of the query
   string (fragments aren't sent to servers and aren't in `Referer`). `dw_safe`/
   `dw_signer` are public addresses and `dw_cred` is a public credential-id, so leak
   risk is low — but fragment + `replaceState` scrub is the clean belt-and-suspenders.
-- [ ] **Integrity-bind the returned identity** (optional, stronger): the wallet signs
+- [ ] **Integrity-bind the returned identity** (stronger): the wallet signs
   `{dw_safe, dw_signer, dw_cred, dw_state, exp}` and the dApp verifies, with a short
-  `exp` to limit replay/tamper.
+  `exp` to limit replay/tamper. (CSRF `dw_state` already blocks the practical attack;
+  this defends against a compromised return channel.)
 
 If a popup variant is ever added: opener sets `Cross-Origin-Opener-Policy:
 same-origin-allow-popups`; receiver checks `event.origin === 'https://wallet.domovina.ai'`
 exactly; send with an exact `targetOrigin` (never `'*'`); open the popup synchronously
 in the click (no `await` first); fall back to redirect on mobile/PWA/blocked.
 
-## Recommended evolution: Related Origin Requests (RoR) as a progressive enhancement
+## Related Origin Requests (RoR) — SHIPPED (v0.7.0)
 
 Because we **control both domains and they're same-org siblings**, RoR is the
 cleanest standards-based path — it runs the ceremony *in-page* on the dApp, no
-navigation, no popup:
+navigation, no popup. As shipped:
 
-1. Publish `https://domovina.ai/.well-known/webauthn` →
-   `{ "origins": ["https://pinka.io", "https://<other-tenants>"] }` (served as JSON,
-   no creds; browser counts **unique eTLD+1 labels**, max **5**).
-2. On the dApp, behind the branded "Poveži" button (a host-page gesture →
-   chooser renders correctly because it's **top-level, not an iframe**), call
-   `navigator.credentials.get({ publicKey: { rpId: 'domovina.ai', ... } })`, gated on
-   `PublicKeyCredential.getClientCapabilities().relatedOrigins === true`.
-3. Resolve the `credentialId` → wallet via the public registry (`mpt.domovina.ai`),
-   cache, done. **Fall back to the full-page redirect** when RoR is unsupported.
+1. `https://domovina.ai/.well-known/webauthn` lists the tenant origins incl.
+   `https://pinka.io` (served as JSON; browser counts **unique eTLD+1 labels**, max
+   **5** — current list = 3 labels: `domovina`, `pinka`, `pinka-app`).
+2. On the dApp, behind the branded "Poveži" button (host-page gesture → chooser
+   renders correctly because it's **top-level, not an iframe**), the SDK calls
+   `navigator.credentials.get({ publicKey: { rpId: 'domovina.ai', … } })`
+   synchronously (no awaits before it — activation preserved via `preloadWallet()`).
+   We try optimistically rather than gating on `getClientCapabilities().relatedOrigins`
+   (awaiting it risks the activation; an unsupported browser rejects fast → redirect).
+3. Resolve `credentialId` → wallet via the public registry (`mpt.domovina.ai`,
+   CORS-open to `pinka.io`), cache in first-party storage, done. **Falls back to the
+   full-page redirect** on any gap.
 
 Browser support: Chrome/Edge **128+** (Aug 2024), Safari **18+** (Sep 2024), Firefox
-**152** (May 2026). Pre-152 Firefox / old Safari → redirect fallback. The verifier
-must accept `origin = https://pinka.io` while requiring `rpIdHash = SHA-256("domovina.ai")`.
+**152** (May 2026). Pre-152 Firefox / old Safari → redirect fallback. A backend
+verifier (when signing) must accept `origin = https://pinka.io` while requiring
+`rpIdHash = SHA-256("domovina.ai")`.
 
-> Note: an early version of the SDK did "RoR-first" but fired it on page-load with no
-> branding and chained provider choosers, then dead-ended in the iframe. The fix is
-> to gate RoR behind the **branded button tap** and fall back to **redirect** (not
-> iframe). That combination is the target end-state.
+> History: an early SDK did "RoR-first" but fired it on page-load with no branding,
+> chained provider choosers, then dead-ended in the iframe. The shipped fix gates RoR
+> behind the **branded button tap** and falls back to **redirect** (not iframe).
+> First-run friction: a brand-new user with no ecosystem passkey sees the native
+> chooser and must dismiss it before the redirect-to-create — acceptable and one-time
+> (the cache + the cross-tenant passkey discovery cover everyone else).
 
 ## Sources
 
