@@ -1,3 +1,4 @@
+import { useEffect, useRef } from 'react';
 import { useRegisterSW } from 'virtual:pwa-register/react';
 import { Sparkles, X } from 'lucide-react';
 import { Button, IconButton } from '../ui';
@@ -9,6 +10,13 @@ import { haptic } from '../lib/haptic';
 const UPDATE_POLL_INTERVAL_MS = 60_000;
 
 export function UpdateBanner() {
+  // Hold the poll timer so we can clear it on unmount — otherwise StrictMode /
+  // HMR re-registration leaves overlapping pollers hammering the CF Pages edge.
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  useEffect(() => () => {
+    if (pollRef.current) clearInterval(pollRef.current);
+  }, []);
+
   const {
     needRefresh: [needRefresh, setNeedRefresh],
     updateServiceWorker,
@@ -18,9 +26,10 @@ export function UpdateBanner() {
       // re-check on full navigations otherwise, and in standalone PWA mode
       // those happen approximately never.
       if (registration) {
-        setInterval(() => {
-          if (!(!registration.installing && navigator)) return;
-          if ('connection' in navigator && !(navigator as Navigator & { onLine: boolean }).onLine) return;
+        if (pollRef.current) clearInterval(pollRef.current);
+        pollRef.current = setInterval(() => {
+          if (registration.installing) return; // an update is already installing
+          if ('onLine' in navigator && !navigator.onLine) return;
           void registration.update();
         }, UPDATE_POLL_INTERVAL_MS);
       }

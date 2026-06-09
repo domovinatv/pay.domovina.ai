@@ -108,8 +108,19 @@ function loadRegistry(): WalletRegistry {
       localStorage.removeItem(STORAGE_KEY_V1);
     }
   }
+  // Guard the parse: a corrupt v2 blob (interrupted write, quota truncation,
+  // tampering) must NOT throw — loadRegistry runs in Landing's initial render,
+  // so an unguarded throw would brick the whole UI with no way back.
+  let reg: WalletRegistry = {};
   const raw = localStorage.getItem(STORAGE_KEY_V2);
-  const reg: WalletRegistry = raw ? (JSON.parse(raw) as WalletRegistry) : {};
+  if (raw) {
+    try {
+      reg = JSON.parse(raw) as WalletRegistry;
+    } catch {
+      console.warn('[passkey] corrupt v2 registry — treating as empty');
+      reg = {};
+    }
+  }
   const migrated = migrateRegistryShape(reg);
   if (migrated.changed) {
     localStorage.setItem(STORAGE_KEY_V2, JSON.stringify(migrated.reg));

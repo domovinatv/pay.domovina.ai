@@ -36,7 +36,12 @@ import {
 import { createBootstrapEoa, signAttach, submitBootstrapDeploy } from '../lib/bootstrap';
 import { bootstrapAccountView, setActiveAccountAddress } from '../lib/accounts';
 import { fetchEureBalances, formatEureShort } from '../lib/balances';
-import { lookupWallet, registerWalletWithBackend } from '../lib/registry';
+import {
+  lookupWallet,
+  lookupWalletStrict,
+  RegistryUnavailableError,
+  registerWalletWithBackend,
+} from '../lib/registry';
 import { brand } from '../app/brand';
 
 /** Above this count we surface a discouragement hint inline and gate
@@ -300,10 +305,11 @@ export function Landing() {
   async function enterByCredentialId(credentialId: string) {
     let record = lookupPasskey(credentialId);
     if (!record) {
-      const remote = await lookupWallet(credentialId);
+      // Strict lookup: a 404 means "no wallet" (→ UnusableWalletError → create),
+      // but a network/5xx throws RegistryUnavailableError so we DON'T tell a user
+      // with a real funded wallet to "create a new one" on a transient blip.
+      const remote = await lookupWalletStrict(credentialId);
       if (!remote) {
-        // Authenticated, but no wallet behind this passkey (orphan/test) → let the
-        // caller offer "create new" instead of surfacing a dead error.
         throw new UnusableWalletError('passkey maps to no usable wallet');
       }
       // pubKey + rpId come from the backend registry — without them Send would
@@ -345,6 +351,13 @@ export function Landing() {
         setStage({ kind: 'unusable-passkey' });
         return;
       }
+      if (e instanceof RegistryUnavailableError) {
+        setStage({
+          kind: 'error',
+          message: 'Ne mogu dohvatiti tvoj novčanik (mreža ili server). Pokušaj ponovno.',
+        });
+        return;
+      }
       setStage({ kind: 'error', message: humanizeError(e, 'passkey') });
     }
   }
@@ -360,6 +373,13 @@ export function Landing() {
       haptic('error');
       if (e instanceof UnusableWalletError) {
         setStage({ kind: 'unusable-passkey' });
+        return;
+      }
+      if (e instanceof RegistryUnavailableError) {
+        setStage({
+          kind: 'error',
+          message: 'Ne mogu dohvatiti tvoj novčanik (mreža ili server). Pokušaj ponovno.',
+        });
         return;
       }
       setStage({ kind: 'error', message: humanizeError(e, 'passkey') });

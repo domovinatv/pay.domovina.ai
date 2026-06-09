@@ -11,8 +11,6 @@ import { ExpandAccess } from './routes/ExpandAccess';
 import { Settings } from './routes/Settings';
 import { UiPreview } from './routes/UiPreview';
 import { Embed } from './routes/Embed';
-import { Link } from './routes/Link';
-import { LinkCallback } from './routes/LinkCallback';
 import { Recover } from './routes/Recover';
 import { BuildInfoFooter } from './components/BuildInfoFooter';
 
@@ -28,17 +26,6 @@ export function App() {
           dApps; runs the wallet under our origin so the user's existing
           passkey + Safe registry remain native. See /sdk.js + Embed.tsx. */}
       <Route path="/embed" component={Embed} />
-
-      {/* Cross-TLD linking flow.
-          - /link is the master's authorize page; a tenant iframes here or
-            redirects here, and we sign addOwnerWithThreshold on one of the
-            user's Safes. Accessible without an active wallet because the
-            visitor may be coming from a fresh tab.
-          - /link-callback is the tenant's return target after the Safari
-            redirect path. Pulls the pending passkey from sessionStorage
-            and finalizes the local PasskeyRecord. */}
-      <Route path="/link" component={Link} />
-      <Route path="/link-callback" component={LinkCallback} />
 
       {/* Fund recovery for counterfactual passkey-owned Safes (e.g. pinka
           campaign Safes). No active wallet needed — identifies the controlling

@@ -86,13 +86,14 @@ export function Send() {
   const hasBalance = numericBalance !== null && isFinite(numericBalance) && numericBalance > 0;
 
   function fillMaxAmount() {
-    if (!hasBalance || numericBalance === null) return;
-    // Use the canonical decimal form (no thousands grouping) and swap dot →
-    // comma so the input renders in hr-locale form the user is typing in.
-    // Trim trailing zeros for sub-1 amounts so "0,5" reads naturally instead
-    // of "0,500000000000000000".
-    const raw = numericBalance.toString();
-    setAmount(raw.replace('.', ','));
+    if (balance === null) return;
+    // Use the EXACT formatUnits decimal string (NOT Number(balance), whose float
+    // round-trip can round Max ABOVE the real balance → guaranteed revert). Trim
+    // trailing zeros so "0,5" reads naturally instead of "0,500000000000000000".
+    let max = balance;
+    if (max.includes('.')) max = max.replace(/0+$/, '').replace(/\.$/, '');
+    if (max === '' || max === '0') return;
+    setAmount(max.replace('.', ','));
     haptic('tap');
   }
 
@@ -177,14 +178,40 @@ export function Send() {
   // Treat unknown (status not yet loaded) as remaining > 0 so we never block
   // a user before we even know the real count. Server enforces the hard limit.
   const quotaExhausted = relayStatus !== null && relayStatus.remaining === 0;
-  const valid = isAddress(to) && parsedAmount.ok && !quotaExhausted;
-  const amountErrorMsg = amountShowsError
-    ? parsedAmount.ok
-      ? undefined
-      : parsedAmount.reason === 'zero'
+
+  // Insufficient-balance + self-send guards (bigint, no float). Without these a
+  // user can burn a Face ID ceremony + a free relay slot on a doomed transfer.
+  const overBalance =
+    parsedAmount.ok && balance !== null
+      ? (() => {
+          try {
+            return parseUnits(parsedAmount.normalized, EURE_DECIMALS) > parseUnits(balance, EURE_DECIMALS);
+          } catch {
+            return false;
+          }
+        })()
+      : false;
+  const isSelfSend = isAddress(to) && !!safeAddress && to.toLowerCase() === safeAddress.toLowerCase();
+
+  const valid =
+    isAddress(to) && parsedAmount.ok && !quotaExhausted && !overBalance && !isSelfSend;
+
+  let amountErrorMsg: string | undefined;
+  if (amountShowsError && !parsedAmount.ok) {
+    amountErrorMsg =
+      parsedAmount.reason === 'zero'
         ? 'Iznos mora biti veći od 0'
-        : 'Iznos nije valjan broj'
-    : undefined;
+        : parsedAmount.reason === 'decimals'
+          ? 'Najviše 18 decimala'
+          : 'Iznos nije valjan broj';
+  } else if (overBalance) {
+    amountErrorMsg = 'Nedovoljno stanje';
+  }
+  const recipientErrorMsg = !addressLooksValid
+    ? 'Adresa nije valjana'
+    : isSelfSend
+      ? 'To je tvoja vlastita adresa'
+      : undefined;
 
   async function paste() {
     try {
@@ -334,13 +361,13 @@ export function Send() {
           <Field
             label="Primatelj"
             hint="Gnosis Chain · EVM adresa"
-            error={!addressLooksValid ? 'Adresa nije valjana' : undefined}
+            error={recipientErrorMsg}
           >
             {() => (
               <AddressInput
                 value={to}
                 onChange={(e) => setTo(e.target.value)}
-                invalid={!addressLooksValid}
+                invalid={!addressLooksValid || isSelfSend}
                 trailing={
                   <div className="flex gap-0.5">
                     <IconButton

@@ -8,9 +8,12 @@
 
 export type AmountParse =
   | { ok: true; normalized: string; numeric: number }
-  | { ok: false; reason: 'empty' | 'invalid' | 'zero' };
+  | { ok: false; reason: 'empty' | 'invalid' | 'zero' | 'decimals' };
 
-export function parseAmount(raw: string): AmountParse {
+// EURe has 18 decimals; more than that would make parseUnits throw downstream.
+const DEFAULT_MAX_DECIMALS = 18;
+
+export function parseAmount(raw: string, maxDecimals = DEFAULT_MAX_DECIMALS): AmountParse {
   const trimmed = raw.trim();
   if (trimmed.length === 0) return { ok: false, reason: 'empty' };
 
@@ -25,6 +28,11 @@ export function parseAmount(raw: string): AmountParse {
 
   // Must be: digits, optional dot + digits.
   if (!/^\d+(\.\d+)?$/.test(cleaned)) return { ok: false, reason: 'invalid' };
+
+  // Bound fractional digits so parseUnits(normalized, 18) downstream can't throw
+  // a raw viem error the UI then leaks.
+  const frac = cleaned.split('.')[1];
+  if (frac && frac.length > maxDecimals) return { ok: false, reason: 'decimals' };
 
   const numeric = Number(cleaned);
   if (!isFinite(numeric)) return { ok: false, reason: 'invalid' };

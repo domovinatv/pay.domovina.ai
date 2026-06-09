@@ -35,11 +35,3 @@
 /embed
   Permissions-Policy: publickey-credentials-get=*, publickey-credentials-create=*
   Content-Security-Policy: frame-ancestors *
-
-# Cross-TLD linking authorize page. Tenants on any TLD embed this in an
-# iframe (Chrome/Firefox/Edge path) — same CSP + Permissions-Policy as
-# /embed so WebAuthn signing inside the iframe is allowed. Safari users
-# hit this via top-level redirect; same headers do not hurt that path.
-/link
-  Permissions-Policy: publickey-credentials-get=*, publickey-credentials-create=*
-  Content-Security-Policy: frame-ancestors *

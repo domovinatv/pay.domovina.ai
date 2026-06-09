@@ -1,33 +1,24 @@
 /**
- * DOMOVINA Wallet SDK — embedded-iframe bridge.
+ * DOMOVINA Wallet SDK — host-page bridge for tenant dApps.
  *
  * Usage in any third-party page:
  *   <script src="https://wallet.domovina.ai/sdk.js"></script>
  *   <script>
- *     const result = await Domovina.connect();
- *     console.log(result.safeAddress);
+ *     const { safeAddress, signerAddress } = await Domovina.connect();
  *     const { txHash } = await Domovina.send({ to: '0x...', amount: '1.50' });
  *   </script>
  *
- * Architecture: a hidden iframe pointing at https://wallet.domovina.ai/embed
- * runs the wallet code under its own origin (so the user's existing passkey +
- * Safe registry are surfaced natively). Commands flow via postMessage and the
- * iframe shows itself fullscreen for any step that needs user attention
- * (passkey prompts, Send confirmation).
+ * connect() is a DETERMINISTIC full-page handoff (like "Sign in with …"): the
+ * passkey ceremony runs FIRST-PARTY on wallet.domovina.ai, which presents a
+ * curated chooser it controls (a dApp page can't filter the OS passkey picker),
+ * then redirects back with the identity in the URL. The identity is cached in the
+ * host's first-party localStorage so repeat connects are instant. See
+ * docs/cross-origin-wallet-connect.md.
  *
- * connect() is iframe-first and BRANDED-first: the wallet's own embed UI (under
- * wallet.domovina.ai) decides what to show. If a wallet already exists it
- * resolves silently; otherwise it surfaces a DOMOVINA-branded sheet and the
- * passkey ceremony only fires AFTER the user taps "Imam novčanik" — so the OS
- * passkey chooser never appears before any context. "Kreiraj novčanik" redirects
- * the top window to wallet.domovina.ai and returns here with the wallet identity
- * in the URL (consumed transparently by connect() on the way back).
- *
- * Why not RoR-first: running the native passkey ceremony on the host page summons
- * the OS/extension credential chooser (LastPass, Apple Passwords, …) with zero
- * DOMOVINA framing and, with empty allowCredentials, chains every provider in
- * turn. Gating WebAuthn behind the branded sheet fixes that.
- * send() always uses the iframe (signing needs the wallet's viem/Safe code).
+ * send() is the ONLY thing that still uses the iframe at /embed: signing needs the
+ * wallet's viem/Safe code, and the iframe runs it under the wallet origin. The
+ * connected identity (incl. credentialId) is passed into the send command so the
+ * iframe signs from the SAME wallet the host connected — not a divergent local one.
  */
 (function () {
   if (window.Domovina) return; // already loaded
@@ -41,30 +32,7 @@
   let nextId = 1;
   const pending = new Map();
   const queue = [];
-  // When the host calls mount(el), the iframe lives INLINE inside `el` (in the
-  // page flow, below the connect button) instead of a fixed fullscreen overlay,
-  // and its height tracks the embed's content via __domovina_resize__.
-  /** @type {HTMLElement | null} */
-  let inlineContainer = null;
-  let inlineMode = false;
-  // While a passkey ceremony runs, an inline embed temporarily goes fullscreen so
-  // the OS/extension credential UI (LastPass, Apple/Google) — which a password
-  // manager extension injects INSIDE our iframe — isn't clipped by the short
-  // inline panel. `expanded` suppresses resize handling during that window.
-  let expanded = false;
-  let lastInlineHeight = 0;
 
-  const INLINE_STYLE = [
-    'display:none',
-    'width:100%',
-    'height:0',
-    'border:0',
-    'margin:0',
-    'padding:0',
-    'overflow:hidden',
-    'background:transparent',
-    'color-scheme:light dark',
-  ].join(';');
   const FULLSCREEN_STYLE = [
     'position:fixed',
     'inset:0',
@@ -78,26 +46,18 @@
     'background:transparent',
     'color-scheme:light dark',
   ].join(';');
-  // Same as fullscreen but shown — used to temporarily un-clip an inline embed
-  // during a passkey ceremony (the provider UI renders inside the iframe).
-  const EXPAND_STYLE = FULLSCREEN_STYLE.replace('display:none', 'display:block');
 
   function ensureIframe() {
     if (iframe) return iframe;
-    inlineMode = !!inlineContainer;
     iframe = document.createElement('iframe');
-    // ?inline=1 tells the embed to render as an integrated panel (no dark
-    // backdrop / fullscreen centering) and to report its content height.
-    iframe.src = WALLET_ORIGIN + EMBED_PATH + (inlineMode ? '?inline=1' : '');
+    iframe.src = WALLET_ORIGIN + EMBED_PATH;
     iframe.title = 'DOMOVINA Wallet';
-    // WebAuthn inside iframe requires explicit permission delegation. Without
-    // this, navigator.credentials.{create,get} inside the iframe throws
-    // NotAllowedError on most browsers.
-    iframe.allow = 'publickey-credentials-get *; publickey-credentials-create *; clipboard-read *; clipboard-write *';
+    // WebAuthn inside an iframe requires explicit permission delegation.
+    iframe.allow =
+      'publickey-credentials-get *; publickey-credentials-create *; clipboard-read *; clipboard-write *';
     iframe.setAttribute('aria-hidden', 'true');
-    iframe.style.cssText = inlineMode ? INLINE_STYLE : FULLSCREEN_STYLE;
-    (inlineMode ? inlineContainer : document.body).appendChild(iframe);
-
+    iframe.style.cssText = FULLSCREEN_STYLE;
+    document.body.appendChild(iframe);
     window.addEventListener('message', onMessage);
     return iframe;
   }
@@ -120,39 +80,7 @@
     }
     if (data.type === '__domovina_hide__') {
       iframe.style.display = 'none';
-      if (inlineMode) iframe.style.height = '0';
       iframe.setAttribute('aria-hidden', 'true');
-      return;
-    }
-    // Inline auto-resize: the embed reports its content height so the iframe is
-    // exactly as tall as the panel — no inner scrollbars, no clipped content.
-    if (data.type === '__domovina_resize__' && inlineMode && typeof data.height === 'number') {
-      // Ignore resizes while expanded — the ceremony layout is full-viewport and
-      // would otherwise be remembered as the collapsed panel height.
-      if (!expanded) {
-        lastInlineHeight = Math.max(0, Math.ceil(data.height));
-        iframe.style.height = lastInlineHeight + 'px';
-      }
-      return;
-    }
-    // Temporarily expand an inline embed to fullscreen for a passkey ceremony,
-    // then collapse back so the provider chooser isn't clipped by the panel.
-    if (data.type === '__domovina_fullscreen__' && inlineMode) {
-      expanded = !!data.on;
-      if (expanded) {
-        iframe.style.cssText = EXPAND_STYLE;
-      } else {
-        iframe.style.cssText = INLINE_STYLE;
-        iframe.style.display = 'block';
-        iframe.style.height = lastInlineHeight + 'px';
-      }
-      return;
-    }
-    // The embed asks the host to navigate the TOP window (it can't cross-origin
-    // navigate the parent itself). Used by the "Kreiraj novčanik" branch, which
-    // sends the user to wallet.domovina.ai and returns with identity params.
-    if (data.type === '__domovina_redirect__' && typeof data.url === 'string') {
-      if (data.url.indexOf(WALLET_ORIGIN + '/') === 0) window.location.assign(data.url);
       return;
     }
     if (data.requestId && pending.has(data.requestId)) {
@@ -166,9 +94,7 @@
   function postCommand(cmd) {
     ensureIframe();
     const requestId = nextId++;
-    // returnUrl lets the embed build a "create wallet" redirect that comes back
-    // to exactly where the user started (consumed by consumeReturnParams below).
-    const message = { ...cmd, requestId, parentOrigin: location.origin, returnUrl: location.href };
+    const message = { ...cmd, requestId, parentOrigin: location.origin };
     return new Promise((resolve, reject) => {
       pending.set(requestId, { resolve, reject });
       const send = () => iframe.contentWindow.postMessage(message, WALLET_ORIGIN);
@@ -177,10 +103,17 @@
     });
   }
 
-  // On returning from a "Kreiraj novčanik" redirect, wallet.domovina.ai appends
-  // the new wallet identity to our URL. Read it, strip the params from the
-  // address bar (history.replaceState — no reload), and resolve connect() with
-  // it. Returns null when this isn't a return navigation.
+  function bufToHex(buf) {
+    const bytes = new Uint8Array(buf);
+    let hex = '';
+    for (let i = 0; i < bytes.length; i++) hex += bytes[i].toString(16).padStart(2, '0');
+    return hex;
+  }
+
+  // On returning from the wallet handoff, wallet.domovina.ai appends the wallet
+  // identity to our URL. Read it, CSRF-check the single-use state token, strip the
+  // params from the address bar (replaceState — no reload), and resolve connect()
+  // with it. Returns null when this isn't a valid return navigation.
   function consumeReturnParams() {
     try {
       const u = new URL(window.location.href);
@@ -188,13 +121,14 @@
       if (p.get('dw_return') !== '1') return null;
       const safeAddress = p.get('dw_safe');
       const signerAddress = p.get('dw_signer');
+      const credentialId = p.get('dw_cred');
       const state = p.get('dw_state');
       for (const k of ['dw_return', 'dw_safe', 'dw_signer', 'dw_cred', 'dw_state']) p.delete(k);
       const clean = u.pathname + (p.toString() ? '?' + p.toString() : '') + u.hash;
       window.history.replaceState(null, '', clean);
       // CSRF: the returned state must match the single-use token we generated
-      // before redirecting. A crafted return URL (attacker-chosen safe/signer)
-      // has no matching token → ignored. (Identity decides the campaign Safe owner.)
+      // before redirecting. A crafted return URL (attacker-chosen safe/signer) has
+      // no matching token → ignored. (Identity decides the campaign Safe owner.)
       let expected = null;
       try {
         expected = sessionStorage.getItem(STATE_KEY);
@@ -204,17 +138,10 @@
       }
       if (!expected || !state || state !== expected) return null;
       if (!safeAddress || !signerAddress) return null;
-      return { safeAddress, signerAddress };
+      return { safeAddress, signerAddress, credentialId: credentialId || null };
     } catch (_) {
       return null;
     }
-  }
-
-  function bufToHex(buf) {
-    const bytes = new Uint8Array(buf);
-    let hex = '';
-    for (let i = 0; i < bytes.length; i++) hex += bytes[i].toString(16).padStart(2, '0');
-    return hex;
   }
 
   // Single-use CSRF token for the redirect handoff (sessionStorage survives the
@@ -243,15 +170,19 @@
     window.location.assign(url);
   }
 
-  // The connected identity (safe + signer) is cached in the HOST page's
-  // first-party localStorage so repeat connects are instant — no iframe, no
-  // redirect, no re-prompt. Cleared via Domovina.disconnect().
+  // The connected identity (safe + signer + credentialId) is cached in the HOST
+  // page's first-party localStorage so repeat connects are instant and send() can
+  // sign from the right wallet. Cleared via Domovina.disconnect().
   const STORE_KEY = 'domovina_connected_v1';
   function storeIdentity(id) {
     try {
       localStorage.setItem(
         STORE_KEY,
-        JSON.stringify({ safeAddress: id.safeAddress, signerAddress: id.signerAddress }),
+        JSON.stringify({
+          safeAddress: id.safeAddress,
+          signerAddress: id.signerAddress,
+          credentialId: id.credentialId || null,
+        }),
       );
     } catch (_) {
       /* private mode / blocked storage — non-fatal, just no fast path */
@@ -261,7 +192,11 @@
     try {
       const v = JSON.parse(localStorage.getItem(STORE_KEY) || 'null');
       if (v && v.safeAddress && v.signerAddress) {
-        return { safeAddress: v.safeAddress, signerAddress: v.signerAddress };
+        return {
+          safeAddress: v.safeAddress,
+          signerAddress: v.signerAddress,
+          credentialId: v.credentialId || null,
+        };
       }
     } catch (_) {
       /* ignore */
@@ -270,40 +205,11 @@
   }
 
   const api = {
-    /** Mount the wallet iframe INLINE inside `container` (an HTMLElement in the
-     * host page, e.g. a div below the connect button) instead of the default
-     * fixed fullscreen overlay. The iframe renders as an integrated panel and
-     * auto-resizes to its content (no scrollbars). Call BEFORE connect(). Pass
-     * null to revert to fullscreen. Returns the API for chaining. */
-    mount(container) {
-      inlineContainer = container && container.nodeType === 1 ? container : null;
-      if (!iframe) {
-        ensureIframe(); // pre-create inline so it's ready when connect() runs
-      } else if (inlineContainer && iframe.parentElement !== inlineContainer) {
-        // Iframe already existed (e.g. created fullscreen) — re-home it inline.
-        inlineMode = true;
-        iframe.style.cssText = INLINE_STYLE;
-        inlineContainer.appendChild(iframe);
-      }
-      return api;
-    },
     /** Resolve the user's wallet identity.
-     *
-     * Best-practice cross-origin handoff (like "Sign in with …"): the passkey
-     * ceremony runs FIRST-PARTY on the full wallet.domovina.ai page, where the
-     * native/extension credential chooser displays reliably — unlike inside a
-     * cross-origin iframe (ITP/storage-partitioning + extensions break it).
-     *
-     * Resolution order:
      *  1. returning from the wallet (URL has dw_return, CSRF-checked) → cache + resolve;
      *  2. already connected on this host (cached) → resolve instantly, no prompt;
-     *  3. else DETERMINISTIC full-page redirect to the wallet, which presents a
-     *     CURATED chooser (known wallets from its registry + create + legacy) and
-     *     returns the identity. We deliberately do NOT run an in-page RoR get()
-     *     here: a dApp page cannot filter the OS passkey picker (a discoverable
-     *     get() lists ALL domovina.ai passkeys, incl. stale ones, with no RP
-     *     control), so the wallet — which can curate via its registry — owns that
-     *     UX. The cross-domain passkey is still SHARED (same wallet, chosen there).
+     *  3. else deterministic full-page redirect to the wallet's curated chooser,
+     *     which returns the identity via dw_* params.
      * Pass { force:true } to skip the cache and re-pick a wallet. */
     connect(opts) {
       const returned = consumeReturnParams();
@@ -326,16 +232,27 @@
         /* ignore */
       }
     },
-    /** Send EURe (or native xDAI in a future revision). Shows the iframe for
-     * the user to confirm the amount and authorize with Face ID. */
+    /** Send EURe. Shows the iframe for the user to confirm + authorize with Face
+     * ID. Signs from the connected wallet (credentialId from the connect cache) so
+     * it never diverges from the host's connected identity — call connect() first. */
     send({ to, amount }) {
       if (typeof to !== 'string' || typeof amount !== 'string') {
         return Promise.reject(new TypeError('Domovina.send: { to, amount } strings required'));
       }
-      return postCommand({ type: 'send', to, amount });
+      const id = loadStoredIdentity();
+      if (!id) {
+        return Promise.reject(new Error('DOMOVINA: not connected — call connect() first'));
+      }
+      return postCommand({
+        type: 'send',
+        to,
+        amount,
+        credentialId: id.credentialId,
+        safeAddress: id.safeAddress,
+      });
     },
     /** For diagnostics / debug. */
-    _version: '0.8.0',
+    _version: '0.9.0',
   };
 
   Object.defineProperty(window, 'Domovina', { value: api, writable: false });

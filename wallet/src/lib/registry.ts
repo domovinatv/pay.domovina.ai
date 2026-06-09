@@ -119,6 +119,28 @@ export async function lookupWallet(credentialId: string): Promise<WalletRegistry
   }
 }
 
+/** Thrown by lookupWalletStrict when the registry can't be reached (network or
+ * 5xx) — as opposed to a genuine 404. Lets callers avoid telling a user with a
+ * real (possibly funded) wallet that it "doesn't exist". */
+export class RegistryUnavailableError extends Error {}
+
+/** Like lookupWallet, but distinguishes a genuine 404 (→ null, "no wallet") from
+ * a transient failure (→ throws RegistryUnavailableError). Use on paths that
+ * would otherwise route the user to "create a new wallet" on a network blip. */
+export async function lookupWalletStrict(
+  credentialId: string,
+): Promise<WalletRegistryView | null> {
+  let res: Response;
+  try {
+    res = await fetch(`${PAYMENT_INTENT_API_BASE}/api/wallets/${encodeURIComponent(credentialId)}`);
+  } catch (e) {
+    throw new RegistryUnavailableError(String(e));
+  }
+  if (res.status === 404) return null;
+  if (!res.ok) throw new RegistryUnavailableError(`registry ${res.status}`);
+  return (await res.json()) as WalletRegistryView;
+}
+
 /** Submit an OTP verification id to bind a phone to an existing wallet record. */
 export async function bindPhone(
   credentialId: string,

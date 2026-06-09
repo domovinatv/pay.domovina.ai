@@ -1,50 +1,41 @@
 import { useEffect, useRef, useState } from 'react';
 import { parseUnits, encodeFunctionData, erc20Abi, isAddress, type Address } from 'viem';
-import { Fingerprint, KeyRound, Plus } from 'lucide-react';
+import { Fingerprint } from 'lucide-react';
 import { Button, Card } from '../ui';
 import {
   getActivePasskey,
-  listKnownPasskeys,
   lookupPasskey,
-  pickExistingPasskey,
   recordRpId,
-  savePasskey,
-  setActivePasskey,
   signWithPasskey,
   type PasskeyRecord,
 } from '../lib/passkey';
-import { lookupWallet } from '../lib/registry';
-import {
-  encodeWebAuthnSignature,
-  getSafeTxHash,
-} from '../lib/safe';
+import { lookupWalletStrict } from '../lib/registry';
+import { encodeWebAuthnSignature, getSafeTxHash } from '../lib/safe';
 import { relayTx } from '../lib/relay';
 import { EURE_ADDRESS, EURE_DECIMALS } from '../lib/constants';
 import { humanizeError } from '../lib/errors';
 import { haptic } from '../lib/haptic';
 
-type ConnectResult = {
-  safeAddress: string;
-  signerAddress: string;
-  credentialId: string;
-  keychainName?: string;
+// The /embed iframe is used ONLY for send() now — connect() is a deterministic
+// full-page redirect handled by the SDK (no iframe). The send command carries the
+// connected credentialId so we sign from the SAME wallet the host connected.
+
+type SendCmd = {
+  type: 'send';
+  requestId: number;
+  parentOrigin: string;
+  to: string;
+  amount: string;
+  credentialId?: string | null;
+  safeAddress?: string | null;
 };
+type Command = SendCmd;
 
-type SendResult = {
-  txHash: string;
-};
-
-type Command =
-  | { type: 'connect'; requestId: number; parentOrigin: string; returnUrl?: string }
-  | { type: 'send'; requestId: number; parentOrigin: string; to: string; amount: string };
-
-type ConnectCmd = Extract<Command, { type: 'connect' }>;
+type SendResult = { txHash: string };
 
 type Stage =
   | { kind: 'waiting' }
-  | { kind: 'choose'; cmd: ConnectCmd; error?: string }
-  | { kind: 'connecting' }
-  | { kind: 'send-confirm'; cmd: Extract<Command, { type: 'send' }>; to: Address; value: bigint }
+  | { kind: 'send-confirm'; cmd: SendCmd; to: Address; value: bigint; record: PasskeyRecord }
   | { kind: 'send-busy' }
   | { kind: 'success'; title: string; subtitle: string };
 
@@ -52,52 +43,16 @@ const READY_MESSAGE = { type: '__domovina_iframe_ready__' };
 const SHOW_MESSAGE = { type: '__domovina_show__' };
 const HIDE_MESSAGE = { type: '__domovina_hide__' };
 
-// Inline mode: the SDK loads /embed?inline=1 when the host mounted the iframe
-// in-page (below the connect button). We then render as an integrated panel
-// (no dark fullscreen backdrop) and report our content height so the iframe
-// auto-sizes — no inner scrollbars.
-const INLINE =
-  typeof window !== 'undefined' &&
-  new URLSearchParams(window.location.search).get('inline') === '1';
-
 export function Embed() {
   const parentOriginRef = useRef<string | null>(null);
-  const rootRef = useRef<HTMLDivElement | null>(null);
   const [stage, setStage] = useState<Stage>({ kind: 'waiting' });
-
-  // Inline panel setup: keep the embed page transparent (so the host bg shows
-  // through, seamless) and stream content height to the host iframe.
-  useEffect(() => {
-    if (!INLINE || !rootRef.current) return;
-    const el = rootRef.current;
-    const html = document.documentElement;
-    const body = document.body;
-    const prev = { html: html.style.background, body: body.style.background, margin: body.style.margin };
-    html.style.background = 'transparent';
-    body.style.background = 'transparent';
-    body.style.margin = '0';
-    const post = () =>
-      window.parent?.postMessage(
-        { type: '__domovina_resize__', height: el.getBoundingClientRect().height },
-        '*',
-      );
-    const ro = new ResizeObserver(post);
-    ro.observe(el);
-    post();
-    return () => {
-      ro.disconnect();
-      html.style.background = prev.html;
-      body.style.background = prev.body;
-      body.style.margin = prev.margin;
-    };
-  }, []);
 
   useEffect(() => {
     function onMessage(event: MessageEvent) {
       const data = event.data;
       if (!data || typeof data !== 'object') return;
       const cmd = data as Command;
-      if (!cmd.type || typeof cmd.requestId !== 'number') return;
+      if (cmd.type !== 'send' || typeof cmd.requestId !== 'number') return;
 
       // Capture parent origin on first command. Subsequent commands must match.
       if (parentOriginRef.current === null) {
@@ -129,175 +84,98 @@ export function Embed() {
   function hideIframe() {
     if (window.parent && window.parent !== window) window.parent.postMessage(HIDE_MESSAGE, '*');
   }
-  // Ask the host to (un)expand an inline embed to fullscreen. No-op when the
-  // embed is already fullscreen (the SDK guards on inline mode).
-  function setHostFullscreen(on: boolean) {
-    if (window.parent && window.parent !== window) {
-      window.parent.postMessage({ type: '__domovina_fullscreen__', on }, '*');
+
+  /// Resolve the signing record from the connected credentialId (threaded from
+  /// the host's connect cache): local registry first, else the backend registry
+  /// (works even when the iframe's storage is partitioned/empty). Falls back to
+  /// the iframe's own active passkey only when no credentialId was provided.
+  async function resolveSigningRecord(credentialId?: string | null): Promise<PasskeyRecord | null> {
+    if (credentialId) {
+      const local = lookupPasskey(credentialId);
+      if (local) return local;
+      try {
+        const remote = await lookupWalletStrict(credentialId);
+        if (remote) {
+          return {
+            credentialId,
+            pubKey: { x: remote.pub_key_x, y: remote.pub_key_y },
+            signerAddress: remote.signer_address,
+            safeAddress: remote.safe_address,
+            createdAt: remote.created_at,
+            rpId: remote.rp_id,
+          };
+        }
+      } catch {
+        /* registry unreachable — fall through to the local active passkey */
+      }
     }
+    return getActivePasskey();
   }
 
-  async function handleCommand(cmd: Command, parentOrigin: string) {
-    // Safari ITP partitions third-party iframe storage by default. Request
-    // first-party storage access on the first command so the wallet's
-    // existing localStorage (passkeys, recipients) is visible.
+  async function handleCommand(cmd: SendCmd, parentOrigin: string) {
+    // Safari ITP partitions third-party iframe storage; request first-party access
+    // so the wallet's localStorage (passkeys) is visible for the local fast path.
     try {
       if (
         typeof document.requestStorageAccess === 'function' &&
         typeof document.hasStorageAccess === 'function'
       ) {
         const has = await document.hasStorageAccess();
-        if (!has) {
-          // Must come from a user gesture on some browsers; here we attempt
-          // optimistically — if it fails the connect handler degrades to
-          // surfacing an explanatory error.
-          await document.requestStorageAccess().catch(() => undefined);
-        }
+        if (!has) await document.requestStorageAccess().catch(() => undefined);
       }
     } catch {
       /* non-fatal */
     }
 
-    if (cmd.type === 'connect') {
-      // Wallet already known on this device → resolve instantly, no prompt.
-      const active = getActivePasskey() ?? listKnownPasskeys()[0] ?? null;
-      if (active) {
-        resolveConnect(cmd as ConnectCmd, active);
-        return;
-      }
-      // Otherwise surface the branded sheet. WebAuthn (and any OS chooser) only
-      // fires after the user taps "Imam novčanik" — never before this point.
-      showIframe();
-      setStage({ kind: 'choose', cmd: cmd as ConnectCmd });
+    if (!isAddress(cmd.to)) {
+      postError(parentOrigin, cmd.requestId, 'Invalid recipient address');
+      return;
+    }
+    let value: bigint;
+    try {
+      value = parseUnits(cmd.amount.replace(',', '.'), EURE_DECIMALS);
+    } catch {
+      postError(parentOrigin, cmd.requestId, 'Invalid amount');
       return;
     }
 
-    if (cmd.type === 'send') {
-      if (!isAddress(cmd.to)) {
-        postError(parentOrigin, cmd.requestId, 'Invalid recipient address');
-        return;
-      }
-      let value: bigint;
-      try {
-        value = parseUnits(cmd.amount.replace(',', '.'), EURE_DECIMALS);
-      } catch {
-        postError(parentOrigin, cmd.requestId, 'Invalid amount');
-        return;
-      }
-      const active = getActivePasskey();
-      if (!active) {
-        postError(
-          parentOrigin,
-          cmd.requestId,
-          'Nema aktivnog walleta. Otvori https://wallet.domovina.ai i kreiraj ga.',
-        );
-        return;
-      }
-
-      // Surface the iframe with a confirm card. Face ID will only fire after
-      // the user clicks Confirm in-iframe so we have transient activation.
-      showIframe();
-      setStage({ kind: 'send-confirm', cmd, to: cmd.to as Address, value });
+    const record = await resolveSigningRecord(cmd.credentialId);
+    if (!record) {
+      postError(parentOrigin, cmd.requestId, 'Nije povezan novčanik. Poveži se ponovno.');
+      return;
     }
-  }
-
-  function resolveConnect(cmd: ConnectCmd, record: PasskeyRecord) {
-    const result: ConnectResult = {
-      safeAddress: record.safeAddress,
-      signerAddress: record.signerAddress,
-      credentialId: record.credentialId,
-      keychainName: record.keychainName,
-    };
-    postResult(cmd.parentOrigin, cmd.requestId, result);
-    hideIframe();
-    setStage({ kind: 'waiting' });
-  }
-
-  /// "Imam novčanik": discoverable passkey get under our RP (surfaces synced
-  /// iCloud/Google passkeys too), resolve to a wallet via the local registry or
-  /// the backend, persist it, and return. Fires only on the user's tap, so the
-  /// OS chooser now has DOMOVINA context. On cancel/failure we stay on the sheet.
-  async function chooseExisting(cmd: ConnectCmd) {
-    setStage({ kind: 'connecting' });
-    // Expand to fullscreen for the ceremony: the password-manager chooser
-    // (LastPass etc.) renders INSIDE this iframe, and a short inline panel would
-    // clip it so the user only sees its top and can't dismiss it.
-    setHostFullscreen(true);
-    try {
-      const { credentialId } = await pickExistingPasskey();
-      let record = lookupPasskey(credentialId);
-      if (!record) {
-        const remote = await lookupWallet(credentialId);
-        if (!remote) {
-          throw new Error(
-            'Ovaj passkey nije registriran. Kreiraj novčanik ili ga otvori na izvornom uređaju.',
-          );
-        }
-        record = {
-          credentialId,
-          pubKey: { x: remote.pub_key_x, y: remote.pub_key_y },
-          signerAddress: remote.signer_address,
-          safeAddress: remote.safe_address,
-          createdAt: remote.created_at,
-          rpId: remote.rp_id,
-        };
-        savePasskey(record); // also sets active
-      } else {
-        setActivePasskey(record.credentialId);
-      }
-      haptic('success');
-      setHostFullscreen(false);
-      resolveConnect(cmd, record);
-    } catch (e) {
-      haptic('error');
-      setHostFullscreen(false);
-      setStage({ kind: 'choose', cmd, error: humanizeError(e, 'passkey') });
+    // Defense: never sign from a Safe other than the one the host connected.
+    if (cmd.safeAddress && record.safeAddress.toLowerCase() !== cmd.safeAddress.toLowerCase()) {
+      postError(parentOrigin, cmd.requestId, 'Novčanik se ne podudara s povezanim.');
+      return;
     }
+
+    // Surface the iframe with a confirm card. Face ID fires only after the user
+    // taps Confirm in-iframe so we have transient activation.
+    showIframe();
+    setStage({ kind: 'send-confirm', cmd, to: cmd.to as Address, value, record });
   }
 
-  /// "Kreiraj novčanik": hand off to wallet.domovina.ai (full-page, first-party)
-  /// to create the passkey + Safe, then return to the host with the identity in
-  /// the URL. The host SDK navigates the top window (we can't cross-origin).
-  function chooseCreate(cmd: ConnectCmd) {
-    const ret = cmd.returnUrl ?? '';
-    const url = `${window.location.origin}/?dw_connect=1&dw_return=${encodeURIComponent(ret)}`;
-    if (window.parent && window.parent !== window) {
-      window.parent.postMessage({ type: '__domovina_redirect__', url }, cmd.parentOrigin);
-    }
-  }
-
-  function dismissConnect(cmd: ConnectCmd) {
-    postError(cmd.parentOrigin, cmd.requestId, 'Korisnik je odustao');
-    hideIframe();
-    setStage({ kind: 'waiting' });
-  }
-
-  async function confirmSend(cmd: Extract<Command, { type: 'send' }>, to: Address, value: bigint) {
-    const active = getActivePasskey();
-    if (!active) return;
+  async function confirmSend(cmd: SendCmd, to: Address, value: bigint, record: PasskeyRecord) {
     setStage({ kind: 'send-busy' });
     try {
-      const data = encodeFunctionData({
-        abi: erc20Abi,
-        functionName: 'transfer',
-        args: [to, value],
-      });
-      const { hash: safeTxHash } = await getSafeTxHash(active.safeAddress, {
+      const data = encodeFunctionData({ abi: erc20Abi, functionName: 'transfer', args: [to, value] });
+      const { hash: safeTxHash } = await getSafeTxHash(record.safeAddress, {
         to: EURE_ADDRESS,
         value: 0n,
         data,
       });
       const assertion = await signWithPasskey(
-        active.credentialId,
+        record.credentialId,
         hexToBytes(safeTxHash),
-        recordRpId(active),
+        recordRpId(record),
       );
-      const signature = encodeWebAuthnSignature({ ...assertion, signerAddress: active.signerAddress });
+      const signature = encodeWebAuthnSignature({ ...assertion, signerAddress: record.signerAddress });
       const result = await relayTx({
-        safeAddress: active.safeAddress,
-        signerAddress: active.signerAddress,
-        pubKeyX: active.pubKey.x,
-        pubKeyY: active.pubKey.y,
+        safeAddress: record.safeAddress,
+        signerAddress: record.signerAddress,
+        pubKeyX: record.pubKey.x,
+        pubKeyY: record.pubKey.y,
         to: EURE_ADDRESS,
         value: '0',
         data,
@@ -311,7 +189,7 @@ export function Embed() {
       setStage({
         kind: 'success',
         title: 'Poslano ✓',
-        subtitle: `Transakcija je predana na Gnosis Chain. Možeš zatvoriti ovaj prozor.`,
+        subtitle: 'Transakcija je predana na Gnosis Chain. Možeš zatvoriti ovaj prozor.',
       });
       setTimeout(() => {
         hideIframe();
@@ -321,11 +199,7 @@ export function Embed() {
       haptic('error');
       const msg = humanizeError(e, 'passkey');
       postError(cmd.parentOrigin, cmd.requestId, msg);
-      setStage({
-        kind: 'success',
-        title: 'Slanje neuspješno',
-        subtitle: msg,
-      });
+      setStage({ kind: 'success', title: 'Slanje neuspješno', subtitle: msg });
       setTimeout(() => {
         hideIframe();
         setStage({ kind: 'waiting' });
@@ -333,71 +207,17 @@ export function Embed() {
     }
   }
 
-  function dismissSend(cmd: Extract<Command, { type: 'send' }>) {
+  function dismissSend(cmd: SendCmd) {
     postError(cmd.parentOrigin, cmd.requestId, 'Korisnik je odustao');
     hideIframe();
     setStage({ kind: 'waiting' });
   }
 
-  // ── Render
+  // ── Render (fullscreen overlay; only shown while a send needs attention)
 
   return (
-    <div
-      ref={rootRef}
-      className={
-        INLINE
-          ? 'flex flex-col p-2'
-          : 'min-h-full flex flex-col items-center justify-center p-4 bg-black/40 backdrop-blur-sm'
-      }
-    >
+    <div className="min-h-full flex flex-col items-center justify-center p-4 bg-black/40 backdrop-blur-sm">
       {stage.kind === 'waiting' && null}
-
-      {stage.kind === 'choose' && (
-        <Card padding="md" className="max-w-sm w-full flex flex-col gap-4">
-          <div className="flex flex-col gap-1">
-            <h2 className="text-lg font-semibold text-ink-primary">Poveži DOMOVINA novčanik</h2>
-            <p className="text-sm text-ink-secondary">
-              Poveži se sa svojim novčanikom da nastaviš
-              {stage.cmd.parentOrigin
-                ? ` na ${hostnameFromOrigin(stage.cmd.parentOrigin)}`
-                : ''}
-              .
-            </p>
-          </div>
-          <div className="flex flex-col gap-2">
-            <Button onClick={() => chooseExisting(stage.cmd)} size="lg" block>
-              <KeyRound className="h-5 w-5" />
-              Imam novčanik
-            </Button>
-            <Button onClick={() => chooseCreate(stage.cmd)} variant="secondary" size="lg" block>
-              <Plus className="h-5 w-5" />
-              Kreiraj novčanik
-            </Button>
-          </div>
-          {stage.error && <p className="text-sm text-brand-red-500">{stage.error}</p>}
-          <Button onClick={() => dismissConnect(stage.cmd)} variant="ghost" size="md" block>
-            Odustani
-          </Button>
-        </Card>
-      )}
-
-      {stage.kind === 'connecting' && (
-        // During the ceremony the iframe is fullscreen; center the spinner with a
-        // light scrim so it reads as a modal auth moment (in inline mode only —
-        // fullscreen mode already centers via the root overlay).
-        <div
-          className={
-            INLINE
-              ? 'min-h-screen w-full flex items-center justify-center bg-black/30 backdrop-blur-sm'
-              : ''
-          }
-        >
-          <Card padding="md" className="max-w-sm w-full flex flex-col items-center gap-3">
-            <Fingerprint className="h-10 w-10 text-brand-navy-500 animate-pulse" />
-            <p className="text-sm text-ink-secondary text-center">Odaberi svoj passkey…</p>
-          </Card>
-        </div>
-      )}
 
       {stage.kind === 'send-confirm' && (
         <Card padding="md" className="max-w-sm w-full flex flex-col gap-4">
@@ -408,7 +228,11 @@ export function Embed() {
             <Row label="Aplikacija" value={hostnameFromOrigin(stage.cmd.parentOrigin)} />
           </div>
           <div className="flex flex-col gap-2 pt-2">
-            <Button onClick={() => confirmSend(stage.cmd, stage.to, stage.value)} size="lg" block>
+            <Button
+              onClick={() => confirmSend(stage.cmd, stage.to, stage.value, stage.record)}
+              size="lg"
+              block
+            >
               <Fingerprint className="h-5 w-5" />
               Potpiši Face ID-om
             </Button>

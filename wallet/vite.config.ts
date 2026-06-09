@@ -106,7 +106,14 @@ export default defineConfig({
         // hashed assets or well-known files. Without this, a request for a
         // just-deployed/renamed asset that misses the cache falls back to
         // index.html (text/html) and the browser rejects it with a MIME error.
-        navigateFallbackDenylist: [/^\/assets\//, /^\/\.well-known\//, /\.[a-z0-9]+$/i],
+        // Keep the index.html fallback OFF assets/well-known and known static
+        // file extensions only — NOT every dotted path (a route like /c/a.b must
+        // still fall back to index.html offline).
+        navigateFallbackDenylist: [
+          /^\/assets\//,
+          /^\/\.well-known\//,
+          /\.(?:js|css|png|jpg|jpeg|svg|ico|json|map|txt|woff2?|webmanifest)$/i,
+        ],
         runtimeCaching: [
           {
             urlPattern: /^https:\/\/pay\.domovina\.ai\/api\//,
