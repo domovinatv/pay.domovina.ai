@@ -11,5 +11,16 @@ id = "e2de780503fe47c4acf6c22fe1a70937"
 [vars]
 GNOSIS_RPC_URL = "https://rpc.gnosischain.com"
 
+# Abuse caps on the gas-sponsoring endpoints (/api/relay + /api/bootstrap-deploy).
+# Optional — code defaults to 25 / 1000 if unset. Raise/lower without a redeploy by
+# overriding in the CF Pages dashboard (Settings → Environment variables).
+#   RELAY_IP_DAILY_LIMIT      — max sponsored ops per source IP per UTC day (default 25)
+#   RELAY_GLOBAL_DAILY_LIMIT  — hard ceiling on TOTAL sponsored ops per UTC day (default 1000)
+# RELAY_IP_DAILY_LIMIT = "25"
+# RELAY_GLOBAL_DAILY_LIMIT = "1000"
+
 # Secrets (set via `wrangler pages secret put`):
 #   RELAYER_PRIVATE_KEY  — xDAI funding wallet that pays gas
+#   TURNSTILE_SECRET     — (optional) Cloudflare Turnstile secret; when set, /api/relay
+#                          + /api/bootstrap-deploy REQUIRE a valid turnstileToken.
+#                          Pair with the client VITE_TURNSTILE_SITE_KEY build var.

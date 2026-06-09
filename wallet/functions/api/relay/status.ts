@@ -7,11 +7,19 @@
 // Read-only; safe to call on every Send screen mount + on a 1-minute tick.
 
 import { isAddress } from 'viem';
-import { FREE_DAILY_LIMIT, readCount, signerDailyKey } from '../../_lib/limits';
+import {
+  FREE_DAILY_LIMIT,
+  abuseLimitsFromEnv,
+  globalDailyKey,
+  readCount,
+  signerDailyKey,
+} from '../../_lib/limits';
 import { json } from '../../_lib/http';
 
 type Env = {
   RELAY_KV: KVNamespace;
+  RELAY_IP_DAILY_LIMIT?: string;
+  RELAY_GLOBAL_DAILY_LIMIT?: string;
 };
 
 type StatusResponse = {
@@ -23,6 +31,8 @@ type StatusResponse = {
   resetsAt: string;
   /** Seconds until the reset. Negative is clamped to 0. */
   resetsInSec: number;
+  /** Shared daily gas budget across all signers/IPs (ops health; capped values). */
+  global: { used: number; remaining: number; limit: number };
 };
 
 export const onRequestGet: PagesFunction<Env> = async ({ request, env }) => {
@@ -33,8 +43,13 @@ export const onRequestGet: PagesFunction<Env> = async ({ request, env }) => {
   }
 
   const now = new Date();
-  const used = await readCount(env.RELAY_KV, signerDailyKey('relay', signerAddress));
+  const limits = abuseLimitsFromEnv(env);
+  const [used, globalUsedRaw] = await Promise.all([
+    readCount(env.RELAY_KV, signerDailyKey('relay', signerAddress)),
+    readCount(env.RELAY_KV, globalDailyKey()),
+  ]);
   const cappedUsed = Math.min(used, FREE_DAILY_LIMIT);
+  const globalUsed = Math.min(globalUsedRaw, limits.globalDaily);
 
   // Next UTC midnight.
   const tomorrow = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1));
@@ -47,6 +62,11 @@ export const onRequestGet: PagesFunction<Env> = async ({ request, env }) => {
     limit: FREE_DAILY_LIMIT,
     resetsAt: tomorrow.toISOString(),
     resetsInSec,
+    global: {
+      used: globalUsed,
+      remaining: Math.max(0, limits.globalDaily - globalUsed),
+      limit: limits.globalDaily,
+    },
   };
 
   return json(body, 200, NO_STORE);

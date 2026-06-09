@@ -17,7 +17,11 @@ import {
 import { isDeployed, loadRelayer } from '../_lib/relayer';
 import {
   FREE_DAILY_LIMIT,
+  abuseLimitsFromEnv,
+  bumpAbuse,
   bumpCount,
+  capExceeded,
+  readAbuseState,
   readCount,
   signerDailyKey,
 } from '../_lib/limits';
@@ -27,6 +31,8 @@ type Env = {
   RELAY_KV: KVNamespace;
   RELAYER_PRIVATE_KEY: string;
   GNOSIS_RPC_URL?: string;
+  RELAY_IP_DAILY_LIMIT?: string;
+  RELAY_GLOBAL_DAILY_LIMIT?: string;
 };
 
 type Body = {
@@ -156,6 +162,26 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
   const used = await readCount(env.RELAY_KV, rateKey);
   if (used >= FREE_DAILY_LIMIT) {
     return json({ ok: false, error: 'Daily limit reached', rateLimited: true }, 429);
+  }
+
+  // Abuse caps (per-IP + global gas budget) — the real backstop against drain via
+  // offline-forged signatures + signer rotation. Cheap KV reads, checked before any
+  // on-chain work; bumped only on a landed tx.
+  const ip = request.headers.get('cf-connecting-ip');
+  const abuse = await readAbuseState(env.RELAY_KV, ip, abuseLimitsFromEnv(env));
+  const cap = capExceeded(abuse);
+  if (cap) {
+    return json(
+      {
+        ok: false,
+        error:
+          cap === 'global'
+            ? 'Dnevni globalni limit besplatnog plina je dosegnut. Pokušaj ponovno sutra.'
+            : 'Previše zahtjeva s ove mreže danas. Pokušaj ponovno sutra.',
+        rateLimited: true,
+      },
+      429,
+    );
   }
 
   try {
@@ -308,7 +334,7 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
       // Should be unreachable — either hot or cold assigns it before we get here.
       return json({ ok: false, error: 'No transaction was submitted' }, 500);
     }
-    await bumpCount(env.RELAY_KV, rateKey, used);
+    await Promise.all([bumpCount(env.RELAY_KV, rateKey, used), bumpAbuse(env.RELAY_KV, abuse)]);
     return json({ ok: true, txHash, deployed });
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);

@@ -31,13 +31,24 @@ import {
   type PackedCall,
 } from '../_lib/safe';
 import { isDeployed, loadRelayer } from '../_lib/relayer';
-import { FREE_DAILY_LIMIT, bumpCount, readCount, signerDailyKey } from '../_lib/limits';
+import {
+  FREE_DAILY_LIMIT,
+  abuseLimitsFromEnv,
+  bumpAbuse,
+  bumpCount,
+  capExceeded,
+  readAbuseState,
+  readCount,
+  signerDailyKey,
+} from '../_lib/limits';
 import { json } from '../_lib/http';
 
 type Env = {
   RELAY_KV: KVNamespace;
   RELAYER_PRIVATE_KEY: string;
   GNOSIS_RPC_URL?: string;
+  RELAY_IP_DAILY_LIMIT?: string;
+  RELAY_GLOBAL_DAILY_LIMIT?: string;
 };
 
 type Body = {
@@ -125,6 +136,25 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
       return json({ ok: false, error: 'Daily limit reached', rateLimited: true }, 429);
     }
 
+    // Abuse caps (per-IP + global gas budget), shared with /api/relay so a script
+    // can't bypass them by alternating endpoints. Bumped only on a confirmed deploy.
+    const ip = request.headers.get('cf-connecting-ip');
+    const abuse = await readAbuseState(env.RELAY_KV, ip, abuseLimitsFromEnv(env));
+    const cap = capExceeded(abuse);
+    if (cap) {
+      return json(
+        {
+          ok: false,
+          error:
+            cap === 'global'
+              ? 'Dnevni globalni limit besplatnog plina je dosegnut. Pokušaj ponovno sutra.'
+              : 'Previše zahtjeva s ove mreže danas. Pokušaj ponovno sutra.',
+          rateLimited: true,
+        },
+        429,
+      );
+    }
+
     // Owner-management call, executed by the Safe on itself via execTransaction. Must
     // be byte-identical to the client's buildAttachCalldata so the EOA sig verifies.
     const attachData =
@@ -198,7 +228,7 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
       return json({ ok: false, error: 'Bootstrap deploy reverted on-chain', txHash }, 502);
     }
 
-    await bumpCount(env.RELAY_KV, rateKey, used);
+    await Promise.all([bumpCount(env.RELAY_KV, rateKey, used), bumpAbuse(env.RELAY_KV, abuse)]);
     return json({ ok: true, txHash });
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);

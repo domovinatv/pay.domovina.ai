@@ -42,3 +42,86 @@ export async function bumpCount(kv: KVNamespace, key: string, current: number): 
 export function signerDailyKey(prefix: string, signer: string, day = utcDay()): string {
   return `${prefix}:${signer.toLowerCase()}:${day}`;
 }
+
+// ── Abuse caps: the REAL backstop against relayer-gas drain ────────────────────
+//
+// The per-signer cap is trivially bypassed — an attacker can mint unlimited
+// secp256r1 keys offline (no real authenticator needed; the on-chain WebAuthn
+// signer verifies only the P-256 signature) and rotate signers to reset it. These
+// two caps bound the damage regardless of identity rotation:
+//   - per source IP  (one network can only burn so much sponsored gas / day)
+//   - global daily   (a hard ceiling on the relayer's total daily gas exposure)
+// Both are shared across /api/relay AND /api/bootstrap-deploy (one gas budget).
+// Turnstile (turnstile.ts) is the human-attestation layer on top.
+
+export type AbuseLimits = { ipDaily: number; globalDaily: number };
+
+/** Sane defaults if the env vars are unset/garbage. Tuned so a household behind one
+ * NAT IP can run a handful of wallets, while a script is throttled hard. */
+export const DEFAULT_ABUSE_LIMITS: AbuseLimits = { ipDaily: 25, globalDaily: 1000 };
+
+function posIntOr(raw: string | undefined, fallback: number): number {
+  const n = Number((raw ?? '').trim());
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : fallback;
+}
+
+/** Read the abuse caps from env (RELAY_IP_DAILY_LIMIT / RELAY_GLOBAL_DAILY_LIMIT),
+ * falling back to DEFAULT_ABUSE_LIMITS. */
+export function abuseLimitsFromEnv(env: {
+  RELAY_IP_DAILY_LIMIT?: string;
+  RELAY_GLOBAL_DAILY_LIMIT?: string;
+}): AbuseLimits {
+  return {
+    ipDaily: posIntOr(env.RELAY_IP_DAILY_LIMIT, DEFAULT_ABUSE_LIMITS.ipDaily),
+    globalDaily: posIntOr(env.RELAY_GLOBAL_DAILY_LIMIT, DEFAULT_ABUSE_LIMITS.globalDaily),
+  };
+}
+
+export function ipDailyKey(ip: string, day = utcDay()): string {
+  return `gas:ip:${ip}:${day}`;
+}
+export function globalDailyKey(day = utcDay()): string {
+  return `gas:global:${day}`;
+}
+
+export type AbuseState = {
+  /** Resolved client IP, or null when CF didn't supply one (per-IP check skipped). */
+  ip: string | null;
+  ipKey: string | null;
+  ipUsed: number;
+  globalKey: string;
+  globalUsed: number;
+  limits: AbuseLimits;
+};
+
+/** Snapshot the per-IP + global counters once, so the same numbers gate the request
+ * and (on success) get bumped. */
+export async function readAbuseState(
+  kv: KVNamespace,
+  ip: string | null,
+  limits: AbuseLimits,
+): Promise<AbuseState> {
+  const globalKey = globalDailyKey();
+  const ipKey = ip ? ipDailyKey(ip) : null;
+  const [globalUsed, ipUsed] = await Promise.all([
+    readCount(kv, globalKey),
+    ipKey ? readCount(kv, ipKey) : Promise.resolve(0),
+  ]);
+  return { ip, ipKey, ipUsed, globalKey, globalUsed, limits };
+}
+
+/** Which cap (if any) is already at/over its limit. Global is checked first because
+ * it protects the operator's wallet even when the IP is unknown. */
+export function capExceeded(s: AbuseState): 'global' | 'ip' | null {
+  if (s.globalUsed >= s.limits.globalDaily) return 'global';
+  if (s.ipKey && s.ipUsed >= s.limits.ipDaily) return 'ip';
+  return null;
+}
+
+/** Bump the global (and per-IP, when known) counters after a sponsored op lands. */
+export async function bumpAbuse(kv: KVNamespace, s: AbuseState): Promise<void> {
+  await Promise.all([
+    bumpCount(kv, s.globalKey, s.globalUsed),
+    s.ipKey ? bumpCount(kv, s.ipKey, s.ipUsed) : Promise.resolve(),
+  ]);
+}

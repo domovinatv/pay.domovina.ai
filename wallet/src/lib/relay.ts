@@ -61,6 +61,9 @@ export type RelayStatus = {
   resetsAt: string;
   /** Seconds remaining until reset. */
   resetsInSec: number;
+  /** Shared daily gas budget across all signers/IPs (ops health). Absent on older
+   * deployments of the status endpoint. */
+  global?: { used: number; remaining: number; limit: number };
 };
 
 /**
