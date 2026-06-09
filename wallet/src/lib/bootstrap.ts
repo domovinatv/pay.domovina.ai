@@ -27,6 +27,7 @@ import { encodeFunctionData, zeroAddress, type Address, type Hex } from 'viem';
 import { english, generateMnemonic, mnemonicToAccount } from 'viem/accounts';
 import { GNOSIS_CHAIN_ID } from './constants';
 import { predictSafeAddress, predictSignerAddress, SAFE_TX_TYPES } from './safe';
+import { getTurnstileToken } from './turnstile';
 import type { P256PublicKey } from './passkey';
 
 /** Safe owners are a linked list terminated by SENTINEL (0x..01). With a single
@@ -156,10 +157,11 @@ export async function submitBootstrapDeploy(req: {
 }): Promise<BootstrapDeployResponse> {
   let res: Response;
   try {
+    const turnstileToken = await getTurnstileToken();
     res = await fetch('/api/bootstrap-deploy', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(req),
+      body: JSON.stringify({ ...req, turnstileToken }),
     });
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : 'Network error' };

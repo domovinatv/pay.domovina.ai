@@ -1,4 +1,5 @@
 import type { Address, Hex } from 'viem';
+import { getTurnstileToken } from './turnstile';
 
 export type RelayRequest = {
   /** Safe (counterfactual or deployed) that will execute the user's tx. */
@@ -34,6 +35,9 @@ export type RelayRequest = {
    * (pinka / personal-default).
    */
   recoveryOwner?: Address;
+  /** Cloudflare Turnstile token. Injected by relayTx() itself (see getTurnstileToken)
+   * — callers don't supply it. Omitted when Turnstile isn't configured for the build. */
+  turnstileToken?: string;
 };
 
 export type RelayResponse =
@@ -41,10 +45,13 @@ export type RelayResponse =
   | { ok: false; error: string; rateLimited?: boolean };
 
 export async function relayTx(req: RelayRequest): Promise<RelayResponse> {
+  // Mint a fresh Turnstile token if the build is configured for it (no-op → undefined
+  // otherwise). Done here so every caller (Send, Embed, recover) is covered uniformly.
+  const turnstileToken = req.turnstileToken ?? (await getTurnstileToken());
   const res = await fetch('/api/relay', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(req),
+    body: JSON.stringify({ ...req, turnstileToken }),
   });
   if (res.status === 429) {
     return { ok: false, error: 'Daily free transaction limit reached', rateLimited: true };

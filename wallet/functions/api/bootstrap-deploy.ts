@@ -42,6 +42,7 @@ import {
   signerDailyKey,
 } from '../_lib/limits';
 import { json } from '../_lib/http';
+import { verifyTurnstile } from '../_lib/turnstile';
 
 type Env = {
   RELAY_KV: KVNamespace;
@@ -49,6 +50,7 @@ type Env = {
   GNOSIS_RPC_URL?: string;
   RELAY_IP_DAILY_LIMIT?: string;
   RELAY_GLOBAL_DAILY_LIMIT?: string;
+  TURNSTILE_SECRET?: string;
 };
 
 type Body = {
@@ -58,6 +60,8 @@ type Body = {
   pubKeyY: string;
   eoaSignature: string;
   mode: 'swap' | 'add';
+  /** Cloudflare Turnstile token; enforced only when TURNSTILE_SECRET is configured. */
+  turnstileToken?: string;
 };
 
 export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
@@ -154,6 +158,10 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
         429,
       );
     }
+
+    // Human-attestation (no-op unless TURNSTILE_SECRET is configured).
+    const ts = await verifyTurnstile(env, body.turnstileToken, ip);
+    if (!ts.ok) return json({ ok: false, error: ts.error }, 403);
 
     // Owner-management call, executed by the Safe on itself via execTransaction. Must
     // be byte-identical to the client's buildAttachCalldata so the EOA sig verifies.

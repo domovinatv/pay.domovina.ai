@@ -26,6 +26,7 @@ import {
   signerDailyKey,
 } from '../_lib/limits';
 import { json } from '../_lib/http';
+import { verifyTurnstile } from '../_lib/turnstile';
 
 type Env = {
   RELAY_KV: KVNamespace;
@@ -33,6 +34,7 @@ type Env = {
   GNOSIS_RPC_URL?: string;
   RELAY_IP_DAILY_LIMIT?: string;
   RELAY_GLOBAL_DAILY_LIMIT?: string;
+  TURNSTILE_SECRET?: string;
 };
 
 type Body = {
@@ -60,6 +62,9 @@ type Body = {
    * is rejected rather than stranding funds. Absent → single-owner Safe.
    */
   recoveryOwner?: string;
+  /** Cloudflare Turnstile token; required only when TURNSTILE_SECRET is configured
+   * server-side (otherwise ignored). Produced by src/lib/turnstile.ts. */
+  turnstileToken?: string;
 };
 
 const UINT256_MAX = (1n << 256n) - 1n;
@@ -183,6 +188,10 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
       429,
     );
   }
+
+  // Human-attestation (no-op unless TURNSTILE_SECRET is configured).
+  const ts = await verifyTurnstile(env, body.turnstileToken, ip);
+  if (!ts.ok) return json({ ok: false, error: ts.error }, 403);
 
   try {
     const relayer = loadRelayer(env.RELAYER_PRIVATE_KEY, env.GNOSIS_RPC_URL);

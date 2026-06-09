@@ -1,2 +1,12 @@
 RELAYER_PRIVATE_KEY=0x0000000000000000000000000000000000000000000000000000000000000000
 GNOSIS_RPC_URL=https://rpc.gnosischain.com
+
+# Abuse caps (optional — defaults 25 / 1000 if unset). See wrangler.toml.
+# RELAY_IP_DAILY_LIMIT=25
+# RELAY_GLOBAL_DAILY_LIMIT=1000
+
+# Cloudflare Turnstile (optional). Set BOTH to enforce human-attestation on the
+# gas-sponsoring endpoints. Server secret here; client site key is a Vite build var
+# (VITE_TURNSTILE_SITE_KEY in .env / the CF Pages build env). With either half unset
+# the feature is a no-op.
+# TURNSTILE_SECRET=0x0000000000000000000000000000000000000000
