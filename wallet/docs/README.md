@@ -20,6 +20,10 @@ Durable design knowledge for this repo. Read these before touching connect/onboa
 - **[relayer-architecture.md](./relayer-architecture.md)** — the shared `functions/_lib`
   module (single source of CREATE2 truth) and why drift strands funds; the hot-vs-cold
   send decision flow; request lifecycle; editing rules. Module + flow diagrams.
+- **[safe-upstream-reference.md](./safe-upstream-reference.md)** — the local sibling
+  clone of Safe's official `safe-wallet-monorepo` (app.safe.global + Safe Mobile) we
+  copy audited patterns from: where it lives, why a clone not a submodule, how to sync,
+  the copy-with-provenance workflow, and the GPL-3.0/trademark caveats.
 - **[STAGING.md](./STAGING.md)** — staging environment notes.
 
 Open follow-ups (backend/architectural) live in the agent memory `wallet-audit-followups`.
