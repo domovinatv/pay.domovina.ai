@@ -65,7 +65,7 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
   } catch {
     return json({ ok: false, error: 'Invalid JSON' }, 400);
   }
-  for (const k of ['safeAddress', 'signerAddress', 'to', 'data', 'signature']) {
+  for (const k of ['safeAddress', 'signerAddress', 'to', 'data', 'signature', 'value', 'pubKeyX', 'pubKeyY']) {
     if (typeof (body as Record<string, unknown>)[k] !== 'string') {
       return json({ ok: false, error: `Missing field: ${k}` }, 400);
     }
@@ -132,6 +132,25 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
     );
   }
 
+  // Parse the numeric fields up-front so a malformed value/pubkey fails as a clean
+  // 400 here rather than throwing as BigInt() deep inside the encode path (which
+  // would surface as an opaque "Submit failed" 500). All three must be uint256.
+  let value: bigint;
+  let pubKeyX: bigint;
+  let pubKeyY: bigint;
+  try {
+    value = BigInt(body.value);
+    pubKeyX = BigInt(body.pubKeyX);
+    pubKeyY = BigInt(body.pubKeyY);
+  } catch {
+    return json({ ok: false, error: 'Malformed numeric field (value/pubKeyX/pubKeyY)' }, 400);
+  }
+  for (const [name, n] of [['value', value], ['pubKeyX', pubKeyX], ['pubKeyY', pubKeyY]] as const) {
+    if (n < 0n || n > UINT256_MAX) {
+      return json({ ok: false, error: `${name} out of uint256 range` }, 400);
+    }
+  }
+
   // Rate limit: 5 free per (signerAddress, UTC day).
   const rateKey = signerDailyKey('relay', body.signerAddress);
   const used = await readCount(env.RELAY_KV, rateKey);
@@ -167,7 +186,7 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
       functionName: 'execTransaction',
       args: [
         body.to as Address,
-        BigInt(body.value),
+        value,
         body.data as Hex,
         0,
         0n,
@@ -196,7 +215,7 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
           data: encodeFunctionData({
             abi: SIGNER_FACTORY_ABI,
             functionName: 'createSigner',
-            args: [BigInt(body.pubKeyX), BigInt(body.pubKeyY), verifiers],
+            args: [pubKeyX, pubKeyY, verifiers],
           }),
         });
       }
