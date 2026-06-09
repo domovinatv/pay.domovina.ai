@@ -1,8 +1,12 @@
 # Cross-origin passkey-wallet connect — design, rationale & best practices
 
-**Status:** adopted & shipped in `sdk.js` **v0.7.0** — RoR-first in-page connect
-with full-page redirect fallback, and a CSRF `dw_state` token on the redirect
-handoff. (v0.6.0 was redirect-only.)
+**Status:** adopted & shipped in `sdk.js` **v0.8.0** — DETERMINISTIC full-page
+redirect connect (curated chooser on the wallet) + cached identity for instant
+repeat connects + CSRF `dw_state`. We tried RoR-first in-page (v0.7.0) and dropped
+it: a dApp page cannot filter the OS passkey picker, so an in-page discoverable
+get() shows ALL (incl. stale) passkeys uncurated. The wallet — which has the
+registry — owns that UX instead. RoR infra (`.well-known/webauthn`) remains as
+foundation but is not used for the connect ceremony.
 **Last researched:** 2026-06-09 (web research with citations, see Sources).
 **Applies to:** the DOMOVINA Wallet SDK (`public/sdk.js`, `/embed`, `Landing.tsx`)
 consumed by tenant dApps on other registrable domains (e.g. `pinka.io`).
@@ -89,29 +93,31 @@ the default and treats popup as a reluctant fallback. We chose **redirect** beca
 is the most robust across mobile/PWA and has no COOP/opener fragility; our connect is
 "step 1" so the page-reload cost is minimal.
 
-## What we ship (sdk.js v0.7.0)
+## What we ship (sdk.js v0.8.0)
 
 `Domovina.connect()`:
 1. **Returning** (`?dw_return=1`) → CSRF-check `dw_state` → cache identity + resolve.
 2. **Cached** on this host (first-party `localStorage` `domovina_connected_v1`) →
-   resolve instantly, no prompt.
-3. **RoR in-page** — `navigator.credentials.get({ rpId:'domovina.ai' })` run on the
-   host page from the connect-button gesture (top-level → native chooser renders
-   correctly; discovers any synced ecosystem passkey, incl. cross-tenant) →
-   `credentialId` → registry (`mpt.domovina.ai`) → cache + resolve. No navigation.
-4. **Fallback** (RoR unsupported / cancelled / no passkey / registry miss) →
-   full-page redirect to `wallet.domovina.ai/?dw_connect=1&dw_state=…&dw_return=<hostUrl>`;
-   the wallet runs the ceremony first-party (create **or** open existing), then
-   redirects back with `?dw_return=1&dw_state=…&dw_safe=&dw_signer=&dw_cred=`.
+   resolve instantly, no prompt. (After the first connect, no redirect ever again.)
+3. **Else → deterministic full-page redirect** to
+   `wallet.domovina.ai/?dw_connect=1&dw_state=…&dw_return=<hostUrl>`. The wallet runs
+   the ceremony FIRST-PARTY and — crucially — presents a **curated chooser** it can
+   control (known wallets from its local + backend registry; an explicit "Otvori
+   postojeći" get() only when needed; create; legacy migration), then redirects back
+   with `?dw_return=1&dw_state=…&dw_safe=&dw_signer=&dw_cred=`.
 
-To keep the click's user activation, the dApp calls `preloadWallet()` on mount
-(warms SDK + Safe-App probe) and `connect()` invokes `get()` synchronously (no
-awaits before the call). `Landing.tsx` returns the identity at every "wallet ready"
-exit (open known / open existing / after create), echoing `dw_state` back, with an
-**exact-origin allowlist** on `dw_return` (`*.domovina.ai`, `*.pinka.io`, localhost).
-The host SDK CSRF-checks `dw_state` (single-use, sessionStorage) and **strips the
-params via `history.replaceState`**. `Domovina.disconnect()` clears the cache (dApp
-surfaces "Promijeni novčanik"). The `/embed` iframe is retained only for `send()`.
+Why not an in-page RoR `get()` on the dApp (tried in v0.7.0, removed): **a discoverable
+get() shows the OS picker with ALL passkeys for the RP and the RP cannot filter it** —
+so on pinka.io it surfaced stale/test passkeys uncurated, with no way to hide them. The
+wallet can curate (it has the registry); the dApp cannot. The cross-domain passkey is
+still SHARED — same ecosystem wallet, just chosen on the wallet's page.
+
+`Landing.tsx` returns the identity at every "wallet ready" exit (open known / open
+existing / after create), echoing `dw_state` back, with an **exact-origin allowlist**
+on `dw_return` (`*.domovina.ai`, `*.pinka.io`, localhost). The host SDK CSRF-checks
+`dw_state` (single-use, sessionStorage) and **strips the params via
+`history.replaceState`**. `Domovina.disconnect()` clears the cache (dApp surfaces
+"Promijeni novčanik"). The `/embed` iframe is retained only for `send()`.
 
 ## Security hardening checklist (redirect-return handoff)
 
@@ -135,11 +141,17 @@ same-origin-allow-popups`; receiver checks `event.origin === 'https://wallet.dom
 exactly; send with an exact `targetOrigin` (never `'*'`); open the popup synchronously
 in the click (no `await` first); fall back to redirect on mobile/PWA/blocked.
 
-## Related Origin Requests (RoR) — SHIPPED (v0.7.0)
+## Related Origin Requests (RoR) — tried in-page (v0.7.0), then REMOVED for connect
 
-Because we **control both domains and they're same-org siblings**, RoR is the
-cleanest standards-based path — it runs the ceremony *in-page* on the dApp, no
-navigation, no popup. As shipped:
+We shipped RoR-in-page in v0.7.0 and removed it in v0.8.0. The fatal flaw for the
+connect UX: **a dApp's discoverable `get()` triggers the OS picker listing ALL
+passkeys for RP `domovina.ai`, and the RP cannot filter which ones show** (no
+`allowCredentials` to narrow to — the dApp has no local registry; that's the point of
+RoR). Result: stale/test passkeys appear uncurated on pinka.io with no way to hide
+them, and `get()` never offers "create". The wallet, via its registry, CAN curate —
+so connect goes there (deterministic redirect) instead. The RoR foundation below
+stays valid (and could power a future curated in-page flow), but is NOT on the connect
+path today. Reference (how it worked):
 
 1. `https://domovina.ai/.well-known/webauthn` lists the tenant origins incl.
    `https://pinka.io` (served as JSON; browser counts **unique eTLD+1 labels**, max
