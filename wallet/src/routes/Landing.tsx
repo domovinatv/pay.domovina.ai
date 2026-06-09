@@ -56,19 +56,13 @@ type Stage =
   | { kind: 'confirm-create-many'; existingCount: number }
   | { kind: 'confirm-archive'; record: PasskeyRecord }
   | { kind: 'naming' }
-  // Reached only when the get-first probe found NO passkey for this RP, yet the
-  // result is ambiguous (a dismissed probe is indistinguishable from "none
-  // exist"). We ask once more before minting, so we never silently create a
-  // second passkey for a user who already has one.
-  | { kind: 'confirm-create-fresh' }
-  // Probe (or a create that hit InvalidStateError) found an existing passkey on
-  // this device. We NEVER auto-enter it (it may be a broken/orphan one) — the
-  // user explicitly chooses: open it, or create a new wallet anyway.
+  // A create that hit InvalidStateError found an existing passkey on this device.
+  // We NEVER auto-enter it (it may be a broken/orphan one) — the user explicitly
+  // chooses: open it, or create a new wallet anyway.
   | { kind: 'found-existing'; credentialId?: string }
   // A chosen passkey authenticated but resolves to no usable wallet (no registry
   // entry / undeployed) — e.g. an orphaned test passkey. Guide to create.
   | { kind: 'unusable-passkey' }
-  | { kind: 'probing' }
   | { kind: 'creating' }
   | { kind: 'opening' }
   | { kind: 'created'; record: PasskeyRecord; recoverySeed?: string }
@@ -180,18 +174,14 @@ export function Landing() {
   }
 
   /**
-   * Get-first guard for the create flow (the fix for accidental duplicate
-   * "DOMOVINA Wallet" passkeys). The OLD bug: every create() minted a fresh
-   * random user.id, and Apple Passwords / Google PM dedupe on (rpId, user.id),
-   * NOT on the display name — so a second tap silently produced a second
-   * identical entry. Now:
-   *   - If we already know a passkey locally, skip straight to create() but pass
-   *     its credentialId as excludeCredentials → the authenticator throws
-   *     InvalidStateError instead of duplicating (safe; nothing overwritten).
-   *   - If the local registry is empty, the passkey may still exist synced via
-   *     iCloud/Google but uncached here (exactly how the dupes were born). PROBE
-   *     for it first; on a hit, load that identity and never create. On an
-   *     ambiguous miss (dismiss looks like absent), ask once more before minting.
+   * Create the identity passkey. Goes STRAIGHT to navigator.credentials.create()
+   * — NO get-first probe (a get() shows "Use a saved passkey" and never offers
+   * create, which trapped users). We pass excludeCredentials = locally-known creds
+   * so the authenticator REFUSES a same-device duplicate (InvalidStateError →
+   * found-existing). A random user.id per create is deliberate (a stable one would
+   * OVERWRITE the passkey → orphan the funded Safe). Cross-device/cleared-storage
+   * dedup is impossible without showing the picker, so that rarer case can still
+   * dup; "Otvori postojeći" / "Svejedno kreiraj novi" are the explicit paths.
    */
   async function confirmCreate() {
     haptic('tap');
@@ -453,14 +443,6 @@ export function Landing() {
           <ConfirmCreateView onCancel={resetToWelcome} onConfirm={confirmCreate} />
         )}
 
-        {stage.kind === 'confirm-create-fresh' && (
-          <ConfirmCreateFreshView
-            onCancel={resetToWelcome}
-            onCreate={() => runCreate([])}
-            onRetryExisting={() => openExisting()}
-          />
-        )}
-
         {stage.kind === 'found-existing' && (
           <FoundExistingView
             onOpen={
@@ -476,8 +458,6 @@ export function Landing() {
         {stage.kind === 'unusable-passkey' && (
           <UnusablePasskeyView onCreate={() => runCreate([])} onCancel={resetToWelcome} />
         )}
-
-        {stage.kind === 'probing' && <ProbingView />}
 
         {stage.kind === 'creating' && <CreatingView />}
 
@@ -1025,55 +1005,6 @@ function ProviderHintCard() {
  * dismissed the probe by accident). This is the guardrail against silently
  * minting a second "DOMOVINA Wallet".
  */
-function ConfirmCreateFreshView({
-  onCancel,
-  onCreate,
-  onRetryExisting,
-}: {
-  onCancel: () => void;
-  onCreate: () => void;
-  onRetryExisting: () => void;
-}) {
-  return (
-    <div className="flex flex-col gap-6 animate-route-enter">
-      <div className="text-center flex flex-col gap-2">
-        <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-surface-sunken text-brand-navy-500">
-          <Sparkles className="h-7 w-7" />
-        </div>
-        <h2 className="text-2xl font-semibold text-ink-primary">Kreiramo novi passkey?</h2>
-        <p className="text-sm text-ink-secondary max-w-sm mx-auto">
-          Nismo pronašli postojeći <span className="font-mono text-ink-secondary">domovina-wallet-v1</span>{' '}
-          passkey na ovom uređaju. Ako ga već imaš (npr. na drugom uređaju u istom
-          iCloud / Google računu), otvori ga — da ne dobiješ dva.
-        </p>
-      </div>
-
-      <div className="flex flex-col gap-2">
-        <Button onClick={onRetryExisting} size="xl" block>
-          <RefreshCw className="h-5 w-5" />
-          Otvori postojeći passkey
-        </Button>
-        <Button onClick={onCreate} variant="secondary" size="md" block>
-          <Plus className="h-4 w-4" />
-          Nemam ga — kreiraj novi
-        </Button>
-        <Button onClick={onCancel} variant="ghost" size="md" block>
-          Odustani
-        </Button>
-      </div>
-    </div>
-  );
-}
-
-function ProbingView() {
-  return (
-    <div className="flex flex-col items-center justify-center gap-4 py-12 animate-route-enter">
-      <RefreshCw className="h-8 w-8 text-ink-muted animate-spin" />
-      <p className="text-sm text-ink-secondary">Provjeravamo imaš li već passkey…</p>
-    </div>
-  );
-}
-
 function displayPasskeyLabel(record: PasskeyRecord): string {
   if (record.keychainName) return record.keychainName;
   if (record.nameSuffix) return `wa_${record.nameSuffix}`;

@@ -139,13 +139,20 @@ export function Embed() {
       return;
     }
 
+    // Require the host's connected Safe — the legit SDK always sends it. Without
+    // it we'd fall back to getActivePasskey() and could sign from a divergent
+    // wallet, so refuse rather than guess.
+    if (!cmd.safeAddress) {
+      postError(parentOrigin, cmd.requestId, 'Nije povezan novčanik. Poveži se ponovno.');
+      return;
+    }
     const record = await resolveSigningRecord(cmd.credentialId);
     if (!record) {
       postError(parentOrigin, cmd.requestId, 'Nije povezan novčanik. Poveži se ponovno.');
       return;
     }
     // Defense: never sign from a Safe other than the one the host connected.
-    if (cmd.safeAddress && record.safeAddress.toLowerCase() !== cmd.safeAddress.toLowerCase()) {
+    if (record.safeAddress.toLowerCase() !== cmd.safeAddress.toLowerCase()) {
       postError(parentOrigin, cmd.requestId, 'Novčanik se ne podudara s povezanim.');
       return;
     }

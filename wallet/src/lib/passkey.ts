@@ -490,27 +490,6 @@ async function pickForRpId(rpId: string, label: string): Promise<string | null> 
  * case, callers pass { legacyOnly: true } to force the LEGACY_RP_ID picker
  * directly (wired to the "Stari wallet (prije svibnja 2026)" UI button).
  */
-/**
- * Get-first probe for the "create wallet" path. Runs a discoverable get() under
- * the current RP ID (then legacy) and returns the picked credentialId, or null
- * if the user dismisses or has no passkey for this RP. NEVER throws — the caller
- * branches on the result: a hit means "you already have an identity, load it,
- * don't create"; a miss means "ask once more, then create".
- *
- * This is the ONLY thing that catches the duplicate-creation footgun on a device
- * where the passkey is synced via iCloud/Google but localStorage was cleared
- * (so excludeCredentials would be empty). A null result is ambiguous (dismiss
- * vs genuinely-absent), so callers must confirm before creating, not create
- * silently — see Landing.confirmCreate. */
-export async function probeExistingPasskey(): Promise<string | null> {
-  const primary = await pickForRpId(RP_ID, 'probe-primary');
-  if (primary) return primary;
-  if (RP_ID !== LEGACY_RP_ID) {
-    const legacy = await pickForRpId(LEGACY_RP_ID, 'probe-legacy');
-    if (legacy) return legacy;
-  }
-  return null;
-}
 
 export async function pickExistingPasskey(
   opts: { legacyOnly?: boolean } = {},
