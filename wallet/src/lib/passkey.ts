@@ -366,43 +366,63 @@ export async function createPasskey(
   // is still distinguishable from other passkeys.
   const friendlyLabel = (label?.trim() || suggestPasskeyName()).slice(0, 64);
 
-  const { signal, id: __callId } = nextWebAuthnSignal('signWithPasskey/create/pick');
-  let cred: PublicKeyCredential | null;
-  try {
-    cred = (await navigator.credentials.create({
-      publicKey: {
-        rp: { id: RP_ID, name: brand.name },
-        user: { id: userId, name: friendlyLabel, displayName: friendlyLabel },
-        challenge,
-        pubKeyCredParams: [
-          { alg: -7, type: 'public-key' },   // ES256 — what we actually use
-          { alg: -257, type: 'public-key' }, // RS256 — listed only to silence Chromium warning
-        ],
-        // Already-known credentials for this identity → authenticator throws
-        // InvalidStateError rather than minting a duplicate. Empty for a fresh
-        // device (the get-first probe covers the synced-but-uncached case).
-        excludeCredentials,
-        authenticatorSelection: {
-          userVerification: 'required',
-          residentKey: 'required',
-          // Keep the passkey in the device's NATIVE synced store and drop
-          // USB/NFC security keys + the cross-device hybrid flow. NOTE: this
-          // does NOT exclude OS-registered third-party managers (1Password,
-          // LastPass) — they count as platform providers and WebAuthn gives the
-          // RP no way to filter them. Provider choice lives in OS settings; see
-          // passkeyProviderHint().
-          authenticatorAttachment: 'platform',
-        },
-        attestation: 'none',
-        timeout: 60_000,
+  const createOptions = {
+    publicKey: {
+      rp: { id: RP_ID, name: brand.name },
+      user: { id: userId, name: friendlyLabel, displayName: friendlyLabel },
+      challenge,
+      pubKeyCredParams: [
+        { alg: -7, type: 'public-key' as const },   // ES256 — what we actually use
+        { alg: -257, type: 'public-key' as const }, // RS256 — listed only to silence Chromium warning
+      ],
+      // Already-known credentials for this identity → authenticator throws
+      // InvalidStateError rather than minting a duplicate. Empty for a fresh
+      // device (the get-first probe covers the synced-but-uncached case).
+      excludeCredentials,
+      authenticatorSelection: {
+        userVerification: 'required' as const,
+        residentKey: 'required' as const,
+        // Keep the passkey in the device's NATIVE synced store and drop
+        // USB/NFC security keys + the cross-device hybrid flow. NOTE: this
+        // does NOT exclude OS-registered third-party managers (1Password,
+        // LastPass) — they count as platform providers and WebAuthn gives the
+        // RP no way to filter them. Provider choice lives in OS settings; see
+        // passkeyProviderHint().
+        authenticatorAttachment: 'platform' as const,
       },
-      signal,
-    })) as PublicKeyCredential | null;
-  } finally {
-    clearAbortIfCurrent(signal, __callId, 'WebAuthn op');
-  }
+      attestation: 'none' as const,
+      timeout: 60_000,
+    },
+  };
 
-  if (!cred) throw new Error('Passkey creation cancelled');
+  // Retry once on "A request is already pending" — a leftover ceremony (e.g. a
+  // just-dismissed probe, or a dual provider like LastPass+Apple Passwords) can
+  // briefly hold the WebAuthn slot. We abort the prior call and settle first.
+  let cred: PublicKeyCredential | null = null;
+  let lastErr: unknown = null;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const { signal, id: __callId } = nextWebAuthnSignal(`createPasskey attempt ${attempt + 1}`);
+    try {
+      cred = (await navigator.credentials.create({
+        ...createOptions,
+        signal,
+      })) as PublicKeyCredential | null;
+      break;
+    } catch (e) {
+      lastErr = e;
+      const msg = e instanceof Error ? e.message : String(e);
+      if (/already.*pending|pending/i.test(msg) && attempt === 0) {
+        clearAbortIfCurrent(signal, __callId, 'create retry');
+        await new Promise((r) => setTimeout(r, 450));
+        continue;
+      }
+      clearAbortIfCurrent(signal, __callId, 'create fail');
+      throw e;
+    } finally {
+      clearAbortIfCurrent(signal, __callId, 'WebAuthn op');
+    }
+  }
+  if (!cred) throw (lastErr instanceof Error ? lastErr : new Error('Passkey creation cancelled'));
 
   const data = await extractPasskeyData(cred);
   // protocol-kit returns rawId as plain lowercase hex without 0x prefix.

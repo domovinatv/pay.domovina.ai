@@ -57,11 +57,23 @@ type Stage =
   // exist"). We ask once more before minting, so we never silently create a
   // second passkey for a user who already has one.
   | { kind: 'confirm-create-fresh' }
+  // Probe (or a create that hit InvalidStateError) found an existing passkey on
+  // this device. We NEVER auto-enter it (it may be a broken/orphan one) — the
+  // user explicitly chooses: open it, or create a new wallet anyway.
+  | { kind: 'found-existing'; credentialId?: string }
+  // A chosen passkey authenticated but resolves to no usable wallet (no registry
+  // entry / undeployed) — e.g. an orphaned test passkey. Guide to create.
+  | { kind: 'unusable-passkey' }
   | { kind: 'probing' }
   | { kind: 'creating' }
   | { kind: 'opening' }
   | { kind: 'created'; record: PasskeyRecord; recoverySeed?: string }
   | { kind: 'error'; message: string };
+
+/** A passkey authenticated but maps to no usable wallet (no local record and no
+ * backend registry entry) — distinct from a generic failure so the UI can guide
+ * the user to create a fresh wallet instead of dead-ending on an error. */
+class UnusableWalletError extends Error {}
 
 /** Origins allowed to receive a connect-return redirect (wallet identity in the
  * URL). Conservative allowlist — prevents this page being used as an open
@@ -180,10 +192,16 @@ export function Landing() {
   async function confirmCreate() {
     haptic('tap');
     const known = listKnownPasskeys();
+    // Known locally → create straight away, excluding those creds so the
+    // authenticator won't mint a same-device duplicate. (Single ceremony — no
+    // probe→create race.)
     if (known.length > 0) {
       await runCreate(known.map((k) => k.credentialId));
       return;
     }
+    // Empty local registry: a passkey may still exist synced (iCloud/Google) or
+    // orphaned from earlier. Probe once — but NEVER auto-enter it. Let the user
+    // decide (open vs create new), so a broken/orphan passkey can't trap them.
     setStage({ kind: 'probing' });
     let found: string | null = null;
     try {
@@ -192,12 +210,7 @@ export function Landing() {
       found = null;
     }
     if (found) {
-      try {
-        await enterByCredentialId(found);
-      } catch (e) {
-        haptic('error');
-        setStage({ kind: 'error', message: humanizeError(e, 'passkey') });
-      }
+      setStage({ kind: 'found-existing', credentialId: found });
       return;
     }
     setStage({ kind: 'confirm-create-fresh' });
@@ -265,6 +278,13 @@ export function Landing() {
       setStage({ kind: 'created', record, recoverySeed: eoa.mnemonic });
     } catch (e) {
       haptic('error');
+      // InvalidStateError = the authenticator already holds a DOMOVINA passkey
+      // (an excluded cred, or a synced one). Don't dead-end — guide to open it.
+      const msg = e instanceof Error ? e.message : String(e);
+      if (/InvalidStateError|already.*(registered|exist)/i.test(msg)) {
+        setStage({ kind: 'found-existing' });
+        return;
+      }
       setStage({ kind: 'error', message: humanizeError(e, 'passkey') });
     }
   }
@@ -294,9 +314,9 @@ export function Landing() {
     if (!record) {
       const remote = await lookupWallet(credentialId);
       if (!remote) {
-        throw new Error(
-          'Ovaj passkey nije registriran ni lokalno ni na serveru. Otvori na izvornom uređaju ili kreiraj novi wallet.',
-        );
+        // Authenticated, but no wallet behind this passkey (orphan/test) → let the
+        // caller offer "create new" instead of surfacing a dead error.
+        throw new UnusableWalletError('passkey maps to no usable wallet');
       }
       // pubKey + rpId come from the backend registry — without them Send would
       // deploy the wrong signer (stub-0 guard in functions/api/relay.ts) and
@@ -333,6 +353,27 @@ export function Landing() {
       await enterByCredentialId(credentialId);
     } catch (e) {
       haptic('error');
+      if (e instanceof UnusableWalletError) {
+        setStage({ kind: 'unusable-passkey' });
+        return;
+      }
+      setStage({ kind: 'error', message: humanizeError(e, 'passkey') });
+    }
+  }
+
+  // From the "found existing" choice — open the specific probed credential, but
+  // route a broken/orphan one to the guided "create new" instead of an error.
+  async function openFoundExisting(credentialId: string) {
+    setStage({ kind: 'opening' });
+    haptic('tap');
+    try {
+      await enterByCredentialId(credentialId);
+    } catch (e) {
+      haptic('error');
+      if (e instanceof UnusableWalletError) {
+        setStage({ kind: 'unusable-passkey' });
+        return;
+      }
       setStage({ kind: 'error', message: humanizeError(e, 'passkey') });
     }
   }
@@ -412,6 +453,22 @@ export function Landing() {
           />
         )}
 
+        {stage.kind === 'found-existing' && (
+          <FoundExistingView
+            onOpen={
+              stage.credentialId
+                ? () => openFoundExisting(stage.credentialId as string)
+                : () => openExisting()
+            }
+            onCreateAnyway={() => runCreate(stage.credentialId ? [stage.credentialId] : [])}
+            onCancel={resetToWelcome}
+          />
+        )}
+
+        {stage.kind === 'unusable-passkey' && (
+          <UnusablePasskeyView onCreate={() => runCreate([])} onCancel={resetToWelcome} />
+        )}
+
         {stage.kind === 'probing' && <ProbingView />}
 
         {stage.kind === 'creating' && <CreatingView />}
@@ -462,6 +519,72 @@ async function healStubPubKey(record: PasskeyRecord): Promise<PasskeyRecord> {
     console.warn('[Landing] stub pubKey heal failed', e);
     return record;
   }
+}
+
+function FoundExistingView({
+  onOpen,
+  onCreateAnyway,
+  onCancel,
+}: {
+  onOpen: () => void;
+  onCreateAnyway: () => void;
+  onCancel: () => void;
+}) {
+  return (
+    <div className="flex flex-col gap-6 animate-route-enter">
+      <div className="text-center flex flex-col gap-2">
+        <KeyRound className="h-10 w-10 mx-auto text-brand-navy-500" />
+        <h2 className="text-2xl font-semibold text-ink-primary">Već postoji novčanik</h2>
+        <p className="text-ink-secondary">
+          Na ovom uređaju ili u tvom keychainu već postoji DOMOVINA novčanik. Otvori
+          postojeći — ili kreiraj novi.
+        </p>
+      </div>
+      <div className="flex flex-col gap-3">
+        <Button onClick={onOpen} size="xl" block>
+          <Fingerprint className="h-5 w-5" />
+          Otvori postojeći
+        </Button>
+        <Button onClick={onCreateAnyway} variant="secondary" size="lg" block>
+          <Plus className="h-5 w-5" />
+          Svejedno kreiraj novi
+        </Button>
+        <Button onClick={onCancel} variant="ghost" size="sm" block>
+          Natrag
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+function UnusablePasskeyView({
+  onCreate,
+  onCancel,
+}: {
+  onCreate: () => void;
+  onCancel: () => void;
+}) {
+  return (
+    <div className="flex flex-col gap-6 animate-route-enter">
+      <div className="text-center flex flex-col gap-2">
+        <ShieldAlert className="h-10 w-10 mx-auto text-brand-red-500" />
+        <h2 className="text-2xl font-semibold text-ink-primary">Novčanik nije postavljen</h2>
+        <p className="text-ink-secondary">
+          Passkey je prepoznat, ali iza njega nema ispravnog novčanika (vjerojatno stari
+          ili testni unos). Kreiraj novi da nastaviš.
+        </p>
+      </div>
+      <div className="flex flex-col gap-3">
+        <Button onClick={onCreate} size="xl" block>
+          <Plus className="h-5 w-5" />
+          Kreiraj novi novčanik
+        </Button>
+        <Button onClick={onCancel} variant="ghost" size="sm" block>
+          Natrag
+        </Button>
+      </div>
+    </div>
+  );
 }
 
 function WelcomeView({
