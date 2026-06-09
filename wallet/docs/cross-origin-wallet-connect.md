@@ -119,6 +119,67 @@ on `dw_return` (`*.domovina.ai`, `*.pinka.io`, localhost). The host SDK CSRF-che
 `history.replaceState`**. `Domovina.disconnect()` clears the cache (dApp surfaces
 "Promijeni novčanik"). The `/embed` iframe is retained only for `send()`.
 
+## Flow diagrams
+
+**Why deterministic redirect (the decision in one picture):**
+
+```mermaid
+flowchart TD
+  A["Need: a passkey wallet on wallet.domovina.ai,<br/>used by dApps on OTHER registrable domains"] --> B{"Where to run<br/>the WebAuthn ceremony?"}
+  B -->|"in a cross-origin iframe"| C["❌ BROKEN: storage partitioning hides the registry,<br/>password-manager chooser is clipped,<br/>user-activation can't relay via postMessage,<br/>Safari has no cross-origin create()"]
+  B -->|"in-page RoR get() on the dApp"| E["❌ A dApp CANNOT filter the OS passkey picker:<br/>a discoverable get() lists ALL domovina.ai passkeys<br/>(incl. stale ones) and never offers 'create'"]
+  B -->|"first-party, on the wallet"| F["✅ Deterministic full-page redirect →<br/>the wallet curates the choice via its registry"]
+  C --> X["rejected"]
+  E --> X
+  F --> G["SHIPPED (sdk.js): redirect + cached identity;<br/>send() threads credentialId so it signs from the same wallet"]
+```
+
+**connect() flow:**
+
+```mermaid
+sequenceDiagram
+  actor U as User
+  participant D as dApp (pinka.io)
+  participant SDK as Domovina SDK
+  participant W as wallet.domovina.ai
+  U->>D: tap "Poveži DOMOVINA wallet"
+  D->>SDK: connect()
+  alt returning from wallet (URL has dw_return)
+    SDK->>SDK: CSRF-check dw_state; read dw_safe/dw_signer/dw_cred
+    SDK-->>D: identity (cache + resolve)
+  else already connected (cached on this host)
+    SDK-->>D: identity (instant, no prompt)
+  else first connect
+    SDK->>W: redirect /?dw_connect=1&dw_state&dw_return=<dApp>
+    W->>U: curated chooser (known wallets / create / legacy)
+    U->>W: pick or create (native passkey, first-party)
+    W->>D: redirect back ?dw_return=1&dw_safe&dw_signer&dw_cred&dw_state
+    D->>SDK: connect() re-run on the dw_return mount effect
+    SDK-->>D: identity (cache + resolve)
+  end
+```
+
+**send() flow (the only thing that still uses the iframe):**
+
+```mermaid
+sequenceDiagram
+  participant D as dApp
+  participant SDK as Domovina SDK
+  participant IF as /embed iframe (wallet origin)
+  participant R as relay (mpt.domovina.ai)
+  D->>SDK: send({to, amount})
+  SDK->>SDK: loadStoredIdentity() — reject if not connected
+  SDK->>IF: postMessage {send, to, amount, credentialId, safeAddress}
+  IF->>IF: resolve record (local registry, else backend);<br/>refuse if record.safe ≠ cmd.safeAddress
+  IF->>D: show fullscreen confirm card
+  D->>IF: tap "Potpiši Face ID-om"
+  IF->>IF: WebAuthn get() (Face ID) → sign SafeTx
+  IF->>R: relayTx(signature)
+  R-->>IF: txHash
+  IF-->>SDK: txHash
+  SDK-->>D: { txHash }
+```
+
 ## Security hardening checklist (redirect-return handoff)
 
 Done: ✅ exact-origin allowlist on `dw_return`; ✅ `replaceState` scrub of the return
