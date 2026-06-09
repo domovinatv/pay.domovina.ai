@@ -190,14 +190,18 @@ export function Landing() {
    */
   async function confirmCreate() {
     haptic('tap');
-    // Create goes STRAIGHT to navigator.credentials.create() — NO get-first probe.
-    // A probe is a get() ceremony, and a get() only ever lists EXISTING passkeys
-    // and NEVER offers "create new" — that was the trap (Apple Passwords showing
-    // "Use a saved passkey", blocking a fresh domovina-wallet). We also pass NO
-    // excludeCredentials, so a device already holding (possibly broken/orphan)
-    // passkeys can't refuse the create with InvalidStateError. Reuse has its own
-    // explicit path ("Otvori postojeći"); duplicate wallets are benign (archivable).
-    await runCreate([]);
+    // Create goes STRAIGHT to navigator.credentials.create() — NO get-first probe
+    // (a probe is a get() ceremony that shows "Use a saved passkey" and never
+    // offers create). We DO pass excludeCredentials = locally-known creds so the
+    // authenticator REFUSES to mint a same-device DUPLICATE (InvalidStateError →
+    // runCreate routes to "found-existing" → Otvori / Svejedno kreiraj). This is
+    // what stops the "3× domovina-wallet-v1" proliferation: a fresh random user.id
+    // each create means Apple/iCloud won't dedupe on its own, and a STABLE user.id
+    // is unsafe (it would OVERWRITE the passkey → orphan the funded Safe). Cross-
+    // device/cleared-storage dedup isn't possible without a picker, so that rarer
+    // case can still dup; "Svejedno kreiraj novi" is the explicit no-excludes path.
+    const known = listKnownPasskeys();
+    await runCreate(known.map((k) => k.credentialId));
   }
 
   /**
