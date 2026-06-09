@@ -29,7 +29,6 @@ import {
   lookupPasskey,
   passkeyProviderHint,
   pickExistingPasskey,
-  probeExistingPasskey,
   savePasskey,
   setActivePasskey,
   type PasskeyRecord,
@@ -191,29 +190,14 @@ export function Landing() {
    */
   async function confirmCreate() {
     haptic('tap');
-    const known = listKnownPasskeys();
-    // Known locally → create straight away, excluding those creds so the
-    // authenticator won't mint a same-device duplicate. (Single ceremony — no
-    // probe→create race.)
-    if (known.length > 0) {
-      await runCreate(known.map((k) => k.credentialId));
-      return;
-    }
-    // Empty local registry: a passkey may still exist synced (iCloud/Google) or
-    // orphaned from earlier. Probe once — but NEVER auto-enter it. Let the user
-    // decide (open vs create new), so a broken/orphan passkey can't trap them.
-    setStage({ kind: 'probing' });
-    let found: string | null = null;
-    try {
-      found = await probeExistingPasskey();
-    } catch {
-      found = null;
-    }
-    if (found) {
-      setStage({ kind: 'found-existing', credentialId: found });
-      return;
-    }
-    setStage({ kind: 'confirm-create-fresh' });
+    // Create goes STRAIGHT to navigator.credentials.create() — NO get-first probe.
+    // A probe is a get() ceremony, and a get() only ever lists EXISTING passkeys
+    // and NEVER offers "create new" — that was the trap (Apple Passwords showing
+    // "Use a saved passkey", blocking a fresh domovina-wallet). We also pass NO
+    // excludeCredentials, so a device already holding (possibly broken/orphan)
+    // passkeys can't refuse the create with InvalidStateError. Reuse has its own
+    // explicit path ("Otvori postojeći"); duplicate wallets are benign (archivable).
+    await runCreate([]);
   }
 
   /**
