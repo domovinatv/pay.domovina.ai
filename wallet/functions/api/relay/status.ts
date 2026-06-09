@@ -7,8 +7,8 @@
 // Read-only; safe to call on every Send screen mount + on a 1-minute tick.
 
 import { isAddress } from 'viem';
-
-const FREE_DAILY_LIMIT = 5;
+import { FREE_DAILY_LIMIT, readCount, signerDailyKey } from '../../_lib/limits';
+import { json } from '../../_lib/http';
 
 type Env = {
   RELAY_KV: KVNamespace;
@@ -29,13 +29,11 @@ export const onRequestGet: PagesFunction<Env> = async ({ request, env }) => {
   const url = new URL(request.url);
   const signerAddress = (url.searchParams.get('signerAddress') ?? '').trim();
   if (!signerAddress || !isAddress(signerAddress)) {
-    return json({ error: 'Missing or invalid signerAddress' }, 400);
+    return json({ error: 'Missing or invalid signerAddress' }, 400, NO_STORE);
   }
 
   const now = new Date();
-  const today = now.toISOString().slice(0, 10);
-  const rateKey = `relay:${signerAddress.toLowerCase()}:${today}`;
-  const used = Math.max(0, Number((await env.RELAY_KV.get(rateKey)) ?? 0));
+  const used = await readCount(env.RELAY_KV, signerDailyKey('relay', signerAddress));
   const cappedUsed = Math.min(used, FREE_DAILY_LIMIT);
 
   // Next UTC midnight.
@@ -51,18 +49,12 @@ export const onRequestGet: PagesFunction<Env> = async ({ request, env }) => {
     resetsInSec,
   };
 
-  return json(body, 200);
+  return json(body, 200, NO_STORE);
 };
 
-function json(body: unknown, status: number): Response {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: {
-      'content-type': 'application/json; charset=utf-8',
-      'cache-control': 'no-store',
-      // Hot path on Send screen — same-origin only, no preflight needed in
-      // production, but Pages may add the header anyway. Keep it explicit.
-      'access-control-allow-origin': '*',
-    },
-  });
-}
+// Same-origin hot path on the Send screen; explicit no-store + permissive CORS so
+// a tab on any *.domovina.ai brand can read its own usage without a preflight.
+const NO_STORE = {
+  'cache-control': 'no-store',
+  'access-control-allow-origin': '*',
+};

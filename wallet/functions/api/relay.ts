@@ -1,118 +1,27 @@
+import { encodeFunctionData, isAddress, zeroAddress, type Address, type Hex } from 'viem';
 import {
-  createPublicClient,
-  createWalletClient,
-  encodeFunctionData,
-  encodePacked,
-  getCreate2Address,
-  http,
-  isAddress,
-  keccak256,
-  zeroAddress,
-  type Address,
-  type Hex,
-} from 'viem';
-import { privateKeyToAccount } from 'viem/accounts';
-import { gnosis } from 'viem/chains';
-
-const FREE_DAILY_LIMIT = 5;
-
-// Safe v1.4.1 canonical deployments on Gnosis (chain 100), pulled from
-// safe-global/safe-deployments. Same addresses as every other major EVM.
-const SAFE_PROXY_FACTORY = '0x4e1DCf7AD4e460CfD30791CCC4F9c8a4f820ec67' as const;
-const SAFE_SINGLETON = '0x29fcB43b46531BcA003ddC8FCB67FFE91900C762' as const; // SafeL2
-const COMPATIBILITY_FALLBACK_HANDLER = '0xfd0732Dc9E303f09fCEf3a7388Ad10A83459Ec99' as const;
-const MULTISEND_CALL_ONLY = '0x9641d764fc13c8B624c04430C7356C1C7C8102e2' as const;
-
-// keccak256(SafeProxyFactory.proxyCreationCode() ++ abi.encode(uint256(SAFE_SINGLETON))).
-// Constant because both the proxy creation code (pure, on the v1.4.1 factory) and
-// the singleton are fixed. Captured from the live Gnosis factory and verified to
-// reproduce protocol-kit's predicted addresses for salt 0 AND a campaign salt.
-// This is the CREATE2 init-code hash used to derive the counterfactual Safe addr.
-const SAFE_PROXY_INIT_CODE_HASH =
-  '0xe298282cefe913ab5d282047161268a8222e4bd4ed106300c547894bbefd31ee' as const;
-
-// Safe Passkey module v0.2.1 — see safe-modules-deployments
-const SAFE_WEBAUTHN_SIGNER_FACTORY = '0x1d31F259eE307358a26dFb23EB365939E8641195' as const;
-const DAIMO_P256_VERIFIER = '0xc2b78104907F722DABAc4C69f826a522B2754De4' as const;
-const P256_PRECOMPILE = '0x0000000000000000000000000000000000000100' as const;
-
-const SAFE_EXEC_TX_ABI = [
-  {
-    inputs: [
-      { type: 'address', name: 'to' },
-      { type: 'uint256', name: 'value' },
-      { type: 'bytes', name: 'data' },
-      { type: 'uint8', name: 'operation' },
-      { type: 'uint256', name: 'safeTxGas' },
-      { type: 'uint256', name: 'baseGas' },
-      { type: 'uint256', name: 'gasPrice' },
-      { type: 'address', name: 'gasToken' },
-      { type: 'address', name: 'refundReceiver' },
-      { type: 'bytes', name: 'signatures' },
-    ],
-    name: 'execTransaction',
-    outputs: [{ type: 'bool' }],
-    stateMutability: 'payable',
-    type: 'function',
-  },
-] as const;
-
-const SAFE_SETUP_ABI = [
-  {
-    inputs: [
-      { type: 'address[]', name: '_owners' },
-      { type: 'uint256', name: '_threshold' },
-      { type: 'address', name: 'to' },
-      { type: 'bytes', name: 'data' },
-      { type: 'address', name: 'fallbackHandler' },
-      { type: 'address', name: 'paymentToken' },
-      { type: 'uint256', name: 'payment' },
-      { type: 'address', name: 'paymentReceiver' },
-    ],
-    name: 'setup',
-    outputs: [],
-    stateMutability: 'nonpayable',
-    type: 'function',
-  },
-] as const;
-
-const PROXY_FACTORY_ABI = [
-  {
-    inputs: [
-      { type: 'address', name: '_singleton' },
-      { type: 'bytes', name: 'initializer' },
-      { type: 'uint256', name: 'saltNonce' },
-    ],
-    name: 'createProxyWithNonce',
-    outputs: [{ type: 'address' }],
-    stateMutability: 'nonpayable',
-    type: 'function',
-  },
-] as const;
-
-const SIGNER_FACTORY_ABI = [
-  {
-    inputs: [
-      { type: 'uint256', name: 'x' },
-      { type: 'uint256', name: 'y' },
-      { type: 'uint176', name: 'verifiers' },
-    ],
-    name: 'createSigner',
-    outputs: [{ type: 'address' }],
-    stateMutability: 'nonpayable',
-    type: 'function',
-  },
-] as const;
-
-const MULTISEND_ABI = [
-  {
-    inputs: [{ type: 'bytes', name: 'transactions' }],
-    name: 'multiSend',
-    outputs: [],
-    stateMutability: 'payable',
-    type: 'function',
-  },
-] as const;
+  MULTISEND_CALL_ONLY,
+  PROXY_FACTORY_ABI,
+  SAFE_EXEC_TX_ABI,
+  SAFE_PROXY_FACTORY,
+  SAFE_SINGLETON,
+  SAFE_WEBAUTHN_SIGNER_FACTORY,
+  SIGNER_FACTORY_ABI,
+  MULTISEND_ABI,
+  buildSafeInitializer,
+  encodeVerifiers,
+  packMultiSend,
+  predictSafeProxyAddress,
+  type PackedCall,
+} from '../_lib/safe';
+import { isDeployed, loadRelayer } from '../_lib/relayer';
+import {
+  FREE_DAILY_LIMIT,
+  bumpCount,
+  readCount,
+  signerDailyKey,
+} from '../_lib/limits';
+import { json } from '../_lib/http';
 
 type Env = {
   RELAY_KV: KVNamespace;
@@ -135,8 +44,6 @@ type Body = {
    * (wallet/src/lib/safe.ts uses saltNonce '0'). pinka.finance per-campaign
    * Safes pass keccak("pinka:campaign:<id>") as a decimal string so the relay
    * deploys the Safe at the SAME counterfactual address the client funded.
-   * Hardcoding 0 here would deploy a different address and silently strand the
-   * EURe (see memory: evm-call-to-empty-address).
    */
   saltNonce?: string;
   /**
@@ -144,8 +51,7 @@ type Body = {
    * the cold-path Safe is deployed 1-of-2 with owners [signerAddress,
    * recoveryOwner] (threshold 1) instead of 1/1 [signerAddress]. The address
    * derivation + CREATE2 guard use the same 2-owner initializer, so a mismatch
-   * is rejected rather than stranding funds. Absent → single-owner Safe (the
-   * bootstrap/pinka/personal-default behaviour, unchanged).
+   * is rejected rather than stranding funds. Absent → single-owner Safe.
    */
   recoveryOwner?: string;
 };
@@ -209,8 +115,7 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
   // It must NOT run for an already-deployed Safe: ADR-0011/0012 bootstrap wallets
   // have a Safe whose initializer owner is an ephemeral EOA, so safeAddress derives
   // from the EOA, not from the passkey signer. predictSafe(signer) !== safeAddress
-  // for those — correct and expected — and they only ever take the hot path (the
-  // Safe is deployed at creation). Guarding here would reject all their sends.
+  // for those — correct and expected — and they only ever take the hot path.
 
   // Reject stub pubkeys early — cross-device-restored passkey records store
   // ('0','0') until the next signing event refreshes them, and sending with
@@ -228,32 +133,16 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
   }
 
   // Rate limit: 5 free per (signerAddress, UTC day).
-  const today = new Date().toISOString().slice(0, 10);
-  const rateKey = `relay:${body.signerAddress.toLowerCase()}:${today}`;
-  const used = Number((await env.RELAY_KV.get(rateKey)) ?? 0);
+  const rateKey = signerDailyKey('relay', body.signerAddress);
+  const used = await readCount(env.RELAY_KV, rateKey);
   if (used >= FREE_DAILY_LIMIT) {
     return json({ ok: false, error: 'Daily limit reached', rateLimited: true }, 429);
   }
 
   try {
-    const rawKey = (env.RELAYER_PRIVATE_KEY ?? '').trim();
-    if (!rawKey) {
-      return json({ ok: false, error: 'RELAYER_PRIVATE_KEY not configured' }, 500);
-    }
-    // Normalize: wrangler secrets sometimes arrive without 0x prefix or with
-    // stray whitespace; viem privateKeyToAccount is strict about both.
-    const normalizedKey = (rawKey.startsWith('0x') ? rawKey : `0x${rawKey}`) as Hex;
-    if (!/^0x[0-9a-fA-F]{64}$/.test(normalizedKey)) {
-      return json(
-        { ok: false, error: `RELAYER_PRIVATE_KEY malformed (expected 0x + 64 hex chars, got ${normalizedKey.length} chars)` },
-        500,
-      );
-    }
-    const account = privateKeyToAccount(normalizedKey);
-    const rpcUrl = env.GNOSIS_RPC_URL ?? 'https://rpc.gnosischain.com';
-    const transport = http(rpcUrl);
-    const publicClient = createPublicClient({ chain: gnosis, transport });
-    const wallet = createWalletClient({ account, chain: gnosis, transport });
+    const relayer = loadRelayer(env.RELAYER_PRIVATE_KEY, env.GNOSIS_RPC_URL);
+    if (!relayer.ok) return json({ ok: false, error: relayer.error }, 500);
+    const { publicClient, wallet } = relayer.clients;
 
     const safeAddress = body.safeAddress as Address;
     const signerAddress = body.signerAddress as Address;
@@ -266,20 +155,12 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
     //
     // The hot path (execTransaction on the Safe) cannot be trusted to FAIL
     // when the Safe is undeployed: a call to an address that holds no code
-    // returns status=1 with empty logs (~21k gas), NOT a revert. viem's
-    // gas estimation also succeeds because there's nothing to simulate.
-    // The relayer would then broadcast a no-op tx, return ok+txHash, and
-    // the user's EURe would stay parked at the counterfactual address.
-    // Observed in https://gnosisscan.io/tx/0x6aa571f073b36f582b3e54fac7d7eac195c6ee54ae584ac4efe9aabe2382efe0.
-    //
-    // The previous "hot-first" rationale (avoid getCode because public
-    // Gnosis RPC has eventually-consistent reads that say empty-when-full)
-    // still applies — but its failure mode is a LOUD cold-path revert
-    // (CREATE2 collision), not silent fund loss. We accept the rare
-    // false-positive cold path as the price of never silently dropping a
-    // user's send.
-    const safeCodePre = await publicClient.getCode({ address: safeAddress });
-    const safeDeployedPre = !!safeCodePre && safeCodePre !== '0x';
+    // returns status=1 with empty logs (~21k gas), NOT a revert. The relayer
+    // would then broadcast a no-op tx, return ok+txHash, and the user's EURe
+    // would stay parked at the counterfactual address (see memory:
+    // evm-call-to-empty-address). We accept the rare false-positive cold path
+    // as the price of never silently dropping a user's send.
+    const safeDeployedPre = await isDeployed(publicClient, safeAddress);
 
     const execCalldata = encodeFunctionData({
       abi: SAFE_EXEC_TX_ABI,
@@ -346,13 +227,11 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
 
     if (!safeDeployedPre) {
       // CREATE2 consistency guard — cold path ONLY. The cold path deploys a Safe
-      // whose address is fully determined by (coldOwners, saltNonce) via
-      // buildSafeInitializer(coldOwners) — 1 owner (personal/pinka) or 2 owners
-      // (ADR-0013 derived: [signer, recoveryOwner]). If the client's safeAddress
-      // doesn't match, we'd deploy at X while execTransaction targets Y (no code)
-      // — EVM returns status=1 with no revert and the EURe is stranded forever
-      // (see memory: evm-call-to-empty-address). ADR-0011/0012 bootstrap wallets
-      // never reach here (deployed at creation), so this never rejects them.
+      // whose address is fully determined by (coldOwners, saltNonce). If the
+      // client's safeAddress doesn't match, we'd deploy at X while execTransaction
+      // targets Y (no code) — EVM returns status=1 with no revert and the EURe is
+      // stranded forever (see memory: evm-call-to-empty-address). ADR-0011/0012
+      // bootstrap wallets never reach here (deployed at creation).
       const predictedSafe = predictSafeProxyAddress(coldOwners, saltNonce);
       if (predictedSafe.toLowerCase() !== safeAddress.toLowerCase()) {
         return json(
@@ -366,14 +245,12 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
           400,
         );
       }
-      // Safe is not deployed (per fresh getCode). Skip hot path entirely —
-      // calling execTransaction on a code-less address silently succeeds
-      // and the user's funds stay locked at the counterfactual address.
-      // Cold path atomically deploys the Safe (and the WebAuthn signer if
-      // also missing) then runs execTransaction, so the EURe transfer
-      // either lands in the same tx or the whole multiSend reverts loudly.
-      const signerCodePre = await publicClient.getCode({ address: signerAddress });
-      const signerDeployedPre = !!signerCodePre && signerCodePre !== '0x';
+      // Safe is not deployed (per fresh getCode). Skip hot path entirely — calling
+      // execTransaction on a code-less address silently succeeds. Cold path
+      // atomically deploys the Safe (and the WebAuthn signer if also missing) then
+      // runs execTransaction, so the EURe transfer either lands in the same tx or
+      // the whole multiSend reverts loudly.
+      const signerDeployedPre = await isDeployed(publicClient, signerAddress);
       console.warn(
         `[relay] safe undeployed (signer=${signerDeployedPre}); going cold-path to deploy+send atomically`,
       );
@@ -392,12 +269,10 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
       }
 
       if (hotErr) {
-        const [safeCode2, signerCode2] = await Promise.all([
-          publicClient.getCode({ address: safeAddress }),
-          publicClient.getCode({ address: signerAddress }),
+        const [safeNow, signerNow] = await Promise.all([
+          isDeployed(publicClient, safeAddress),
+          isDeployed(publicClient, signerAddress),
         ]);
-        const safeNow = !!safeCode2 && safeCode2 !== '0x';
-        const signerNow = !!signerCode2 && signerCode2 !== '0x';
         if (safeNow && signerNow) {
           // Both deployed; hot SHOULD have worked. Propagate.
           throw hotErr;
@@ -411,90 +286,13 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
     }
 
     if (!txHash) {
-      // Should be unreachable — either hot or cold assigns it before we get
-      // here. Defensive return in case the control flow ever changes.
+      // Should be unreachable — either hot or cold assigns it before we get here.
       return json({ ok: false, error: 'No transaction was submitted' }, 500);
     }
-    await env.RELAY_KV.put(rateKey, String(used + 1), { expirationTtl: 60 * 60 * 36 });
+    await bumpCount(env.RELAY_KV, rateKey, used);
     return json({ ok: true, txHash, deployed });
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     return json({ ok: false, error: `Submit failed: ${msg}` }, 500);
   }
 };
-
-type PackedCall = { to: Address; value: bigint; data: Hex };
-
-/** Pack MultiSendCallOnly transactions: 1 byte op || 20 bytes to || 32 bytes value || 32 bytes dataLen || data. */
-function packMultiSend(ops: PackedCall[]): Hex {
-  const parts: Hex[] = [];
-  for (const op of ops) {
-    const dataLen = (op.data.length - 2) / 2;
-    parts.push(
-      encodePacked(
-        ['uint8', 'address', 'uint256', 'uint256', 'bytes'],
-        [0, op.to, op.value, BigInt(dataLen), op.data],
-      ),
-    );
-  }
-  // Concatenate the packed bytes (each part is already hex-prefixed).
-  return ('0x' + parts.map((p) => p.slice(2)).join('')) as Hex;
-}
-
-function encodeVerifiers(): bigint {
-  return (BigInt(P256_PRECOMPILE) << 160n) | BigInt(DAIMO_P256_VERIFIER);
-}
-
-/**
- * Safe v1.4.1 `setup` calldata for a threshold-1 Safe owned by `owners` (in the
- * given ORDER — order is part of the CREATE2 preimage). A single-element array is
- * the legacy 1/1 case (bootstrap/pinka/personal); a 2-element [signer,
- * recoveryOwner] array is an ADR-0013 derived account. Used both for the cold-
- * path deploy AND the CREATE2 guard, so they can never drift — the predicted
- * address is only meaningful if the initializer here is byte-identical to the one
- * actually deployed. The client must build owners in the SAME order (see
- * src/lib/accounts.ts derivedOwners()).
- */
-function buildSafeInitializer(owners: Address[]): Hex {
-  return encodeFunctionData({
-    abi: SAFE_SETUP_ABI,
-    functionName: 'setup',
-    args: [
-      owners,
-      1n,
-      zeroAddress,
-      '0x',
-      COMPATIBILITY_FALLBACK_HANDLER,
-      zeroAddress,
-      0n,
-      zeroAddress,
-    ],
-  });
-}
-
-/**
- * Deterministic counterfactual Safe address for (owners, saltNonce) under the
- * v1.4.1 SafeProxyFactory. Mirrors `createProxyWithNonce`'s CREATE2:
- *   salt = keccak256(keccak256(initializer) ++ saltNonce)
- *   addr = CREATE2(factory, salt, keccak256(creationCode ++ singleton))
- * Verified against protocol-kit (the client's derivation) for salt 0 + campaign
- * salts (1-owner); the 2-owner form shares the same code path + initializer shape.
- */
-function predictSafeProxyAddress(owners: Address[], saltNonce: bigint): Address {
-  const initializer = buildSafeInitializer(owners);
-  const salt = keccak256(
-    encodePacked(['bytes32', 'uint256'], [keccak256(initializer), saltNonce]),
-  );
-  return getCreate2Address({
-    from: SAFE_PROXY_FACTORY,
-    salt,
-    bytecodeHash: SAFE_PROXY_INIT_CODE_HASH,
-  });
-}
-
-function json(data: unknown, status = 200) {
-  return new Response(JSON.stringify(data), {
-    status,
-    headers: { 'Content-Type': 'application/json' },
-  });
-}
