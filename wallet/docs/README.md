@@ -21,6 +21,12 @@ Durable design knowledge for this repo. Read these before touching connect/onboa
   user.id; OS-sheet-title tells you the ceremony; etc.). State diagram.
 - **[deploy-and-pwa.md](./deploy-and-pwa.md)** — deploy command + the service-worker
   staleness / MIME-error traps that repeatedly looked like "my fix didn't ship".
+- **[security-custody-model.md](./security-custody-model.md)** — the headline promise:
+  auto cross-device sync, but no one (operator, DB breach, Cloudflare) can move funds
+  without your Face ID / seed. What the server holds (only public data) vs. what it
+  never does (keys/seed); why a full DB dump can't steal; "no secrets" vs "encrypted
+  secrets"; the 1-of-2 recovery model; honest privacy caveats. 4 mermaid diagrams. The
+  value-prop security doc.
 - **[relayer-threat-model.md](./relayer-threat-model.md)** — what the gas-sponsoring
   relayer can/can't do (custody invariant vs. xDAI-drain threat), why payloads are
   offline-forgeable, the layered abuse defenses (per-signer / per-IP / global budget /

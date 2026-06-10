@@ -358,15 +358,15 @@ export async function ensureRecoveryOwner(credentialId: string): Promise<void> {
   }
 
   let ro: Address | null = null;
-  try {
-    const remote = await lookupWallet(credentialId);
-    if (remote?.recovery_owner) ro = remote.recovery_owner as Address;
-  } catch {
-    /* ignore — fall through to on-chain */
-  }
 
-  if (!ro) {
-    const owners = await readSafeOwners(rec.safeAddress);
+  // PREFER the on-chain owner set — it is authoritative and TRUSTLESS. Reading the
+  // backend first would let a compromised server inject an attacker address as the
+  // "recovery owner"; the user could then mint a new account that is silently 1-of-2
+  // [theirSigner, attackerEOA] and the attacker could drain it. Deriving from the
+  // deployed Safe's own owners removes that trust: the non-signer codeless (EOA)
+  // owner is the genuine recovery owner (ADR-0013 'add' mode keeps it 1-of-2).
+  const owners = await readSafeOwners(rec.safeAddress);
+  if (owners.length > 0) {
     const candidates = owners.filter(
       (o) => o.toLowerCase() !== rec.signerAddress.toLowerCase(),
     );
@@ -377,7 +377,17 @@ export async function ensureRecoveryOwner(credentialId: string): Promise<void> {
         break;
       }
     }
-    if (!ro && candidates[0]) ro = candidates[0]; // fallback: first non-signer owner
+    if (!ro && candidates[0]) ro = candidates[0];
+  } else {
+    // Safe not deployed yet (counterfactual → holds NO funds, so a wrong value here
+    // can strand nothing): the backend index is an acceptable best-effort source to
+    // restore the label / mint capability until the first on-chain tx.
+    try {
+      const remote = await lookupWallet(credentialId);
+      if (remote?.recovery_owner) ro = remote.recovery_owner as Address;
+    } catch {
+      /* ignore */
+    }
   }
 
   if (!ro) return;
