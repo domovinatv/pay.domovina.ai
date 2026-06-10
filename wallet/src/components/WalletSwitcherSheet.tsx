@@ -239,7 +239,10 @@ function NamingStep({
   );
 }
 
-function AccountRow({
+/** One account card (name, address, balance, gradient avatar). Exported for the
+ * SDK connect handoff's account picker on Landing — same look as the in-app
+ * switcher so "account" reads identically everywhere. */
+export function AccountRow({
   account,
   balance,
   active,

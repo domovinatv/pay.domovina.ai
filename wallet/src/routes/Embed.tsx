@@ -9,7 +9,8 @@ import {
   signWithPasskey,
   type PasskeyRecord,
 } from '../lib/passkey';
-import { lookupWalletStrict } from '../lib/registry';
+import { fetchAccountsFromBackend, lookupWalletStrict } from '../lib/registry';
+import { getAccountByAddress } from '../lib/accounts';
 import { encodeWebAuthnSignature, getSafeTxHash } from '../lib/safe';
 import { relayTx } from '../lib/relay';
 import { EURE_ADDRESS, EURE_DECIMALS } from '../lib/constants';
@@ -33,6 +34,16 @@ type Command = SendCmd;
 
 type SendResult = { txHash: string };
 
+/** The account (under the connected identity) the host's send() targets. A
+ * derived account is a counterfactual 1-of-2 Safe — saltNonce + recoveryOwner
+ * let the relay's cold path deploy it on first send (same as Send.tsx). */
+type SendAccount = {
+  safeAddress: Address;
+  kind: 'bootstrap' | 'derived';
+  saltNonce?: string;
+  recoveryOwner?: Address;
+};
+
 type Stage =
   | { kind: 'waiting' }
   | {
@@ -43,6 +54,7 @@ type Stage =
       to: Address;
       value: bigint;
       record: PasskeyRecord;
+      account: SendAccount;
     }
   | { kind: 'send-busy' }
   | { kind: 'success'; title: string; subtitle: string };
@@ -170,8 +182,11 @@ export function Embed() {
       postError(parentOrigin, cmd.requestId, 'Nije povezan novčanik. Poveži se ponovno.');
       return;
     }
-    // Defense: never sign from a Safe other than the one the host connected.
-    if (record.safeAddress.toLowerCase() !== cmd.safeAddress.toLowerCase()) {
+    // Defense: only sign from an account that BELONGS to the connected identity.
+    // Since the connect-time account picker, dw_safe may be any of the identity's
+    // N accounts (bootstrap or derived) — not just the bootstrap.
+    const account = await resolveSendAccount(record, cmd.safeAddress);
+    if (!account) {
       postError(parentOrigin, cmd.requestId, 'Novčanik se ne podudara s povezanim.');
       return;
     }
@@ -179,7 +194,53 @@ export function Embed() {
     // Surface the iframe with a confirm card. Face ID fires only after the user
     // taps Confirm in-iframe so we have transient activation.
     showIframe();
-    setStage({ kind: 'send-confirm', cmd, origin: parentOrigin, to: cmd.to as Address, value, record });
+    setStage({
+      kind: 'send-confirm',
+      cmd,
+      origin: parentOrigin,
+      to: cmd.to as Address,
+      value,
+      record,
+      account,
+    });
+  }
+
+  /// Map the host's connected Safe to an account under the signing identity:
+  /// bootstrap (the identity record itself), a locally-known derived account, or
+  /// a backend-registry one (iframe storage can be partitioned/empty — Safari ITP
+  /// — or the account was minted on another device). Null = not this identity's.
+  async function resolveSendAccount(
+    record: PasskeyRecord,
+    safeAddress: string,
+  ): Promise<SendAccount | null> {
+    const target = safeAddress.toLowerCase();
+    if (record.safeAddress.toLowerCase() === target) {
+      return { safeAddress: record.safeAddress as Address, kind: 'bootstrap' };
+    }
+    const local = getAccountByAddress(safeAddress);
+    if (local && local.credentialId === record.credentialId && local.kind === 'derived') {
+      return {
+        safeAddress: local.safeAddress,
+        kind: 'derived',
+        saltNonce: local.saltNonce,
+        recoveryOwner: local.recoveryOwner,
+      };
+    }
+    try {
+      const remote = await fetchAccountsFromBackend(record.credentialId);
+      const hit = remote.find((r) => r.safe_address.toLowerCase() === target);
+      if (hit) {
+        return {
+          safeAddress: hit.safe_address as Address,
+          kind: 'derived',
+          saltNonce: hit.salt_nonce,
+          recoveryOwner: hit.recovery_owner as Address,
+        };
+      }
+    } catch {
+      /* registry unreachable — fall through to null */
+    }
+    return null;
   }
 
   async function confirmSend(
@@ -188,11 +249,12 @@ export function Embed() {
     to: Address,
     value: bigint,
     record: PasskeyRecord,
+    account: SendAccount,
   ) {
     setStage({ kind: 'send-busy' });
     try {
       const data = encodeFunctionData({ abi: erc20Abi, functionName: 'transfer', args: [to, value] });
-      const { hash: safeTxHash } = await getSafeTxHash(record.safeAddress, {
+      const { hash: safeTxHash } = await getSafeTxHash(account.safeAddress, {
         to: EURE_ADDRESS,
         value: 0n,
         data,
@@ -203,8 +265,11 @@ export function Embed() {
         recordRpId(record),
       );
       const signature = encodeWebAuthnSignature({ ...assertion, signerAddress: record.signerAddress });
+      // Derived account = counterfactual 1-of-2 Safe → saltNonce + recoveryOwner
+      // drive the relay's cold-path deploy on first send (mirrors Send.tsx).
+      const derived = account.kind === 'derived';
       const result = await relayTx({
-        safeAddress: record.safeAddress,
+        safeAddress: account.safeAddress,
         signerAddress: record.signerAddress,
         pubKeyX: record.pubKey.x,
         pubKeyY: record.pubKey.y,
@@ -212,6 +277,8 @@ export function Embed() {
         value: '0',
         data,
         signature,
+        ...(derived && account.saltNonce != null ? { saltNonce: account.saltNonce } : {}),
+        ...(derived && account.recoveryOwner ? { recoveryOwner: account.recoveryOwner } : {}),
       });
       if (!result.ok) throw new Error(result.error);
 
@@ -261,7 +328,9 @@ export function Embed() {
           </div>
           <div className="flex flex-col gap-2 pt-2">
             <Button
-              onClick={() => confirmSend(stage.cmd, stage.origin, stage.to, stage.value, stage.record)}
+              onClick={() =>
+                confirmSend(stage.cmd, stage.origin, stage.to, stage.value, stage.record, stage.account)
+              }
               size="lg"
               block
             >

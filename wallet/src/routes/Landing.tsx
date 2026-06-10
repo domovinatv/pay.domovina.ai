@@ -43,9 +43,12 @@ import {
   bootstrapAccountView,
   deriveAccount,
   ensureRecoveryOwner,
+  listAccountsForIdentity,
   setActiveAccountAddress,
   syncAccountsWithBackend,
+  type WalletAccount,
 } from '../lib/accounts';
+import { AccountRow } from '../components/WalletSwitcherSheet';
 import { fetchEureBalances, formatEureShort } from '../lib/balances';
 import {
   lookupWallet,
@@ -84,6 +87,10 @@ type Stage =
   // now ask consent to open a NEW derived account named after the host's request.
   | { kind: 'create-account-confirm'; record: PasskeyRecord; name: string }
   | { kind: 'create-account-deriving' }
+  // SDK connect() handoff: identity established — let the user pick WHICH of the
+  // identity's N accounts (bootstrap + derived) to hand back. Before this stage
+  // the handoff always returned the bootstrap, hiding the other accounts.
+  | { kind: 'connect-pick-account'; record: PasskeyRecord }
   | { kind: 'error'; message: string };
 
 type CreatePhase = 'passkey' | 'deploying' | 'deriving';
@@ -125,11 +132,18 @@ function readConnectReturn(): ConnectReturn | null {
 
 /** Hand the wallet identity back to the host (e.g. pinka.io) and leave. The host
  * SDK's connect() CSRF-checks dw_state, reads these params, resolves, and strips
- * them. */
-function finishConnectReturn(cr: ConnectReturn, record: PasskeyRecord): void {
+ * them. `account` is the user's pick from the connect-time account picker —
+ * dw_safe is THAT account's Safe (bootstrap or derived); dw_signer/dw_cred stay
+ * the identity (one passkey signs for all N accounts). Embed's send() resolves
+ * derived accounts (saltNonce/recoveryOwner) from the registry by address. */
+function finishConnectReturn(
+  cr: ConnectReturn,
+  record: PasskeyRecord,
+  account?: Pick<WalletAccount, 'safeAddress'>,
+): void {
   const u = new URL(cr.url);
   u.searchParams.set('dw_return', '1');
-  u.searchParams.set('dw_safe', record.safeAddress);
+  u.searchParams.set('dw_safe', account?.safeAddress ?? record.safeAddress);
   u.searchParams.set('dw_signer', record.signerAddress);
   u.searchParams.set('dw_cred', record.credentialId);
   if (cr.state) u.searchParams.set('dw_state', cr.state);
@@ -193,7 +207,10 @@ export function Landing() {
       return true;
     }
     if (!connectReturn) return false;
-    finishConnectReturn(connectReturn, record);
+    // Don't return the bootstrap blindly — the identity may hold N accounts. The
+    // picker stage syncs the registry, auto-returns when there's only one, and
+    // otherwise lets the user choose which account the host gets.
+    setStage({ kind: 'connect-pick-account', record });
     return true;
   }
 
@@ -729,6 +746,21 @@ export function Landing() {
 
         {stage.kind === 'create-account-deriving' && <CreatingView phase="deriving" />}
 
+        {stage.kind === 'connect-pick-account' && connectReturn && (
+          <ConnectPickAccountView
+            record={stage.record}
+            host={(() => {
+              try {
+                return new URL(connectReturn.url).hostname;
+              } catch {
+                return 'aplikacijom';
+              }
+            })()}
+            onPick={(account) => finishConnectReturn(connectReturn, stage.record, account)}
+            onBack={resetToWelcome}
+          />
+        )}
+
         {stage.kind === 'error' && (
           <ErrorView message={stage.message} onRetry={resetToWelcome} />
         )}
@@ -740,6 +772,116 @@ export function Landing() {
 /** Consent card for the SDK createAccount() handoff. Opening a derived account is
  * pure-local (no Face ID beyond the already-established session), so this is a
  * consent step, not a signature. */
+/**
+ * Connect-time account picker (SDK dw_connect handoff). The identity is already
+ * established; before handing dw_safe back to the host we sync the account
+ * registry (cross-device: accounts minted elsewhere) and let the user choose
+ * which of their N accounts to connect. With a single account there is nothing
+ * to choose — auto-return immediately (no extra tap for the common case).
+ */
+function ConnectPickAccountView({
+  record,
+  host,
+  onPick,
+  onBack,
+}: {
+  record: PasskeyRecord;
+  host: string;
+  onPick: (account: WalletAccount) => void;
+  onBack: () => void;
+}) {
+  const [accounts, setAccounts] = useState<WalletAccount[] | null>(null);
+  const [balances, setBalances] = useState<Map<string, bigint>>(new Map());
+  // onPick navigates away; the ref guards against firing it twice (StrictMode
+  // double-mount or a late sync resolving after the user already tapped).
+  const pickedRef = useRef(false);
+  function pick(account: WalletAccount) {
+    if (pickedRef.current) return;
+    pickedRef.current = true;
+    haptic('tap');
+    onPick(account);
+  }
+
+  useEffect(() => {
+    let dead = false;
+    (async () => {
+      // Pull accounts minted on other devices before deciding if a picker is
+      // even needed — without this the list is whatever localStorage happens
+      // to hold (the original "only the default shows up" bug).
+      try {
+        await syncAccountsWithBackend(record.credentialId);
+      } catch {
+        /* best-effort — local list still works */
+      }
+      if (dead) return;
+      const list = listAccountsForIdentity(record.credentialId);
+      if (list.length <= 1) {
+        // Single account → nothing to pick.
+        if (!pickedRef.current) {
+          pickedRef.current = true;
+          onPick(list[0] ?? bootstrapAccountView(record));
+        }
+        return;
+      }
+      setAccounts(list);
+      fetchEureBalances(list.map((a) => a.safeAddress))
+        .then((b) => {
+          if (!dead) setBalances(b);
+        })
+        .catch((e) => console.warn('[Landing] picker balance fetch failed', e));
+    })();
+    return () => {
+      dead = true;
+    };
+    // record is stable for the lifetime of this stage.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  if (accounts === null) {
+    return (
+      <div className="flex flex-col items-center gap-3 py-10 text-ink-secondary animate-route-enter">
+        <RefreshCw className="h-6 w-6 animate-spin" />
+        Učitavam račune…
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex flex-col gap-6 animate-route-enter">
+      <div className="text-center flex flex-col gap-2">
+        <KeyRound className="h-10 w-10 mx-auto text-brand-navy-500" />
+        <h2 className="text-2xl font-semibold text-ink-primary">Odaberi račun</h2>
+        <p className="text-ink-secondary">
+          <span className="font-medium text-ink-primary">{host}</span> se povezuje s jednim
+          od tvojih računa — odaberi kojim.
+        </p>
+      </div>
+
+      <ul className="flex flex-col gap-2">
+        {accounts.map((account) => (
+          <li key={account.safeAddress}>
+            <AccountRow
+              account={account}
+              balance={balances.get(account.safeAddress.toLowerCase())}
+              active={false}
+              onClick={() => pick(account)}
+            />
+          </li>
+        ))}
+      </ul>
+
+      <p className="text-center text-xs text-ink-muted">
+        Svi računi su pod istim passkeyem — odabir samo određuje koju adresu
+        aplikacija dobiva.
+      </p>
+
+      <Button onClick={onBack} variant="ghost" size="md" block>
+        Natrag
+      </Button>
+    </div>
+  );
+}
+
 function CreateAccountConfirmView({
   name,
   host,
