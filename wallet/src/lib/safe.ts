@@ -126,6 +126,47 @@ const SAFE_GET_OWNERS_ABI = [
   },
 ] as const;
 
+const SAFE_GET_THRESHOLD_ABI = [
+  {
+    inputs: [],
+    name: 'getThreshold',
+    outputs: [{ type: 'uint256' }],
+    stateMutability: 'view',
+    type: 'function',
+  },
+] as const;
+
+/** Whether the Safe currently holds code on-chain. False = counterfactual —
+ * standard Safe clients (app.safe.global) reject it as "not a Safe wallet"
+ * until it deploys (lazily on first send, or explicitly via activateAccount). */
+export async function isSafeDeployed(safeAddress: Address): Promise<boolean> {
+  const code = await publicClient.getCode({ address: safeAddress });
+  return !!code && code !== '0x';
+}
+
+/**
+ * Read a deployed Safe's signature threshold. Null if the Safe has no code yet
+ * (a counterfactual account always deploys at threshold 1) or the read fails.
+ *
+ * Why callers care: the relay submits execTransaction with exactly ONE passkey
+ * signature. Safe's checkSignatures requires `threshold` signatures, so a
+ * threshold raised above 1 (e.g. externally via app.safe.global, which the EOA
+ * owner can legitimately do) makes every relayed send revert. Send/activate
+ * guard on this BEFORE burning a Face ID ceremony + a free relay slot.
+ */
+export async function readSafeThreshold(safeAddress: Address): Promise<bigint | null> {
+  if (!(await isSafeDeployed(safeAddress))) return null;
+  try {
+    return await publicClient.readContract({
+      address: safeAddress,
+      abi: SAFE_GET_THRESHOLD_ABI,
+      functionName: 'getThreshold',
+    });
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Read a deployed Safe's owner set. Empty array if the Safe has no code yet
  * (counterfactual) or the call fails. Used to recover the ADR-0013 recovery owner

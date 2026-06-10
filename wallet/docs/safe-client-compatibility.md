@@ -61,31 +61,44 @@ stays the convenient in-app signer; the seed is the universal escape hatch.
 > This is exactly why the 1-of-2 `[passkey, EOA]` design is correct: it guarantees
 > worldwide interop through the EOA even though Safe's own apps don't speak passkey.
 
-## Refinements needed for the full "use it anywhere" promise
+## Refinements for the full "use it anywhere" promise — ALL SHIPPED (2026-06-10)
 
 1. **Derived Safes must be DEPLOYED before they appear in app.safe.global.** A
    counterfactual (never-used) account has no on-chain code yet, and app.safe.global
    rejects it as "not a Safe wallet" (see [[feedback_safe_counterfactual_address]]). The
-   bootstrap Safe deploys at creation; derived Safes deploy lazily on first send. So a
-   brand-new derived account isn't visible in third-party clients until its first tx.
-   → *Refinement:* an explicit "Aktiviraj/deploy ovaj račun" action (a 0-value self-call
-   through the relay cold path), or clear UX that an account becomes externally visible
-   after its first transaction.
-2. **The seed is the only portable key — and it's shown once.** If the user didn't back
-   it up, they can use the Safe only via the passkey (DOMOVINA ecosystem). The seed
-   cannot be re-shown (never stored — see [security-custody-model.md](./security-custody-model.md)).
-   → *Refinement:* make seed backup prominent/confirmable at creation; consider a
-   "verify you saved your seed" gate; surface "your seed controls this Safe in any wallet"
-   in Settings.
-3. **Owner management parity.** Adding/removing owners or raising the threshold from
-   app.safe.global works (the EOA can do owner-management calls), and those changes are
-   reflected back in DOMOVINA (owners read on-chain). No action needed — just verify in
-   testing that a threshold change made externally doesn't break the relay's 1-of-2
-   assumptions (the relay signs with the passkey; if threshold > 1 it would need 2 sigs).
+   bootstrap Safe deploys at creation; derived Safes deploy lazily on first send.
+   ✅ *Shipped:* "Aktiviraj račun" in Settings (`src/lib/activate.ts` +
+   `routes/Settings.tsx`) — a 0-value self-call through the relay cold path deploys the
+   Safe atomically without moving funds (costs one free relay slot). Settings also shows
+   an on-chain status row (deployan / counterfactual). Derived-only by design: a
+   bootstrap Safe's CREATE2 address derives from the ephemeral-EOA initializer, which
+   the relay cold-path guard correctly rejects (it deploys at creation anyway).
+2. **The seed is the only portable key — and it's shown once.**
+   ✅ *Shipped:* the created screen (`Landing.tsx CreatedView`) now requires an explicit
+   choice — after revealing, "Otvori wallet" unlocks only on a "spremio sam svih 12
+   riječi" confirmation; skipping without revealing goes through a conscious "Nastavi
+   bez seeda" warning step. Settings → Sigurnost carries a permanent reminder ("tvoj
+   seed kontrolira ovaj Safe u bilo kojem walletu") with the seed-owner EOA address.
+   The seed itself remains shown-once / never stored.
+3. **Owner management parity / threshold raised externally.**
+   ✅ *Verified:* it DOES break relayed sends — Safe's `checkSignatures` requires
+   `threshold` signatures and the relay submits exactly one (passkey), so any
+   threshold > 1 reverts every `execTransaction` (confirmed against a live 2/3 Safe:
+   `getThreshold` reads work as expected; the hot path would revert at gas estimation
+   and surface as an opaque 500). ✅ *Guarded, three layers:*
+   - `Send.tsx` reads `getThreshold` on mount **and re-checks right before Face ID**,
+     blocking with a clear card (link to app.safe.global, "vrati prag na 1");
+   - `Settings.tsx` shows a warning section + a `prag N potpisa` badge when threshold > 1;
+   - the relay (`functions/api/relay.ts`) disambiguates a hot-path failure by reading
+     the threshold and returning an explicit 409 instead of an opaque "Submit failed" —
+     covers Embed/SDK clients too. Owner add/remove at threshold 1 stays fully
+     compatible (owners are read on-chain, never cached).
 
 ## Bottom line
 
-DOMOVINA Safes are **fully usable worldwide in standard Safe clients today**, via the
+DOMOVINA Safes are **fully usable worldwide in standard Safe clients**, via the
 12-word seed (the EOA owner). The passkey is the in-ecosystem convenience; the seed is
-the portable, worldwide-compatible key. The only real refinements are (1) deploying
-derived accounts so they're externally visible, and (2) making seed backup robust.
+the portable, worldwide-compatible key. All three refinements above are shipped: derived
+accounts can be activated on-chain before first use, seed backup is confirm-gated and
+permanently surfaced in Settings, and an externally-raised threshold is detected and
+explained everywhere instead of failing opaquely.

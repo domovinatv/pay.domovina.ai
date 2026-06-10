@@ -149,6 +149,16 @@ export const OWNER_MGMT_ABI = [
   },
 ] as const;
 
+export const SAFE_GET_THRESHOLD_ABI = [
+  {
+    inputs: [],
+    name: 'getThreshold',
+    outputs: [{ type: 'uint256' }],
+    stateMutability: 'view',
+    type: 'function',
+  },
+] as const;
+
 export const MULTISEND_ABI = [
   {
     inputs: [{ type: 'bytes', name: 'transactions' }],

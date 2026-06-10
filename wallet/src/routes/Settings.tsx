@@ -15,6 +15,9 @@ import {
   Check,
   Wallet as WalletIcon,
   Globe2,
+  KeyRound,
+  Fingerprint,
+  Rocket,
 } from 'lucide-react';
 import { Badge, Button, Card, IconButton, Section, SegmentedControl, useToast } from '../ui';
 import { WalletSwitcherSheet } from '../components/WalletSwitcherSheet';
@@ -23,6 +26,9 @@ import { useWalletStore } from '../state/store';
 import { lookupWallet } from '../lib/registry';
 import { getActivePasskey } from '../lib/passkey';
 import { listAllAccounts } from '../lib/accounts';
+import { isSafeDeployed, readSafeThreshold } from '../lib/safe';
+import { activateAccount } from '../lib/activate';
+import { humanizeError } from '../lib/errors';
 
 const REPO_URL = 'https://github.com/domovinatv/pay.domovina.ai';
 const ADR_LINKS = [
@@ -41,11 +47,69 @@ export function Settings() {
   const [, setLocation] = useLocation();
   const { toast } = useToast();
   const { mode, setMode } = useTheme();
-  const { safeAddress, signerAddress, credentialId, reset } = useWalletStore();
+  const { safeAddress, signerAddress, credentialId, reset, accountKind, saltNonce, recoveryOwner } =
+    useWalletStore();
   const [phoneSummary, setPhoneSummary] = useState<PhoneSummary | null>(null);
   const [switcherOpen, setSwitcherOpen] = useState(false);
   const [accountCount, setAccountCount] = useState(0);
   const [passkeyLabel, setPasskeyLabel] = useState<string | undefined>();
+  const [deployed, setDeployed] = useState<boolean | null>(null);
+  const [threshold, setThreshold] = useState<bigint | null>(null);
+  const [activating, setActivating] = useState(false);
+
+  // On-chain status of the ACTIVE account: deployed? what threshold? Drives the
+  // "Aktiviraj račun" card (counterfactual derived Safes are invisible to
+  // app.safe.global until deployed) and the threshold-raised warning.
+  useEffect(() => {
+    if (!safeAddress) return;
+    let cancelled = false;
+    setDeployed(null);
+    setThreshold(null);
+    (async () => {
+      const dep = await isSafeDeployed(safeAddress);
+      if (cancelled) return;
+      setDeployed(dep);
+      if (dep) {
+        const t = await readSafeThreshold(safeAddress);
+        if (!cancelled) setThreshold(t);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [safeAddress]);
+
+  async function activate() {
+    const passkey = getActivePasskey();
+    if (!safeAddress || !signerAddress || !passkey || !saltNonce || !recoveryOwner) return;
+    setActivating(true);
+    try {
+      const result = await activateAccount({
+        safeAddress,
+        signerAddress,
+        saltNonce,
+        recoveryOwner,
+        passkey,
+      });
+      setDeployed(true);
+      toast({
+        variant: 'success',
+        title: 'Račun je aktiviran on-chain ✓',
+        description:
+          result.status === 'activated'
+            ? 'Za koju minutu vidljiv je i u app.safe.global / Safe Mobile.'
+            : 'Već je bio deployan.',
+      });
+    } catch (e) {
+      toast({ variant: 'error', title: 'Aktivacija neuspješna', description: humanizeError(e, 'passkey') });
+    } finally {
+      setActivating(false);
+    }
+  }
+
+  // The 12-word seed's EOA — the portable 1-of-2 owner. For a derived account the
+  // snapshot is in the store; for the bootstrap it lives on the passkey record.
+  const seedOwnerAddress = recoveryOwner ?? getActivePasskey()?.recoveryOwner ?? null;
 
   useEffect(() => {
     setAccountCount(listAllAccounts().length);
@@ -140,8 +204,84 @@ export function Settings() {
             </div>
             <Badge tone="info">EVM · Chain ID 100</Badge>
           </div>
+          <div className="flex items-center justify-between gap-3 py-3 first:pt-1 last:pb-1">
+            <div className="flex flex-col leading-tight">
+              <span className="text-[11px] uppercase tracking-widest text-ink-muted">
+                Status na lancu
+              </span>
+              <span className="text-sm font-medium text-ink-primary">
+                {deployed === null
+                  ? 'provjeravam…'
+                  : deployed
+                    ? 'Aktivan (deployan)'
+                    : 'Još nije aktiviran'}
+              </span>
+              {deployed === false && (
+                <span className="text-[11px] text-ink-muted leading-snug">
+                  Adresa je rezervirana (CREATE2), Safe se deploya kod prve transakcije.
+                </span>
+              )}
+            </div>
+            {deployed !== null &&
+              (deployed ? (
+                threshold !== null && threshold > 1n ? (
+                  <Badge tone="warning">prag {threshold.toString()} potpisa</Badge>
+                ) : (
+                  <Badge tone="success">on-chain</Badge>
+                )
+              ) : (
+                <Badge tone="warning">counterfactual</Badge>
+              ))}
+          </div>
         </Card>
       </Section>
+
+      {deployed === false && accountKind === 'derived' && saltNonce && recoveryOwner && (
+        <Section title="Vidljivost u drugim Safe aplikacijama">
+          <Card padding="md" className="flex items-start gap-3">
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-surface-sunken text-brand-navy-500">
+              <Rocket className="h-5 w-5" />
+            </div>
+            <div className="flex-1 flex flex-col gap-3">
+              <div>
+                <p className="font-medium text-ink-primary">Aktiviraj račun on-chain</p>
+                <p className="text-sm text-ink-secondary leading-snug">
+                  app.safe.global i Safe Mobile vide ovaj račun tek kad je deployan. Inače se
+                  deploya sam kod prvog slanja — aktivacija ga objavi odmah, bez prijenosa
+                  sredstava. Troši 1 od 5 dnevnih besplatnih transakcija.
+                </p>
+              </div>
+              <Button onClick={activate} disabled={activating} variant="secondary" size="md">
+                <Fingerprint className="h-4 w-4" />
+                {activating ? 'Aktiviram…' : 'Aktiviraj s Face ID'}
+              </Button>
+            </div>
+          </Card>
+        </Section>
+      )}
+
+      {threshold !== null && threshold > 1n && (
+        <Section title="Upozorenje">
+          <Card padding="md" className="flex flex-col gap-2 border-brand-red-500/40">
+            <p className="text-sm font-medium text-ink-primary">
+              Prag potpisa je {threshold.toString()} — slanje iz aplikacije je blokirano
+            </p>
+            <p className="text-sm text-ink-secondary leading-snug">
+              Netko je (npr. kroz app.safe.global) podigao broj potrebnih potpisa iznad 1.
+              Passkey daje jedan potpis, pa transakcije odavde više ne prolaze. Šalji kroz{' '}
+              <a
+                href={`https://app.safe.global/home?safe=gno:${safeAddress}`}
+                target="_blank"
+                rel="noreferrer"
+                className="underline text-brand-navy-500"
+              >
+                app.safe.global
+              </a>{' '}
+              ili tamo vrati prag na 1.
+            </p>
+          </Card>
+        </Section>
+      )}
 
       <Section title="Sigurnost">
         <div className="flex flex-col gap-3">
@@ -186,6 +326,39 @@ export function Settings() {
             </div>
             <ChevronRight className="h-4 w-4 text-ink-muted" />
           </button>
+
+          <Card padding="md" className="flex items-start gap-3">
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-surface-sunken text-brand-navy-500">
+              <KeyRound className="h-5 w-5" />
+            </div>
+            <div className="flex-1 flex flex-col gap-1.5 leading-tight min-w-0">
+              <span className="font-medium text-ink-primary">Recovery seed (12 riječi)</span>
+              <p className="text-sm text-ink-secondary leading-snug">
+                Tvoj seed kontrolira ovaj Safe u <span className="font-semibold">bilo kojem
+                walletu</span> — uvezi ga u MetaMask ili app.safe.global i raspolažeš istim
+                računima bez ove aplikacije. Prikazan je <span className="font-semibold">samo
+                jednom</span>, pri kreiranju, i nigdje nije spremljen — ne možemo ga ponovno
+                prikazati.
+              </p>
+              {seedOwnerAddress && (
+                <p className="text-[11px] text-ink-muted leading-snug break-all">
+                  Adresa seed vlasnika:{' '}
+                  <a
+                    href={`https://gnosisscan.io/address/${seedOwnerAddress}`}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="font-mono underline"
+                  >
+                    {seedOwnerAddress}
+                  </a>
+                </p>
+              )}
+              <p className="text-[11px] text-ink-muted leading-snug">
+                Nisi zapisao seed? Wallet i dalje radi preko passkeya — dodaj rezervni passkey
+                gore kao drugi put oporavka.
+              </p>
+            </div>
+          </Card>
         </div>
       </Section>
 

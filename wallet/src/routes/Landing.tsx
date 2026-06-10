@@ -1399,6 +1399,12 @@ function CreatedView({
 }) {
   const [revealed, setRevealed] = useState(false);
   const [copied, setCopied] = useState(false);
+  // Backup robustness (safe-client-compatibility refinement 2): the seed is the
+  // ONLY portable key and it's shown once — so entering the wallet requires an
+  // explicit choice. Revealed → confirm "I wrote it down"; not revealed → a
+  // conscious "continue without seed" step instead of a silent skip.
+  const [savedConfirmed, setSavedConfirmed] = useState(false);
+  const [skipPrompt, setSkipPrompt] = useState(false);
   const words = recoverySeed ? recoverySeed.split(/\s+/) : [];
 
   async function copySeed() {
@@ -1491,13 +1497,55 @@ function CreatedView({
             MetaMask: Uvezi račun → Tajna fraza za oporavak (SRP). Ovaj ključ je drugi
             potpisnik (1-od-2) — wallet i dalje radi i bez njega, preko passkeya.
           </p>
+          <label className="flex items-start gap-2.5 rounded-xl bg-surface-sunken px-3 py-2.5 cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={savedConfirmed}
+              onChange={(e) => setSavedConfirmed(e.target.checked)}
+              className="mt-0.5 h-4 w-4 shrink-0 accent-brand-navy-500"
+            />
+            <span className="text-xs text-ink-primary leading-snug">
+              Spremio/la sam svih 12 riječi na sigurno mjesto. Znam da se nikad više neće
+              prikazati i da kontroliraju ovaj Safe u bilo kojem walletu.
+            </span>
+          </label>
         </Card>
       )}
 
-      <Button onClick={onEnter} size="xl" block>
-        Otvori wallet
-        <ChevronRight className="h-5 w-5" />
-      </Button>
+      {recoverySeed && !revealed && skipPrompt ? (
+        <Card padding="md" className="flex flex-col gap-3 border-brand-red-500/40">
+          <p className="text-sm text-ink-secondary leading-snug">
+            <span className="font-medium text-ink-primary">Sigurno bez seeda?</span> Prikazuje
+            se samo sada — poslije ga nitko ne može vratiti (nije nigdje spremljen). Bez njega
+            wallet radi isključivo preko passkeya; seed je jedini ključ koji radi i izvan ove
+            aplikacije (MetaMask, app.safe.global).
+          </p>
+          <Button
+            onClick={() => {
+              setSkipPrompt(false);
+              setRevealed(true);
+            }}
+            size="lg"
+            block
+          >
+            <Eye className="h-4 w-4" />
+            Ipak prikaži seed
+          </Button>
+          <Button onClick={onEnter} variant="ghost" size="sm" block>
+            Nastavi bez seeda
+          </Button>
+        </Card>
+      ) : (
+        <Button
+          onClick={recoverySeed && !revealed ? () => setSkipPrompt(true) : onEnter}
+          disabled={!!recoverySeed && revealed && !savedConfirmed}
+          size="xl"
+          block
+        >
+          Otvori wallet
+          <ChevronRight className="h-5 w-5" />
+        </Button>
+      )}
     </div>
   );
 }

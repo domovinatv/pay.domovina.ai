@@ -3,6 +3,7 @@ import {
   MULTISEND_CALL_ONLY,
   PROXY_FACTORY_ABI,
   SAFE_EXEC_TX_ABI,
+  SAFE_GET_THRESHOLD_ABI,
   SAFE_PROXY_FACTORY,
   SAFE_SINGLETON,
   SAFE_WEBAUTHN_SIGNER_FACTORY,
@@ -328,7 +329,31 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
           isDeployed(publicClient, signerAddress),
         ]);
         if (safeNow && signerNow) {
-          // Both deployed; hot SHOULD have worked. Propagate.
+          // Both deployed; hot SHOULD have worked. Before propagating an opaque
+          // revert, disambiguate the one failure mode a user can cause from
+          // OUTSIDE this app: a threshold raised above 1 (the seed EOA can do
+          // owner management in app.safe.global). We submit exactly one passkey
+          // signature, so checkSignatures reverts for any threshold > 1.
+          try {
+            const threshold = await publicClient.readContract({
+              address: safeAddress,
+              abi: SAFE_GET_THRESHOLD_ABI,
+              functionName: 'getThreshold',
+            });
+            if (threshold > 1n) {
+              return json(
+                {
+                  ok: false,
+                  error:
+                    `Safe threshold je ${threshold} — relay šalje samo jedan (passkey) potpis. ` +
+                    `Pošalji transakciju kroz app.safe.global, ili tamo vrati threshold na 1.`,
+                },
+                409,
+              );
+            }
+          } catch {
+            /* threshold read failed — fall through to the original error */
+          }
           throw hotErr;
         }
         console.warn(

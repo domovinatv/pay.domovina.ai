@@ -21,7 +21,7 @@ import { humanizeError } from '../lib/errors';
 import { parseAmount, isAmountInvalidForDisplay } from '../lib/amount';
 import { addRecipient, listRecentRecipients, type Recipient } from '../lib/recipients';
 import { EURE_ADDRESS, EURE_DECIMALS } from '../lib/constants';
-import { encodeWebAuthnSignature, getSafeTxHash } from '../lib/safe';
+import { encodeWebAuthnSignature, getSafeTxHash, readSafeThreshold } from '../lib/safe';
 import { getActivePasskey, recordRpId, savePasskey, signWithPasskey, type PasskeyRecord } from '../lib/passkey';
 import { lookupWallet } from '../lib/registry';
 import { relayTx, getRelayStatus, type RelayStatus } from '../lib/relay';
@@ -40,8 +40,26 @@ export function Send() {
   const [bookOpen, setBookOpen] = useState(false);
   const [recents, setRecents] = useState<Recipient[]>(() => listRecentRecipients(5));
   const [relayStatus, setRelayStatus] = useState<RelayStatus | null>(null);
+  const [threshold, setThreshold] = useState<bigint | null>(null);
   const [, setNowTick] = useState(0); // re-render every minute for countdown
   const sendInFlightRef = useRef(false);
+
+  // Threshold guard: the relay submits exactly ONE passkey signature, so a Safe
+  // whose threshold was raised above 1 (legitimately possible for the EOA owner
+  // via app.safe.global) would revert every relayed send. Detect it up-front and
+  // block, instead of burning a Face ID ceremony + a free relay slot on a doomed
+  // transaction that would surface as an opaque "Submit failed".
+  useEffect(() => {
+    if (!safeAddress) return;
+    let cancelled = false;
+    readSafeThreshold(safeAddress).then((t) => {
+      if (!cancelled) setThreshold(t);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [safeAddress]);
+  const thresholdBlocked = threshold !== null && threshold > 1n;
 
   // Pull a fresh balance on mount when the store is empty (deep-link to /send
   // without going through Home first). The store is populated by Wallet.tsx
@@ -194,7 +212,12 @@ export function Send() {
   const isSelfSend = isAddress(to) && !!safeAddress && to.toLowerCase() === safeAddress.toLowerCase();
 
   const valid =
-    isAddress(to) && parsedAmount.ok && !quotaExhausted && !overBalance && !isSelfSend;
+    isAddress(to) &&
+    parsedAmount.ok &&
+    !quotaExhausted &&
+    !overBalance &&
+    !isSelfSend &&
+    !thresholdBlocked;
 
   let amountErrorMsg: string | undefined;
   if (amountShowsError && !parsedAmount.ok) {
@@ -278,6 +301,17 @@ export function Send() {
     setBusy(true);
     haptic('tap');
     try {
+      // Last-moment threshold re-check (the mount read can be stale — the
+      // threshold can be raised on-chain at any time from app.safe.global).
+      // One cheap RPC read is worth never burning a Face ID on a doomed tx.
+      const tNow = await readSafeThreshold(safeAddress);
+      if (tNow !== null && tNow > 1n) {
+        setThreshold(tNow);
+        throw new Error(
+          `Prag potpisa ovog Safe-a je ${tNow} — aplikacija potpisuje samo jednim passkeyem. Šalji kroz app.safe.global ili vrati prag na 1.`,
+        );
+      }
+
       const value = parseUnits(parsedAmount.normalized, EURE_DECIMALS);
       const data = encodeFunctionData({
         abi: erc20Abi,
@@ -348,6 +382,27 @@ export function Send() {
 
   return (
     <div className="flex flex-col gap-6">
+      {thresholdBlocked && (
+        <Card padding="md" className="flex flex-col gap-2 border-brand-red-500/40">
+          <p className="text-sm font-medium text-ink-primary">
+            Prag potpisa je {threshold!.toString()} — slanje iz aplikacije je blokirano
+          </p>
+          <p className="text-sm text-ink-secondary leading-snug">
+            Broj potrebnih potpisa ovog Safe-a podignut je iznad 1 (npr. kroz
+            app.safe.global). Passkey daje jedan potpis, pa transakcija odavde ne bi
+            prošla. Šalji kroz{' '}
+            <a
+              href={`https://app.safe.global/home?safe=gno:${safeAddress}`}
+              target="_blank"
+              rel="noreferrer"
+              className="underline text-brand-navy-500"
+            >
+              app.safe.global
+            </a>{' '}
+            ili tamo vrati prag na 1.
+          </p>
+        </Card>
+      )}
       <Section title="Pošalji EURe" description="Na Gnosis Chain, bez gas-a za tebe">
         <Card className="flex flex-col gap-5">
           <RecipientChips
