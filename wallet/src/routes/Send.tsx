@@ -28,7 +28,7 @@ import { relayTx, getRelayStatus, type RelayStatus } from '../lib/relay';
 import { getEureBalance } from '../lib/balance';
 
 export function Send() {
-  const { safeAddress, credentialId, signerAddress, balance, setBalance, saltNonce, recoveryOwner, accountKind } =
+  const { safeAddress, credentialId, signerAddress, balance, setBalance, saltNonce, recoveryOwner, accountKind, simpleMode } =
     useWalletStore();
   const { toast } = useToast();
   const [to, setTo] = useState('');
@@ -403,8 +403,25 @@ export function Send() {
           </p>
         </Card>
       )}
-      <Section title="Pošalji EURe" description="Na Gnosis Chain, bez gas-a za tebe">
+      <Section
+        title={simpleMode ? 'Pošalji novac' : 'Pošalji EURe'}
+        description={simpleMode ? undefined : 'Na Gnosis Chain, bez gas-a za tebe'}
+      >
         <Card className="flex flex-col gap-5">
+          {simpleMode && (
+            <Button
+              onClick={() => {
+                haptic('tap');
+                setScanOpen(true);
+              }}
+              variant="secondary"
+              size="lg"
+              block
+            >
+              <ScanLine className="h-5 w-5" />
+              Skeniraj QR kod
+            </Button>
+          )}
           <RecipientChips
             recipients={visibleRecents}
             onPick={(addr) => {
@@ -415,7 +432,7 @@ export function Send() {
           />
           <Field
             label="Primatelj"
-            hint="Gnosis Chain · EVM adresa"
+            hint={simpleMode ? undefined : 'Gnosis Chain · EVM adresa'}
             error={recipientErrorMsg}
           >
             {() => (
@@ -490,7 +507,13 @@ export function Send() {
 
           <Button onClick={send} disabled={!valid || busy} size="xl" block>
             <Fingerprint className="h-5 w-5" />
-            {busy ? 'Potpisujem & šaljem…' : 'Potpiši s Face ID i pošalji'}
+            {busy
+              ? simpleMode
+                ? 'Šaljem…'
+                : 'Potpisujem & šaljem…'
+              : simpleMode
+                ? 'Pošalji'
+                : 'Potpiši s Face ID i pošalji'}
           </Button>
 
           {error && (
@@ -513,19 +536,23 @@ export function Send() {
               {parsedAmount.ok ? parsedAmount.normalized : amount} EURe → {shortAddr(to)}
             </p>
           </div>
-          <a
-            href={`https://gnosisscan.io/tx/${txHash}`}
-            target="_blank"
-            rel="noreferrer"
-            className="inline-flex items-center justify-center gap-2 rounded-2xl border border-surface-border bg-surface-sunken px-4 py-3 text-sm font-medium text-ink-primary hover:bg-surface-muted transition"
-          >
-            Pogledaj na Gnosisscan
-            <ExternalLink className="h-4 w-4" />
-          </a>
+          {!simpleMode && (
+            <a
+              href={`https://gnosisscan.io/tx/${txHash}`}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex items-center justify-center gap-2 rounded-2xl border border-surface-border bg-surface-sunken px-4 py-3 text-sm font-medium text-ink-primary hover:bg-surface-muted transition"
+            >
+              Pogledaj na Gnosisscan
+              <ExternalLink className="h-4 w-4" />
+            </a>
+          )}
         </Card>
       )}
 
-      <RelayQuotaBadge status={relayStatus} />
+      {/* Simple mode: the gas/quota mechanics stay invisible until they
+          actually block a send — then the user must see why. */}
+      {(!simpleMode || quotaExhausted) && <RelayQuotaBadge status={relayStatus} />}
 
       <ScannerSheet open={scanOpen} onOpenChange={setScanOpen} onResult={handleScanResult} />
       <AddressBookSheet

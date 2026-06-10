@@ -41,7 +41,7 @@ type Mode = 'sepa' | 'p2p';
 const AMOUNT_PRESETS = ['10', '25', '50', '100'];
 
 export function Receive() {
-  const { safeAddress } = useWalletStore();
+  const { safeAddress, simpleMode } = useWalletStore();
   // Onchain (P2P EURe direct on Gnosis) is the default — fastest path,
   // no third-party rail in the loop, no minimum amount constraint.
   // SEPA top-up via Monerium stays available as a secondary option for
@@ -57,7 +57,7 @@ export function Receive() {
         value={mode}
         onChange={setMode}
         options={[
-          { value: 'p2p', label: 'Drugi wallet', icon: <WalletIcon /> },
+          { value: 'p2p', label: simpleMode ? 'Od osobe' : 'Drugi wallet', icon: <WalletIcon /> },
           { value: 'sepa', label: 'Iz banke', icon: <Landmark /> },
         ]}
       />
@@ -70,7 +70,7 @@ export function Receive() {
 // ───────── SEPA top-up (Monerium payment intent) ─────────
 
 function SepaReceive() {
-  const { safeAddress } = useWalletStore();
+  const { safeAddress, simpleMode } = useWalletStore();
   const { toast } = useToast();
   const { resolved } = useTheme();
   // 1.07 is the shared testing default across both Receive modes — small
@@ -280,8 +280,12 @@ function SepaReceive() {
 
   return (
     <Section
-      title="Top-up iz banke"
-      description="Plati SEPA prijenosom → dobiješ EURe na svoj wallet"
+      title={simpleMode ? 'Uplata iz banke' : 'Top-up iz banke'}
+      description={
+        simpleMode
+          ? 'Generiraj QR i skeniraj ga u svojoj bankovnoj aplikaciji — novac stiže u novčanik.'
+          : 'Plati SEPA prijenosom → dobiješ EURe na svoj wallet'
+      }
     >
       <Card className="flex flex-col gap-5">
         <Field label="Iznos u EUR" error={amountErrorMsg}>
@@ -337,11 +341,14 @@ function SepaReceive() {
 function P2PReceive({ safeAddress }: { safeAddress: `0x${string}` }) {
   const { toast } = useToast();
   const { resolved } = useTheme();
+  const simpleMode = useWalletStore((s) => s.simpleMode);
   // Pre-fill 1.07 so the QR + deep link include an amount immediately on
   // mount; users who want address-only sharing clear the field. Matches
   // SepaReceive's testing default so the value is muscle-memory across
-  // modes.
-  const [amount, setAmount] = useState('1.07');
+  // modes. Simple mode starts EMPTY instead — an everyday user shows an
+  // open-amount QR and the payer types the number; a mysterious pre-filled
+  // 1,07 would read as something they have to understand first.
+  const [amount, setAmount] = useState(simpleMode ? '' : '1.07');
   const qrRef = useRef<HTMLDivElement>(null);
   const qrInstanceRef = useRef<QRCodeStyling | null>(null);
 
@@ -501,57 +508,87 @@ function P2PReceive({ safeAddress }: { safeAddress: `0x${string}` }) {
     }
   }
 
+  const amountField = (
+    <Field label="Iznos (neobavezno)" optional error={amountErrorMsg} hint="Ostavi prazno za otvoreni iznos">
+      {(id) => (
+        <Input
+          id={id}
+          type="text"
+          inputMode="decimal"
+          autoComplete="off"
+          value={amount}
+          onChange={(e) => setAmount(e.target.value)}
+          invalid={amountShowsError}
+          className="text-2xl font-semibold tabular text-center"
+          placeholder="0,00"
+        />
+      )}
+    </Field>
+  );
+
+  const qrCard = (
+    <Card padding="lg" elevation="elevated" className="flex flex-col items-center gap-4">
+      {simpleMode ? (
+        <div className="flex items-center gap-2 text-sm text-ink-secondary">
+          <ScanLine className="h-4 w-4" />
+          Pokaži ovaj kod osobi koja ti šalje novac
+        </div>
+      ) : (
+        <StatusPill tone="info">
+          EIP-681 · Gnosis Chain
+        </StatusPill>
+      )}
+      <div ref={qrRef} className="rounded-2xl overflow-hidden bg-white p-2" />
+      {parsedAmount.ok && (
+        <div className="text-3xl font-semibold tabular text-ink-primary">
+          {Number(parsedAmount.normalized).toLocaleString('hr-HR', {
+            minimumFractionDigits: 2,
+            maximumFractionDigits: 2,
+          })}{' '}
+          <span className="text-lg text-ink-muted">EURe</span>
+        </div>
+      )}
+    </Card>
+  );
+
+  const shareButtons = (
+    <div className="grid grid-cols-2 gap-2">
+      <Button onClick={shareReceive} size="lg" block>
+        <Share2 className="h-4 w-4" />
+        Podijeli
+      </Button>
+      <Button onClick={downloadQr} variant="secondary" size="lg" block>
+        <Download className="h-4 w-4" />
+        Spremi QR
+      </Button>
+    </div>
+  );
+
+  // Simple mode: the QR IS the screen — it leads, sharing follows, the
+  // optional amount comes last. No raw address, no deep link, no protocol
+  // talk; "Podijeli" carries all of that for the rare case it's needed.
+  if (simpleMode) {
+    return (
+      <div className="flex flex-col gap-4">
+        {qrCard}
+        {shareButtons}
+        <Card className="flex flex-col gap-4">{amountField}</Card>
+      </div>
+    );
+  }
+
   return (
     <div className="flex flex-col gap-4">
       <Section
         title="EURe izravno"
         description="Drugi korisnik skenira ovaj QR iz svog wallet-a i pošalje EURe direktno na tvoju Safe adresu na Gnosis Chainu."
       >
-        <Card className="flex flex-col gap-4">
-          <Field label="Iznos (neobavezno)" optional error={amountErrorMsg} hint="Ostavi prazno za otvoreni iznos">
-            {(id) => (
-              <Input
-                id={id}
-                type="text"
-                inputMode="decimal"
-                autoComplete="off"
-                value={amount}
-                onChange={(e) => setAmount(e.target.value)}
-                invalid={amountShowsError}
-                className="text-2xl font-semibold tabular text-center"
-                placeholder="0,00"
-              />
-            )}
-          </Field>
-        </Card>
+        <Card className="flex flex-col gap-4">{amountField}</Card>
       </Section>
 
-      <Card padding="lg" elevation="elevated" className="flex flex-col items-center gap-4">
-        <StatusPill tone="info">
-          EIP-681 · Gnosis Chain
-        </StatusPill>
-        <div ref={qrRef} className="rounded-2xl overflow-hidden bg-white p-2" />
-        {parsedAmount.ok && (
-          <div className="text-3xl font-semibold tabular text-ink-primary">
-            {Number(parsedAmount.normalized).toLocaleString('hr-HR', {
-              minimumFractionDigits: 2,
-              maximumFractionDigits: 2,
-            })}{' '}
-            <span className="text-lg text-ink-muted">EURe</span>
-          </div>
-        )}
-      </Card>
+      {qrCard}
 
-      <div className="grid grid-cols-2 gap-2">
-        <Button onClick={shareReceive} size="lg" block>
-          <Share2 className="h-4 w-4" />
-          Podijeli
-        </Button>
-        <Button onClick={downloadQr} variant="secondary" size="lg" block>
-          <Download className="h-4 w-4" />
-          Spremi QR
-        </Button>
-      </div>
+      {shareButtons}
 
       <Card padding="md" className="flex flex-col divide-y divide-surface-border">
         <div className="flex items-center justify-between gap-3 py-3 first:pt-1 last:pb-1">
