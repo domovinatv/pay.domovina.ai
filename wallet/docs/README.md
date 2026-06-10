@@ -21,6 +21,11 @@ Durable design knowledge for this repo. Read these before touching connect/onboa
   user.id; OS-sheet-title tells you the ceremony; etc.). State diagram.
 - **[deploy-and-pwa.md](./deploy-and-pwa.md)** — deploy command + the service-worker
   staleness / MIME-error traps that repeatedly looked like "my fix didn't ship".
+- **[safe-client-compatibility.md](./safe-client-compatibility.md)** — using DOMOVINA
+  Safes worldwide in standard Safe clients (app.safe.global, Safe Mobile). Why the EOA/seed
+  is the portable interop key (Safe's own apps have no passkey support — verified), that one
+  EOA owns all of a user's accounts, and the refinements (deploy derived accounts; robust
+  seed backup). 2 mermaid diagrams.
 - **[security-custody-model.md](./security-custody-model.md)** — the headline promise:
   auto cross-device sync, but no one (operator, DB breach, Cloudflare) can move funds
   without your Face ID / seed. What the server holds (only public data) vs. what it
