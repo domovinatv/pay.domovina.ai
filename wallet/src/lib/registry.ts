@@ -15,6 +15,9 @@ export type WalletRegistryView = {
   signer_address: Address;
   safe_address: Address;
   rp_id: string;
+  /** ADR 0013 reusable recovery owner (public address). Absent on legacy records /
+   * older backends; lets a new device restore the identity's mint capability. */
+  recovery_owner?: Address | null;
   has_phone: boolean;
   created_at: string;
   phone_bound_at: string | null;
@@ -79,6 +82,7 @@ export async function registerAccountWithBackend(args: {
   safeAddress: Address;
   saltNonce: string;
   recoveryOwner: Address;
+  name: string;
 }): Promise<boolean> {
   try {
     const res = await fetch(
@@ -90,6 +94,7 @@ export async function registerAccountWithBackend(args: {
           safeAddress: args.safeAddress,
           saltNonce: args.saltNonce,
           recoveryOwner: args.recoveryOwner,
+          name: args.name,
         }),
       },
     );
@@ -98,6 +103,32 @@ export async function registerAccountWithBackend(args: {
   } catch (e) {
     console.warn('[registry] register account threw', e);
     return false;
+  }
+}
+
+/** A derived account as returned by the backend (cross-device restore). */
+export type BackendAccount = {
+  safe_address: Address;
+  salt_nonce: string;
+  recovery_owner: Address;
+  name: string;
+  created_at: string;
+};
+
+/** Fetch an identity's derived accounts from the backend so a new device can show
+ * ALL of the user's accounts, not just the bootstrap one. Best-effort: returns []
+ * on 404 (older backend / none) or any network error. */
+export async function fetchAccountsFromBackend(credentialId: string): Promise<BackendAccount[]> {
+  try {
+    const res = await fetch(
+      `${PAYMENT_INTENT_API_BASE}/api/wallets/${encodeURIComponent(credentialId)}/accounts`,
+    );
+    if (!res.ok) return [];
+    const body = (await res.json()) as { accounts?: BackendAccount[] };
+    return body.accounts ?? [];
+  } catch (e) {
+    console.warn('[registry] fetch accounts threw', e);
+    return [];
   }
 }
 

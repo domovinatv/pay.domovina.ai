@@ -11,6 +11,9 @@ export interface WalletRow {
   user_agent: string | null;
   created_at: number;
   phone_bound_at: number | null;
+  /** ADR 0013 reusable recovery owner (public address). NULL on legacy rows /
+   * wallets registered before recovery_owner was stored. */
+  recovery_owner: string | null;
 }
 
 export interface RegisterWalletArgs {
@@ -21,15 +24,18 @@ export interface RegisterWalletArgs {
   safeAddress: string;
   rpId: string;
   userAgent?: string | null;
+  /** Optional ADR 0013 recovery owner (public address, never the mnemonic). */
+  recoveryOwner?: string | null;
 }
 
 export async function registerWallet(env: Env, args: RegisterWalletArgs): Promise<void> {
   const now = Math.floor(Date.now() / 1000);
+  const recoveryOwner = args.recoveryOwner ? args.recoveryOwner.toLowerCase() : null;
   await env.DB.prepare(
     `INSERT OR IGNORE INTO wallet_registry
        (credential_id, pub_key_x, pub_key_y, signer_address, safe_address,
-        phone_hash, rp_id, user_agent, created_at, phone_bound_at)
-     VALUES (?, ?, ?, ?, ?, NULL, ?, ?, ?, NULL)`,
+        phone_hash, rp_id, user_agent, created_at, phone_bound_at, recovery_owner)
+     VALUES (?, ?, ?, ?, ?, NULL, ?, ?, ?, NULL, ?)`,
   )
     .bind(
       args.credentialId,
@@ -40,8 +46,73 @@ export async function registerWallet(env: Env, args: RegisterWalletArgs): Promis
       args.rpId,
       (args.userAgent ?? null)?.slice(0, 255) ?? null,
       now,
+      recoveryOwner,
     )
     .run();
+  // Backfill recovery_owner for an existing row that predates the column (the
+  // INSERT above is a no-op once the credential exists). Only fills when empty.
+  if (recoveryOwner) {
+    await env.DB.prepare(
+      `UPDATE wallet_registry SET recovery_owner = ?
+        WHERE credential_id = ? AND recovery_owner IS NULL`,
+    )
+      .bind(recoveryOwner, args.credentialId)
+      .run();
+  }
+}
+
+// ── Derived accounts (ADR 0013) ───────────────────────────────────────────────
+
+export interface AccountRow {
+  credential_id: string;
+  safe_address: string;
+  salt_nonce: string;
+  recovery_owner: string;
+  name: string;
+  created_at: number;
+}
+
+export interface UpsertAccountArgs {
+  credentialId: string;
+  safeAddress: string;
+  saltNonce: string;
+  recoveryOwner: string;
+  name: string;
+}
+
+/** Persist (or rename) a derived account for an identity. Idempotent on
+ * (credential_id, safe_address); a repeat call just refreshes the name. */
+export async function upsertAccount(env: Env, args: UpsertAccountArgs): Promise<void> {
+  const now = Math.floor(Date.now() / 1000);
+  await env.DB.prepare(
+    `INSERT INTO wallet_accounts
+       (credential_id, safe_address, salt_nonce, recovery_owner, name, created_at)
+     VALUES (?, ?, ?, ?, ?, ?)
+     ON CONFLICT(credential_id, safe_address)
+       DO UPDATE SET name = excluded.name`,
+  )
+    .bind(
+      args.credentialId,
+      args.safeAddress.toLowerCase(),
+      args.saltNonce,
+      args.recoveryOwner.toLowerCase(),
+      args.name.slice(0, 120),
+      now,
+    )
+    .run();
+}
+
+/** All derived accounts for an identity, oldest first. */
+export async function listAccountsByCredential(
+  env: Env,
+  credentialId: string,
+): Promise<AccountRow[]> {
+  const res = await env.DB.prepare(
+    `SELECT * FROM wallet_accounts WHERE credential_id = ? ORDER BY created_at ASC`,
+  )
+    .bind(credentialId)
+    .all<AccountRow>();
+  return res.results ?? [];
 }
 
 export async function getWalletByCredentialId(

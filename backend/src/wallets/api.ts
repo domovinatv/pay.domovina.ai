@@ -6,10 +6,13 @@ import {
   getVerificationStats,
   getWalletByCredentialId,
   getWalletsBySafeAddress,
+  listAccountsByCredential,
   listPhoneBindingsForCredential,
   markOtpConsumed,
   registerWallet,
+  upsertAccount,
   upsertPhoneBinding,
+  type AccountRow,
   type PhoneBindingRow,
 } from './db';
 import { fetchOtpVerification, hashPhone } from './otp';
@@ -37,10 +40,18 @@ interface RegisterBody {
   signerAddress?: string;
   safeAddress?: string;
   rpId?: string;
+  recoveryOwner?: string;
 }
 
 interface BindPhoneBody {
   otpVerificationId?: string;
+}
+
+interface AccountBody {
+  safeAddress?: string;
+  saltNonce?: string;
+  recoveryOwner?: string;
+  name?: string;
 }
 
 export function buildWalletApi(): Hono<{ Bindings: Env }> {
@@ -71,6 +82,10 @@ export function buildWalletApi(): Hono<{ Bindings: Env }> {
     if (!body.rpId || body.rpId.length > 253) {
       return c.json({ error: 'invalid_rp_id' }, 400);
     }
+    // recoveryOwner is optional (legacy clients omit it). Validate only if present.
+    if (body.recoveryOwner !== undefined && !ADDR_RE.test(body.recoveryOwner)) {
+      return c.json({ error: 'invalid_recovery_owner' }, 400);
+    }
     await registerWallet(c.env, {
       credentialId: body.credentialId,
       pubKeyX: body.pubKeyX,
@@ -78,6 +93,7 @@ export function buildWalletApi(): Hono<{ Bindings: Env }> {
       signerAddress: body.signerAddress,
       safeAddress: body.safeAddress,
       rpId: body.rpId,
+      recoveryOwner: body.recoveryOwner ?? null,
       userAgent: c.req.header('User-Agent') ?? null,
     });
     const row = await getWalletByCredentialId(c.env, body.credentialId);
@@ -177,7 +193,63 @@ export function buildWalletApi(): Hono<{ Bindings: Env }> {
     });
   });
 
+  // ADR 0013 derived accounts: list / persist the extra Safe accounts an identity
+  // has minted, so cross-device login can restore ALL of them (not just bootstrap).
+  api.get('/:credentialId/accounts', async (c) => {
+    const credentialId = c.req.param('credentialId');
+    if (!HEX_RE.test(credentialId)) return c.json({ error: 'invalid_credential_id' }, 400);
+    const rows = await listAccountsByCredential(c.env, credentialId);
+    return c.json({ accounts: rows.map(viewAccount) });
+  });
+
+  api.post('/:credentialId/accounts', async (c) => {
+    const credentialId = c.req.param('credentialId');
+    if (!HEX_RE.test(credentialId)) return c.json({ error: 'invalid_credential_id' }, 400);
+
+    let body: AccountBody;
+    try {
+      body = await c.req.json<AccountBody>();
+    } catch {
+      return c.json({ error: 'invalid_json' }, 400);
+    }
+    if (!body.safeAddress || !ADDR_RE.test(body.safeAddress)) {
+      return c.json({ error: 'invalid_safe_address' }, 400);
+    }
+    if (!body.saltNonce || !BIGINT_RE.test(body.saltNonce)) {
+      return c.json({ error: 'invalid_salt_nonce' }, 400);
+    }
+    if (!body.recoveryOwner || !ADDR_RE.test(body.recoveryOwner)) {
+      return c.json({ error: 'invalid_recovery_owner' }, 400);
+    }
+    const name = (body.name ?? '').trim();
+    if (!name || name.length > 120) {
+      return c.json({ error: 'invalid_name' }, 400);
+    }
+    await upsertAccount(c.env, {
+      credentialId,
+      safeAddress: body.safeAddress,
+      saltNonce: body.saltNonce,
+      recoveryOwner: body.recoveryOwner,
+      name,
+    });
+    const rows = await listAccountsByCredential(c.env, credentialId);
+    return c.json({ accounts: rows.map(viewAccount) });
+  });
+
   return api;
+}
+
+/// Derived-account view. All fields public (deterministic address, salt, the
+/// recovery owner's public address). created_at as ISO to match the wallet's
+/// AccountRecord.createdAt shape.
+function viewAccount(a: AccountRow): Record<string, unknown> {
+  return {
+    safe_address: a.safe_address,
+    salt_nonce: a.salt_nonce,
+    recovery_owner: a.recovery_owner,
+    name: a.name,
+    created_at: isoFromUnix(a.created_at),
+  };
 }
 
 /// Shared view shape — used by the public registry endpoints AND by the
@@ -202,6 +274,7 @@ export function publicWalletView(
     signer_address: row.signer_address,
     safe_address: row.safe_address,
     rp_id: row.rp_id,
+    recovery_owner: row.recovery_owner ?? null,
     has_phone: row.phone_hash !== null,
     created_at: isoFromUnix(row.created_at),
     phone_bound_at: row.phone_bound_at ? isoFromUnix(row.phone_bound_at) : null,

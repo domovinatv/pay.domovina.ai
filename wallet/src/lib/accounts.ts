@@ -22,7 +22,7 @@
 import type { Address } from 'viem';
 import { predictSafeAddressForOwners } from './safe';
 import { listKnownPasskeys, lookupPasskey, type PasskeyRecord } from './passkey';
-import { registerAccountWithBackend } from './registry';
+import { fetchAccountsFromBackend, registerAccountWithBackend } from './registry';
 
 const STORAGE_KEY_V3 = 'domovina_accounts_v3';
 const ACTIVE_ACCOUNT_KEY = 'domovina_active_account';
@@ -217,7 +217,7 @@ export async function deriveAccount(
   saveAccounts(reg);
   setActiveAccountAddress(safeAddress);
 
-  void registerAccountWithBackend({ credentialId, safeAddress, saltNonce, recoveryOwner });
+  void registerAccountWithBackend({ credentialId, safeAddress, saltNonce, recoveryOwner, name: rec.name });
 
   const acc = derivedToAccount(rec);
   if (!acc) throw new Error('Neuspješno kreiranje računa.');
@@ -252,6 +252,60 @@ export function setActiveAccountAddress(safeAddress: string): void {
 /** Whether an identity can mint additional accounts (has a recovery owner). */
 export function canDeriveAccounts(credentialId: string): boolean {
   return !!lookupPasskey(credentialId)?.recoveryOwner;
+}
+
+/**
+ * Two-way sync of an identity's derived accounts with the backend, so the SAME N
+ * accounts show on every device (ADR 0013 cross-device restore). Call after entering
+ * the wallet (especially a cross-device open):
+ *   1. PULL — add any backend account missing from this device's local store
+ *      (the second-device case: accounts minted elsewhere become visible here);
+ *   2. PUSH — register any local-only account the backend doesn't have yet
+ *      (backfills accounts minted before the backend endpoint existed, so they
+ *      finally become visible on other devices).
+ * Best-effort and idempotent; never throws. Returns true if the local store changed
+ * (so the caller can refresh a list). The Safe addresses are deterministic CREATE2,
+ * so a pulled account is byte-identical to one derived locally.
+ */
+export async function syncAccountsWithBackend(credentialId: string): Promise<boolean> {
+  const id = lookupPasskey(credentialId);
+  if (!id) return false;
+  const remote = await fetchAccountsFromBackend(credentialId);
+
+  const reg = loadAccounts();
+  let changed = false;
+  for (const r of remote) {
+    const key = r.safe_address.toLowerCase();
+    if (!reg[key]) {
+      reg[key] = {
+        safeAddress: r.safe_address,
+        credentialId,
+        saltNonce: r.salt_nonce,
+        recoveryOwner: r.recovery_owner,
+        name: r.name,
+        createdAt: r.created_at,
+      };
+      changed = true;
+    }
+  }
+  if (changed) saveAccounts(reg);
+
+  // Push local-only accounts up (backfill). Skip if this identity has no recovery
+  // owner snapshot on the record (can't happen for derived records — they always
+  // store it — but guards a malformed entry).
+  const remoteKeys = new Set(remote.map((r) => r.safe_address.toLowerCase()));
+  for (const rec of derivedRecordsFor(credentialId)) {
+    if (!remoteKeys.has(rec.safeAddress.toLowerCase())) {
+      void registerAccountWithBackend({
+        credentialId,
+        safeAddress: rec.safeAddress,
+        saltNonce: rec.saltNonce,
+        recoveryOwner: rec.recoveryOwner,
+        name: rec.name,
+      });
+    }
+  }
+  return changed;
 }
 
 /** Suggested one-tap account names for the "Novi račun" step. */

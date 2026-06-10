@@ -39,7 +39,12 @@ import {
 } from '../lib/passkey';
 import { RP_ID } from '../lib/constants';
 import { createBootstrapEoa, signAttach, submitBootstrapDeploy } from '../lib/bootstrap';
-import { bootstrapAccountView, deriveAccount, setActiveAccountAddress } from '../lib/accounts';
+import {
+  bootstrapAccountView,
+  deriveAccount,
+  setActiveAccountAddress,
+  syncAccountsWithBackend,
+} from '../lib/accounts';
 import { fetchEureBalances, formatEureShort } from '../lib/balances';
 import {
   lookupWallet,
@@ -471,6 +476,8 @@ export function Landing() {
     const healed = await healStubPubKey(record);
     setActivePasskey(healed.credentialId);
     setActiveAccountAddress(healed.safeAddress);
+    // Backfill local accounts → backend + pull any minted on another device.
+    void syncAccountsWithBackend(healed.credentialId);
     if (maybeReturn(healed)) return;
     setAccount(bootstrapAccountView(healed));
   }
@@ -503,6 +510,9 @@ export function Landing() {
         safeAddress: remote.safe_address,
         createdAt: remote.created_at,
         rpId: remote.rp_id,
+        // Restore the identity's recovery owner so THIS device can also mint
+        // further accounts ("Novi račun"), not just view the synced ones.
+        recoveryOwner: remote.recovery_owner ?? undefined,
       };
       savePasskey(restored);
       record = restored;
@@ -514,6 +524,10 @@ export function Landing() {
     }
     setActivePasskey(record.credentialId);
     setActiveAccountAddress(record.safeAddress);
+    // Cross-device restore: pull this identity's derived accounts from the backend
+    // (so ALL N show in the switcher, not just bootstrap) and backfill any local-only
+    // ones up. Fire-and-forget — WalletSwitcher reads localStorage live on open.
+    void syncAccountsWithBackend(record.credentialId);
     // SDK connect handoff: if opened via "Kreiraj/Imam novčanik" from a host
     // page, redirect the wallet identity back instead of entering the UI.
     if (maybeReturn(record)) return;
