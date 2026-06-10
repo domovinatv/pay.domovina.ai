@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   KeyRound,
   ShieldCheck,
@@ -24,15 +24,20 @@ import { humanizeError } from '../lib/errors';
 import {
   archivePasskey,
   createPasskey,
+  discoverViaConditional,
   identityKeychainName,
+  isConditionalMediationSupported,
   listKnownPasskeys,
   lookupPasskey,
   passkeyProviderHint,
   pickExistingPasskey,
+  recordRpId,
   savePasskey,
   setActivePasskey,
+  signalRemovePasskey,
   type PasskeyRecord,
 } from '../lib/passkey';
+import { RP_ID } from '../lib/constants';
 import { createBootstrapEoa, signAttach, submitBootstrapDeploy } from '../lib/bootstrap';
 import { bootstrapAccountView, deriveAccount, setActiveAccountAddress } from '../lib/accounts';
 import { fetchEureBalances, formatEureShort } from '../lib/balances';
@@ -54,7 +59,7 @@ type Stage =
   | { kind: 'welcome' }
   | { kind: 'welcome-known'; known: PasskeyRecord[] }
   | { kind: 'confirm-create-many'; existingCount: number }
-  | { kind: 'confirm-archive'; record: PasskeyRecord }
+  | { kind: 'confirm-archive'; record: PasskeyRecord; balance?: bigint }
   | { kind: 'naming' }
   // A create that hit InvalidStateError found an existing passkey on this device.
   // We NEVER auto-enter it (it may be a broken/orphan one) — the user explicitly
@@ -225,6 +230,61 @@ export function Landing() {
     }
   }, [stage.kind]);
 
+  // ── Conditional-mediation (autofill) discovery — the zero-friction probe.
+  // On the welcome stages we arm a background, NON-modal WebAuthn get() that
+  // surfaces the user's existing passkeys (incl. iCloud/Google-synced ones not in
+  // this device's localStorage) via OS autofill. If the user taps a suggestion we
+  // OPEN that wallet instead of letting them create a duplicate. Invisible when no
+  // passkey exists (no first-timer trap) — and where unsupported, the modal probe
+  // in confirmCreate is the fallback. Requires the autocomplete="webauthn" field
+  // rendered below. See docs/passkey-onboarding-industry-standards.md.
+  const [condSupported, setCondSupported] = useState(false);
+  const conditionalAbortRef = useRef<AbortController | null>(null);
+  function abortConditional() {
+    conditionalAbortRef.current?.abort();
+    conditionalAbortRef.current = null;
+  }
+
+  useEffect(() => {
+    isConditionalMediationSupported().then(setCondSupported);
+  }, []);
+
+  useEffect(() => {
+    if (!condSupported) return;
+    if (stage.kind !== 'welcome' && stage.kind !== 'welcome-known') return;
+    let done = false;
+    const ctrl = new AbortController();
+    conditionalAbortRef.current = ctrl;
+    (async () => {
+      const credId = await discoverViaConditional(RP_ID, ctrl.signal);
+      if (done || !credId) return;
+      conditionalAbortRef.current = null;
+      setStage({ kind: 'opening' });
+      try {
+        await enterByCredentialId(credId);
+      } catch (e) {
+        if (e instanceof UnusableWalletError) {
+          setStage({ kind: 'unusable-passkey' });
+        } else if (e instanceof RegistryUnavailableError) {
+          setStage({
+            kind: 'error',
+            message: 'Ne mogu dohvatiti tvoj novčanik (mreža ili server). Pokušaj ponovno.',
+          });
+        } else {
+          setStage({ kind: 'error', message: humanizeError(e, 'passkey') });
+        }
+      }
+    })();
+    return () => {
+      done = true;
+      ctrl.abort();
+      if (conditionalAbortRef.current === ctrl) conditionalAbortRef.current = null;
+    };
+    // enterByCredentialId is stable enough for this effect; re-arming on stage.kind
+    // + condSupported is the intended trigger.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [condSupported, stage.kind]);
+
   function startCreate() {
     haptic('tap');
     const known = listKnownPasskeys();
@@ -242,14 +302,19 @@ export function Landing() {
     setStage({ kind: 'naming' });
   }
 
-  function requestArchive(record: PasskeyRecord) {
+  function requestArchive(record: PasskeyRecord, balance?: bigint) {
     haptic('tap');
-    setStage({ kind: 'confirm-archive', record });
+    setStage({ kind: 'confirm-archive', record, balance });
   }
 
   function confirmArchive(record: PasskeyRecord) {
     haptic('success');
     archivePasskey(record.credentialId);
+    // Best-effort: ask the password manager (Apple Passwords / Google PM) to also
+    // REMOVE the stale entry — the only standard way to clean up a duplicate (the
+    // local archive alone leaves the OS entry behind). Advisory + only on recent
+    // Chrome/Safari, so ConfirmArchiveView also shows a manual-delete instruction.
+    void signalRemovePasskey(recordRpId(record), record.credentialId);
     const known = listKnownPasskeys();
     setStage(known.length > 0 ? { kind: 'welcome-known', known } : { kind: 'welcome' });
   }
@@ -266,6 +331,7 @@ export function Landing() {
    */
   async function confirmCreate() {
     haptic('tap');
+    abortConditional(); // release the autofill get() before any explicit ceremony
     const known = listKnownPasskeys();
 
     // Phase-1 duplicate guard (docs/passkey-onboarding-industry-standards.md).
@@ -455,6 +521,7 @@ export function Landing() {
   }
 
   async function openExisting(opts: { legacyOnly?: boolean } = {}) {
+    abortConditional(); // release the autofill get() before the explicit picker
     setStage({ kind: 'opening' });
     haptic('tap');
     try {
@@ -549,6 +616,10 @@ export function Landing() {
       )}
 
       <main className="flex-1 flex flex-col justify-center gap-8 pb-12">
+        {condSupported && (stage.kind === 'welcome' || stage.kind === 'welcome-known') && (
+          <ConditionalSignInField />
+        )}
+
         {stage.kind === 'welcome' && (
           <WelcomeView onCreate={startCreate} onCrossDevice={() => openExisting()} />
         )}
@@ -574,6 +645,7 @@ export function Landing() {
         {stage.kind === 'confirm-archive' && (
           <ConfirmArchiveView
             record={stage.record}
+            balance={stage.balance}
             onCancel={resetToWelcome}
             onConfirm={() => confirmArchive(stage.record)}
           />
@@ -778,6 +850,33 @@ function UnusablePasskeyView({
   );
 }
 
+/** Autofill anchor for conditional-mediation passkey discovery. The actual get()
+ * is armed in Landing's effect; this just provides the autocomplete="webauthn"
+ * field the OS attaches passkey suggestions to. The user doesn't type — tapping the
+ * field surfaces their saved passkey (where the platform supports it). */
+function ConditionalSignInField() {
+  return (
+    <div className="flex flex-col gap-1.5">
+      <label htmlFor="dw-passkey-autofill" className="px-1 text-xs text-ink-muted">
+        Već imaš novčanik na ovom uređaju ili u iCloud / Google?
+      </label>
+      <div className="relative">
+        <Fingerprint className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-muted" />
+        <input
+          id="dw-passkey-autofill"
+          type="text"
+          autoComplete="webauthn"
+          autoCorrect="off"
+          autoCapitalize="off"
+          spellCheck={false}
+          placeholder="Dodirni i odaberi spremljeni passkey"
+          className="w-full rounded-2xl border border-surface-border bg-surface-raised py-3 pl-9 pr-3 text-sm text-ink-primary placeholder:text-ink-muted focus:outline-none focus:ring-2 focus:ring-brand-navy-300"
+        />
+      </div>
+    </div>
+  );
+}
+
 function WelcomeView({
   onCreate,
   onCrossDevice,
@@ -835,7 +934,7 @@ function WelcomeKnownView({
   onOpenKnown: (record: PasskeyRecord) => void;
   onCreate: () => void;
   onCrossDevice: () => void;
-  onRequestArchive: (record: PasskeyRecord) => void;
+  onRequestArchive: (record: PasskeyRecord, balance?: bigint) => void;
 }) {
   const activeCred = useWalletStore((s) => s.credentialId);
   const balances = useEureBalances(known);
@@ -883,7 +982,7 @@ function WelcomeKnownView({
             balance={balances.get(record.safeAddress.toLowerCase())}
             active={record.credentialId === activeCred}
             onOpen={() => onOpenKnown(record)}
-            onArchive={() => onRequestArchive(record)}
+            onArchive={() => onRequestArchive(record, balances.get(record.safeAddress.toLowerCase()))}
           />
         ))}
       </div>
@@ -1073,43 +1172,71 @@ function ConfirmCreateManyView({
 
 function ConfirmArchiveView({
   record,
+  balance,
   onCancel,
   onConfirm,
 }: {
   record: PasskeyRecord;
+  balance?: bigint;
   onCancel: () => void;
   onConfirm: () => void;
 }) {
+  const funded = balance !== undefined && balance > 0n;
   return (
     <div className="flex flex-col gap-6 animate-route-enter">
       <div className="text-center flex flex-col gap-2">
         <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-surface-sunken text-ink-secondary">
           <Archive className="h-7 w-7" />
         </div>
-        <h2 className="text-2xl font-semibold text-ink-primary">Sakrij wallet s liste?</h2>
+        <h2 className="text-2xl font-semibold text-ink-primary">Ukloni ovaj novčanik?</h2>
         <p className="text-sm text-ink-secondary max-w-sm mx-auto">
           <span className="font-mono text-ink-primary">{shorten(record.safeAddress)}</span>{' '}
-          ({displayPasskeyLabel(record)}) izlazi iz lokalnog popisa.
+          ({displayPasskeyLabel(record)})
+        </p>
+        <p className="text-sm">
+          <span className="text-ink-muted">Stanje: </span>
+          <span className={funded ? 'font-semibold text-brand-red-700' : 'font-medium text-ink-secondary'}>
+            {balance === undefined ? '…' : `${formatEureShort(balance)} EURe`}
+          </span>
         </p>
       </div>
 
+      {funded ? (
+        <Card padding="md" className="flex items-start gap-2 border-brand-red-500/40 text-sm text-brand-red-700">
+          <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
+          <p>
+            Ovaj novčanik <span className="font-semibold">ima sredstva</span>. Ako ga ukloniš
+            ovdje, novci ostaju na adresi na blockchainu, ali ga moraš ponovno otvoriti
+            (passkey / recovery ključ) da im pristupiš. Razmisli prije nego nastaviš.
+          </p>
+        </Card>
+      ) : (
+        <Card padding="md" className="flex flex-col gap-2 text-sm text-ink-secondary">
+          <p>
+            <span className="font-medium text-ink-primary">Prazan novčanik.</span> Sigurno za
+            uklanjanje — novci (ako ikad stignu) ostaju na adresi na blockchainu.
+          </p>
+        </Card>
+      )}
+
       <Card padding="md" className="flex flex-col gap-2 text-sm text-ink-secondary">
         <p>
-          <span className="font-medium text-ink-primary">Novci ostaju netaknuti</span> na adresi i u
-          Safe-u na blockchainu. Passkey ostaje u iCloud Keychain / Google Password
-          Manageru.
+          Pokušat ćemo ga ukloniti i iz{' '}
+          <span className="font-medium text-ink-primary">Apple Passwords / Google</span>{' '}
+          menadžera lozinki. Ako tvoj uređaj to (još) ne podržava, unos ostaje — obriši ga
+          ručno u postavkama menadžera lozinki.
         </p>
         <p>
-          Možeš ga uvijek vratiti preko{' '}
-          <span className="font-medium text-ink-primary">Otvori drugi passkey</span> ili{' '}
-          <span className="font-medium text-ink-primary">Stari passkey</span> na sljedećem ekranu.
+          Uvijek ga možeš vratiti preko{' '}
+          <span className="font-medium text-ink-primary">Otvori s drugog uređaja</span> na
+          prethodnom ekranu.
         </p>
       </Card>
 
       <div className="flex flex-col gap-2">
-        <Button onClick={onConfirm} size="xl" block>
+        <Button onClick={onConfirm} size="xl" block variant={funded ? 'secondary' : 'primary'}>
           <Archive className="h-5 w-5" />
-          Da, sakrij s liste
+          {funded ? 'Svejedno ukloni' : 'Ukloni novčanik'}
         </Button>
         <Button onClick={onCancel} variant="ghost" size="md" block>
           Otkaži

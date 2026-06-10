@@ -577,3 +577,92 @@ function bufToHex(buf: ArrayBuffer): string {
   const bytes = new Uint8Array(buf);
   return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
 }
+
+// ── Conditional mediation (autofill) discovery ────────────────────────────────
+
+/** Whether the browser supports conditional WebAuthn (passive passkey autofill). */
+export async function isConditionalMediationSupported(): Promise<boolean> {
+  try {
+    return (
+      typeof window !== 'undefined' &&
+      !!window.PublicKeyCredential &&
+      typeof window.PublicKeyCredential.isConditionalMediationAvailable === 'function' &&
+      (await window.PublicKeyCredential.isConditionalMediationAvailable())
+    );
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Arm a conditional (autofill) discovery for `rpId`: a NON-modal `get()` that
+ * surfaces the user's existing passkeys (incl. iCloud/Google-synced ones not in
+ * this device's localStorage) through the OS autofill UI. Requires an
+ * `autocomplete="webauthn"` field in the DOM. Resolves with the picked
+ * credentialId, or null if aborted / nothing chosen / unsupported. Never throws —
+ * a returned null simply means "fall back to the explicit create/open buttons".
+ */
+export async function discoverViaConditional(
+  rpId: string,
+  signal: AbortSignal,
+): Promise<string | null> {
+  try {
+    const challenge = crypto.getRandomValues(new Uint8Array(32));
+    const assertion = (await navigator.credentials.get({
+      mediation: 'conditional',
+      signal,
+      publicKey: {
+        rpId,
+        challenge: challenge.buffer as ArrayBuffer,
+        userVerification: 'preferred',
+      },
+    })) as PublicKeyCredential | null;
+    if (!assertion) return null;
+    return '0x' + bufToHex(assertion.rawId);
+  } catch {
+    return null;
+  }
+}
+
+// ── WebAuthn Signal API — best-effort password-manager cleanup ────────────────
+
+type SignalCapablePublicKeyCredential = {
+  signalUnknownCredential?: (opts: { rpId: string; credentialId: string }) => Promise<void>;
+};
+
+/** Whether the browser exposes the WebAuthn Signal API (Chrome 132+, Safari 26+). */
+export function isSignalApiSupported(): boolean {
+  if (typeof window === 'undefined' || !window.PublicKeyCredential) return false;
+  return (
+    typeof (window.PublicKeyCredential as unknown as SignalCapablePublicKeyCredential)
+      .signalUnknownCredential === 'function'
+  );
+}
+
+/**
+ * Ask the password manager to REMOVE a passkey entry we've archived (a
+ * confirmed-stale/duplicate). The only standard way to clean up a duplicate — but
+ * ADVISORY (the authenticator decides) and only on recent Chrome/Safari, so callers
+ * MUST still show a manual-delete fallback. Our credentialId is canonical 0x-hex;
+ * the Signal API expects base64url. Never throws.
+ */
+export async function signalRemovePasskey(rpId: string, credentialId: string): Promise<boolean> {
+  try {
+    const PK = window.PublicKeyCredential as unknown as SignalCapablePublicKeyCredential;
+    if (typeof PK.signalUnknownCredential !== 'function') return false;
+    await PK.signalUnknownCredential({ rpId, credentialId: hexToBase64Url(credentialId) });
+    return true;
+  } catch (e) {
+    console.warn('[passkey] signalUnknownCredential failed', e);
+    return false;
+  }
+}
+
+function hexToBase64Url(hex: string): string {
+  const clean = hex.startsWith('0x') ? hex.slice(2) : hex;
+  let bin = '';
+  for (let i = 0; i < clean.length; i += 2) {
+    bin += String.fromCharCode(parseInt(clean.slice(i, i + 2), 16));
+  }
+  return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}

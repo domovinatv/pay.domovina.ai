@@ -174,18 +174,25 @@ problem is one more reason recovery paths must exist independent of dedup hygien
   addr>`, so a duplicate that slips through cross-provider/-device is distinguishable
   in Apple Passwords / Google PM instead of reading as identical.
 
-**Deferred (with rationale):**
-- **Conditional-mediation autofill probe** — the *zero-friction* form of Phase 1.
-  Requires a welcome-screen sign-in field (`autocomplete="webauthn"`) and on-device
-  testing to verify it surfaces on our currently field-less screen; without that it
-  risks a silent no-op. Tracked as a welcome-screen redesign. The shipped modal probe
-  is the deterministic guard in the meantime (we chose a reliable guarantee over the
-  marginal first-timer friction, which only occurs on a truly fresh device).
-- **Signal API cleanup (Phase 3)** — `signalUnknownCredential` (delete a confirmed
-  stale/empty duplicate) needs a careful confirm-balance-zero UX; and
-  `signalAllAcceptedCredentials`'s hide mechanism is keyed by `userId`, which is
-  random-per-passkey here, so it cannot collapse our duplicates — limiting its value.
-  Deferred to a dedicated cleanup-UX piece.
+**Also shipped (second iteration, same day):**
+- **Conditional-mediation autofill discovery** — the *zero-friction* form of Phase 1.
+  The welcome stages now render an `autocomplete="webauthn"` field
+  (`ConditionalSignInField`) and arm a background `get({mediation:'conditional'})`
+  (`discoverViaConditional`, gated on `isConditionalMediationSupported`). A returning
+  user — even with cleared storage / on a second synced device — sees their passkey in
+  OS autofill and taps to OPEN; first-timers see nothing (no trap). The get is aborted
+  before any explicit ceremony (`confirmCreate`/`openExisting`) to avoid an
+  "already pending" clash; the modal probe remains the fallback where conditional UI is
+  unsupported. ⚠️ Needs on-device verification (autofill surfacing varies by
+  platform/version) — that's the manual testing step.
+- **Signal API cleanup** — archiving a wallet now also calls `signalRemovePasskey`
+  (`signalUnknownCredential`, feature-detected, best-effort) to remove the stale entry
+  from Apple Passwords / Google PM; `ConfirmArchiveView` shows the account's **balance**
+  (red warning if funded), marks empty ones safe to remove, and always shows the
+  manual-delete fallback for browsers without the Signal API. We use
+  `signalUnknownCredential` (delete-by-credentialId) and NOT
+  `signalAllAcceptedCredentials` — the latter's hide mechanism is keyed by `userId`,
+  which is random-per-passkey here, so it can't collapse our duplicates.
 
 ## 4. Irreducible limits (set expectations)
 - `excludeCredentials` binds only the provider holding the match → **cross-provider /
