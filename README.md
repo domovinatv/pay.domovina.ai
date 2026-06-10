@@ -62,6 +62,6 @@ Paleta: tamnoplava `#002F6C`, crvena `#FF0000`, bijela `#FFFFFF`.
 
 ## Licenca
 
-Kod je objavljen u istom repozitoriju kao i ostale ITalk d.o.o. interne komponente — za pitanja oko ponovne upotrebe javite se autoru.
+Kod je open source pod **[MIT licencom](./LICENSE)** (© 2026 domovina.tv) — slobodno koristite, mijenjajte i forkajte uz vlastiti branding.
 
 Brand resursi (logotip, ikona, paleta) podliježu licenci **[CC BY-ND 4.0](https://creativecommons.org/licenses/by-nd/4.0/)** definiranoj u [mediakitu](https://github.com/domovinatv/mediakit.domovina.tv).

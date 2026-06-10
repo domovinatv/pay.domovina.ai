@@ -227,6 +227,12 @@ Iz `safe-global/safe-modules-deployments` v0.2.1:
 
 ## Licenca
 
+Kod je open source pod **[MIT licencom](../LICENSE)** (© 2026 domovina.tv). Brand
+resursi (logotip, ikona, paleta) NISU pod MIT — podliježu
+[CC BY-ND 4.0](https://creativecommons.org/licenses/by-nd/4.0/) iz
+[mediakita](https://github.com/domovinatv/mediakit.domovina.tv); fork ide s vlastitim
+brandingom (ADR 0007 brand-as-data to čini trivijalnim).
+
 Ovaj projekt je dio obitelji **Domovina** (vidi [domovina.tv](https://domovina.tv)).
 
 🤖 Generated with [Claude Code](https://claude.com/claude-code).
