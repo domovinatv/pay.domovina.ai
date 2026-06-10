@@ -3,6 +3,10 @@
 Durable design knowledge for this repo. Read these before touching connect/onboarding
 / deploy — the obvious approaches mostly fail in non-obvious ways and these capture why.
 
+- **[user-flows.md](./user-flows.md)** — combinatorially complete map of every user path
+  (happy + dead-end) across every route and state machine, with 12 mermaid diagrams. Plus
+  the **duplicate-passkey root-cause + phased fix plan** (the "two domovina-wallet-v1 in
+  Apple Passwords" bug). Start here for a bird's-eye of the whole app.
 - **[cross-origin-wallet-connect.md](./cross-origin-wallet-connect.md)** — how a passkey
   wallet on `wallet.domovina.ai` is connected by dApps on other domains (e.g. pinka.io).
   Why NOT iframe, why NOT in-page RoR, why a deterministic full-page redirect + cached
