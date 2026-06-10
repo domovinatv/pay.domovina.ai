@@ -20,9 +20,20 @@
  * so the user backs up ONE key that controls everything (ADR 0013 Decision 2).
  */
 import type { Address } from 'viem';
-import { predictSafeAddressForOwners } from './safe';
-import { listKnownPasskeys, lookupPasskey, type PasskeyRecord } from './passkey';
-import { fetchAccountsFromBackend, registerAccountWithBackend } from './registry';
+import { predictSafeAddressForOwners, publicClient, readSafeOwners } from './safe';
+import {
+  listKnownPasskeys,
+  lookupPasskey,
+  recordRpId,
+  savePasskey,
+  type PasskeyRecord,
+} from './passkey';
+import {
+  fetchAccountsFromBackend,
+  lookupWallet,
+  registerAccountWithBackend,
+  registerWalletWithBackend,
+} from './registry';
 
 const STORAGE_KEY_V3 = 'domovina_accounts_v3';
 const ACTIVE_ACCOUNT_KEY = 'domovina_active_account';
@@ -306,6 +317,72 @@ export async function syncAccountsWithBackend(credentialId: string): Promise<boo
     }
   }
   return changed;
+}
+
+async function backfillIdentityToBackend(rec: PasskeyRecord, recoveryOwner: Address): Promise<void> {
+  if (rec.pubKey.x === '0' || rec.pubKey.y === '0') return; // stub — can't register
+  await registerWalletWithBackend({
+    credentialId: rec.credentialId,
+    pubKeyX: rec.pubKey.x,
+    pubKeyY: rec.pubKey.y,
+    signerAddress: rec.signerAddress,
+    safeAddress: rec.safeAddress,
+    rpId: recordRpId(rec),
+    recoveryOwner,
+  });
+}
+
+/**
+ * Make the identity's recovery owner available on THIS device, so "Novi račun" works
+ * everywhere — not just the device that created the wallet. Without it, a second
+ * device can VIEW synced accounts but can't MINT new ones (deriveAccount needs the
+ * recovery owner), and "what if I lose my phone?" has no answer.
+ *
+ * Resolution order (all idempotent, best-effort, never throws):
+ *   1. Already local → re-register to the backend so OTHER devices can pull it.
+ *   2. Backend has it (another device backfilled) → save locally.
+ *   3. Derive it from the bootstrap Safe's ON-CHAIN owners — the non-signer EOA
+ *      (codeless) owner is the recovery owner (ADR-0013 'add' mode keeps it as a
+ *      1-of-2 owner). Works even if the creating device is gone — no duplicate
+ *      passkey needed. Then save locally + backfill the backend.
+ *
+ * NOTE: this is the correct path; "Kreiraj novi wallet" would instead mint a NEW
+ * passkey/identity (a duplicate) and is never the right answer for an existing wallet.
+ */
+export async function ensureRecoveryOwner(credentialId: string): Promise<void> {
+  const rec = lookupPasskey(credentialId);
+  if (!rec) return;
+  if (rec.recoveryOwner) {
+    void backfillIdentityToBackend(rec, rec.recoveryOwner);
+    return;
+  }
+
+  let ro: Address | null = null;
+  try {
+    const remote = await lookupWallet(credentialId);
+    if (remote?.recovery_owner) ro = remote.recovery_owner as Address;
+  } catch {
+    /* ignore — fall through to on-chain */
+  }
+
+  if (!ro) {
+    const owners = await readSafeOwners(rec.safeAddress);
+    const candidates = owners.filter(
+      (o) => o.toLowerCase() !== rec.signerAddress.toLowerCase(),
+    );
+    for (const cand of candidates) {
+      const code = await publicClient.getCode({ address: cand });
+      if (!code || code === '0x') {
+        ro = cand; // EOA (codeless) = the recovery owner; passkey signers are contracts
+        break;
+      }
+    }
+    if (!ro && candidates[0]) ro = candidates[0]; // fallback: first non-signer owner
+  }
+
+  if (!ro) return;
+  savePasskey({ ...rec, recoveryOwner: ro });
+  void backfillIdentityToBackend(rec, ro);
 }
 
 /** Suggested one-tap account names for the "Novi račun" step. */

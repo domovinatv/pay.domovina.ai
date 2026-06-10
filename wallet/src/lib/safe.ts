@@ -116,6 +116,36 @@ const SAFE_NONCE_ABI = [
   },
 ] as const;
 
+const SAFE_GET_OWNERS_ABI = [
+  {
+    inputs: [],
+    name: 'getOwners',
+    outputs: [{ type: 'address[]' }],
+    stateMutability: 'view',
+    type: 'function',
+  },
+] as const;
+
+/**
+ * Read a deployed Safe's owner set. Empty array if the Safe has no code yet
+ * (counterfactual) or the call fails. Used to recover the ADR-0013 recovery owner
+ * (the non-signer EOA owner) on a device that doesn't have it locally — so account
+ * minting works cross-device even if the creating device is gone.
+ */
+export async function readSafeOwners(safeAddress: Address): Promise<Address[]> {
+  const code = await publicClient.getCode({ address: safeAddress });
+  if (!code || code === '0x') return [];
+  try {
+    return (await publicClient.readContract({
+      address: safeAddress,
+      abi: SAFE_GET_OWNERS_ABI,
+      functionName: 'getOwners',
+    })) as Address[];
+  } catch {
+    return [];
+  }
+}
+
 export const SAFE_TX_TYPES = {
   SafeTx: [
     { name: 'to', type: 'address' },

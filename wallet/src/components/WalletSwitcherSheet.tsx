@@ -5,6 +5,7 @@ import {
   listAllAccounts,
   deriveAccount,
   canDeriveAccounts,
+  ensureRecoveryOwner,
   setActiveAccountAddress,
   archiveDerivedAccount,
   ACCOUNT_NAME_SUGGESTIONS,
@@ -54,6 +55,12 @@ export function WalletSwitcherSheet({ open, onOpenChange, onSwitched }: Props) {
     if (!open) return;
     setMode('list');
     reload();
+    // Resolve the identity's recovery owner on this device (backend, else on-chain
+    // Safe owners) so "Novi račun" works cross-device — not just where the wallet
+    // was created. reload() re-renders so canCreate flips on once it lands.
+    if (activeCred) {
+      void ensureRecoveryOwner(activeCred).then(() => reload());
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
@@ -156,8 +163,9 @@ export function WalletSwitcherSheet({ open, onOpenChange, onSwitched }: Props) {
             </Button>
           ) : (
             <p className="text-xs text-ink-muted text-center px-2">
-              Dodatni računi su dostupni za walletove kreirane s recovery ključem.
-              Kreiraj novi wallet da ga uključiš.
+              Recovery ključ se sinkronizira na ovaj uređaj… „Novi račun" se pojavi čim
+              se učita. Ako ne, otvori wallet na uređaju gdje je kreiran. (Ne radi
+              „Kreiraj novi wallet" — to bi napravilo novi passkey.)
             </p>
           )}
         </div>

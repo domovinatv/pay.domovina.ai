@@ -42,6 +42,7 @@ import { createBootstrapEoa, signAttach, submitBootstrapDeploy } from '../lib/bo
 import {
   bootstrapAccountView,
   deriveAccount,
+  ensureRecoveryOwner,
   setActiveAccountAddress,
   syncAccountsWithBackend,
 } from '../lib/accounts';
@@ -478,6 +479,7 @@ export function Landing() {
     setActiveAccountAddress(healed.safeAddress);
     // Backfill local accounts → backend + pull any minted on another device.
     void syncAccountsWithBackend(healed.credentialId);
+    void ensureRecoveryOwner(healed.credentialId);
     if (maybeReturn(healed)) return;
     setAccount(bootstrapAccountView(healed));
   }
@@ -528,6 +530,9 @@ export function Landing() {
     // (so ALL N show in the switcher, not just bootstrap) and backfill any local-only
     // ones up. Fire-and-forget — WalletSwitcher reads localStorage live on open.
     void syncAccountsWithBackend(record.credentialId);
+    // Make the recovery owner available here too (backend or on-chain), so "Novi
+    // račun" works on this device — not just where the wallet was created.
+    void ensureRecoveryOwner(record.credentialId);
     // SDK connect handoff: if opened via "Kreiraj/Imam novčanik" from a host
     // page, redirect the wallet identity back instead of entering the UI.
     if (maybeReturn(record)) return;
