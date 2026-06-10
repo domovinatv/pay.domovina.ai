@@ -142,6 +142,28 @@ signed transaction could be submitted by anyone (you, paying your own gas) — o
 operate the Safe directly via the seed in any standard Safe client. No Face ID → no
 signature → no transaction, by anyone.
 
+### On-chain footprint — what gnosisscan actually shows
+
+A relayed spend has two layers, shown in different places on the explorer:
+
+- **Transaction envelope (top of the page):** `From` = the **relayer's public EOA** — it
+  signed the Ethereum transaction and paid the xDAI gas, so it is permanently recorded as
+  the sender. `To` = your **Safe** (hot path: a direct `execTransaction`) or
+  **MultiSendCallOnly** (cold path: deploy + exec in one tx).
+- **Token transfer ("Tokens Transferred"):** the ERC-20 `Transfer` event reads
+  `From = your Safe → To = recipient`. This is the layer that shows the Safe addresses —
+  the Safe is the *logical* sender of the funds.
+
+So **yes, the relayer's address is visible** — as the transaction sender / gas payer, not
+as the source of funds. Because the relayer is a single **shared** gas wallet, all
+DOMOVINA-relayed transactions are **linkable** by that common `From` address: an observer
+can tell a transaction was relayed by us and see which Safe executed and who received. That
+is a transparency / linkability property of gas sponsorship — identical to any
+meta-transaction or ERC-4337 bundler — and **not** a custody issue: the relayer is only the
+gas-paying submitter and still cannot move funds without your signature. To avoid the
+shared-relayer footprint entirely, submit the same signed transaction yourself (or operate
+the Safe via the seed in any client) and pay your own gas.
+
 ## 5. Two ways YOU (and only you) keep control — recovery
 
 Every account is a **1-of-2** Safe: owner A = your passkey, owner B = your recovery
@@ -189,6 +211,10 @@ fund-theft one):
 - `phone_hash` (if you bound a phone): an attacker with the DB *and* the server pepper
   could test specific phone numbers for a match (the raw phone is never stored here —
   it lives only at the OTP service). Phone binding is optional.
+- the **shared-relayer footprint** (on-chain, public regardless of any breach): every
+  relayed transaction is sent `From` the one shared relayer EOA, so an observer can link
+  all DOMOVINA-relayed transactions together and see each Safe + recipient (§4 "On-chain
+  footprint"). To avoid it, self-submit and pay your own gas.
 
 Neither lets anyone spend your funds. If maximal privacy matters to you, skip phone
 binding; custody is identical either way.
