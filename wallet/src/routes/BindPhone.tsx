@@ -3,7 +3,13 @@ import { useLocation } from 'wouter';
 import { MessageSquare, ShieldCheck, RefreshCw } from 'lucide-react';
 import { Button, Card, Section, StatusPill } from '../ui';
 import { useWalletStore } from '../state/store';
-import { otpQrUrl, startOtpVerification, subscribeOtp, type OtpPollResponse } from '../lib/otp';
+import {
+  otpQrUrl,
+  otpSmsBody,
+  startOtpVerification,
+  subscribeOtp,
+  type OtpPollResponse,
+} from '../lib/otp';
 import {
   bindPhone as bindPhoneOnBackend,
   lookupWallet,
@@ -100,8 +106,8 @@ export function BindPhone() {
 
   return (
     <Section
-      title="Recovery telefon"
-      description="Ti šalješ SMS našem broju — tako se dokaže da kontroliraš telefon. Mi čuvamo samo hash, ne broj."
+      title="Potvrda broja mobitela"
+      description="Ti šalješ SMS našem broju — tako dokazuješ da si vlasnik svog broja. Svaka potvrda kroz vrijeme gradi reputaciju da iza walleta stoji stvarna osoba, a ne bot. Mi čuvamo samo hash, ne broj."
     >
       {stage.kind === 'idle' && (
         <Card className="flex flex-col gap-4">
@@ -110,7 +116,9 @@ export function BindPhone() {
               <ShieldCheck className="h-5 w-5" />
             </div>
             <p className="text-sm text-ink-secondary">
-              Poveži broj mobitela kako bi mogao vratiti pristup walletu ako izgubiš ovaj uređaj.
+              Potvrdi da si vlasnik svog broja mobitela. Ovo nije recovery — wallet i dalje
+              kontrolira isključivo tvoj passkey. Verifikaciju možeš ponavljati i svaka nova
+              potvrda jača reputaciju tvog walleta.
             </p>
           </div>
           <Button onClick={start} size="xl" block>
@@ -147,7 +155,7 @@ export function BindPhone() {
             <ShieldCheck className="h-6 w-6" />
           </div>
           <div className="text-center">
-            <p className="font-semibold text-ink-primary">Telefon povezan</p>
+            <p className="font-semibold text-ink-primary">Broj potvrđen</p>
             <p className="font-mono text-sm text-ink-secondary">{stage.phone}</p>
           </div>
           <Button onClick={() => setLocation('/')} size="lg" block>
@@ -180,7 +188,10 @@ export function BindPhone() {
 }
 
 function SmsInstructions({ verification }: { verification: OtpPollResponse }) {
-  const smsUri = `sms:${verification.gateway_number}?body=${encodeURIComponent(verification.code)}`;
+  // Prefill the SAME friendly copy the QR encodes (server-built sms_body) so the
+  // native SMS app itself tells the user to come back to the browser after send.
+  const body = verification.sms_body ?? otpSmsBody(verification.code);
+  const smsUri = `sms:${verification.gateway_number}?body=${encodeURIComponent(body)}`;
   return (
     <div className="flex flex-col gap-4">
       <Card padding="lg" elevation="elevated" className="flex flex-col gap-5">

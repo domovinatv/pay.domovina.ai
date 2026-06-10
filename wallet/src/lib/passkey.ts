@@ -310,27 +310,27 @@ export function passkeyProviderHint(): { title: string; steps: string } {
   switch (detectPasskeyPlatform()) {
     case 'apple':
       return {
-        title: 'Koji store sprema passkey?',
+        title: 'Kako postaviti Apple Passwords kao zadani store?',
         steps:
-          'Postavke → Aplikacije → Lozinke → Opcije lozinki → "Automatski popunjavaj" — odaberi Lozinke (iCloud) da Apple Passwords bude primarni. Ako ti je tu uključen 1Password/LastPass, on će preuzeti zahtjev.',
+          'Postavke → Aplikacije → Lozinke → Opcije lozinki → "Automatski popunjavaj" — odaberi Lozinke (iCloud) da Apple Passwords bude primarni. Ako ti je tu uključen 1Password/LastPass/Brave, on će preuzeti zahtjev — isključi ga prije kreiranja da passkey završi u Apple Passwords.',
       };
     case 'android':
       return {
-        title: 'Koji store sprema passkey?',
+        title: 'Kako postaviti Google Password Manager kao zadani store?',
         steps:
-          'Postavke → Lozinke i računi → Zadana usluga za pristupne ključeve → odaberi Google Password Manager (ili svoj željeni menadžer).',
+          'Postavke → Lozinke i računi → Zadana usluga za pristupne ključeve → odaberi Google Password Manager. Ako je tu odabran neki drugi menadžer (1Password, LastPass…), on će preuzeti zahtjev — prebaci na Google PM prije kreiranja.',
       };
     case 'windows':
       return {
         title: 'Koji store sprema passkey?',
         steps:
-          'Windows sprema passkey lokalno (Windows Hello) ili nudi izbor uređaja. Za sinkronizirani passkey koristi telefon (Google/Apple) preko QR-a kad ga sustav ponudi.',
+          'Windows sprema passkey lokalno (Windows Hello) ili nudi izbor uređaja. Preporuka: kad sustav ponudi QR, spremi passkey na telefon (Apple Passwords / Google Password Manager) — tako je sinkroniziran i hardverski zaštićen.',
       };
     default:
       return {
         title: 'Koji store sprema passkey?',
         steps:
-          'Tvoj passkey sprema sustavski menadžer lozinki. Koji točno — biraš u postavkama OS-a (zadani menadžer pristupnih ključeva), ne u ovoj aplikaciji.',
+          'Tvoj passkey sprema sustavski menadžer lozinki. Preporuka je Apple Passwords ili Google Password Manager — koji točno odgovara biraš u postavkama OS-a (zadani menadžer pristupnih ključeva), ne u ovoj aplikaciji.',
       };
   }
 }

@@ -9,7 +9,6 @@ import {
   Sun,
   Moon,
   LogOut,
-  FileText,
   Code2,
   Copy,
   Check,
@@ -31,12 +30,8 @@ import { activateAccount } from '../lib/activate';
 import { humanizeError } from '../lib/errors';
 
 const REPO_URL = 'https://github.com/domovinatv/pay.domovina.ai';
-const ADR_LINKS = [
-  { id: '0001', title: 'Self-custody principle', slug: 'no-server-side-recovery' },
-  { id: '0002', title: 'Onchain phone attestation', slug: 'phase-5-onchain-phone-attestation' },
-  { id: '0003', title: 'PhoneSBT contract design', slug: 'phase-5-sbt-design' },
-  { id: '0004', title: 'Android verifier custody', slug: 'phase-5c-android-verifier' },
-];
+// The dApp lives in the repo's wallet/ folder — link straight to it.
+const SOURCE_URL = `${REPO_URL}/tree/main/wallet`;
 
 type PhoneSummary = {
   count: number;
@@ -298,13 +293,13 @@ export function Settings() {
               )}
             </div>
             <div className="flex-1 flex flex-col leading-tight">
-              <span className="font-medium text-ink-primary">Recovery telefon</span>
+              <span className="font-medium text-ink-primary">Potvrda broja mobitela</span>
               <span className="text-sm text-ink-secondary">
                 {phoneSummary === null
                   ? 'učitavam…'
                   : phoneSummary.count === 0
-                    ? 'Nije postavljeno'
-                    : `${phoneSummary.count} ${phoneSummary.count === 1 ? 'broj' : 'broja'} · ${phoneSummary.totalVerifications}× ukupno`}
+                    ? 'Nije potvrđeno · dokaži da si stvarna osoba'
+                    : `${phoneSummary.count} ${phoneSummary.count === 1 ? 'broj potvrđen' : 'broja potvrđena'} · ${phoneSummary.totalVerifications}× verificirano`}
               </span>
             </div>
             <ChevronRight className="h-4 w-4 text-ink-muted" />
@@ -321,7 +316,8 @@ export function Settings() {
             <div className="flex-1 flex flex-col leading-tight">
               <span className="font-medium text-ink-primary">Dodaj passkey</span>
               <span className="text-sm text-ink-secondary">
-                Drugi uređaj, iCloud + Google PM zajedno, 1Password, YubiKey — svaki postaje co-owner istog Safe-a (threshold 1).
+                Rezervni passkey iz Apple Passwords ili Google Password Managera — postaje
+                co-owner trenutno otvorenog računa (threshold 1).
               </span>
             </div>
             <ChevronRight className="h-4 w-4 text-ink-muted" />
@@ -335,10 +331,10 @@ export function Settings() {
               <span className="font-medium text-ink-primary">Recovery seed (12 riječi)</span>
               <p className="text-sm text-ink-secondary leading-snug">
                 Tvoj seed kontrolira ovaj Safe u <span className="font-semibold">bilo kojem
-                walletu</span> — uvezi ga u MetaMask ili app.safe.global i raspolažeš istim
-                računima bez ove aplikacije. Prikazan je <span className="font-semibold">samo
-                jednom</span>, pri kreiranju, i nigdje nije spremljen — ne možemo ga ponovno
-                prikazati.
+                walletu</span> — uvezi ga u Safe Mobile (iOS/Android), MetaMask ili
+                app.safe.global i raspolažeš istim računima bez ove aplikacije. Prikazan je{' '}
+                <span className="font-semibold">samo jednom</span>, pri kreiranju, i nigdje
+                nije spremljen — ne možemo ga ponovno prikazati.
               </p>
               {seedOwnerAddress && (
                 <p className="text-[11px] text-ink-muted leading-snug break-all">
@@ -378,30 +374,19 @@ export function Settings() {
       <Section title="O aplikaciji">
         <Card padding="md" className="flex flex-col divide-y divide-surface-border">
           <BuildInfoRow />
-          {ADR_LINKS.map((adr) => (
-            <a
-              key={adr.id}
-              href={`${REPO_URL}/blob/main/docs/decisions/${adr.id}-${adr.slug}.md`}
-              target="_blank"
-              rel="noreferrer"
-              className="flex items-center gap-3 py-3 first:pt-1 last:pb-1 hover:bg-surface-sunken -mx-1 px-1 rounded-lg transition"
-            >
-              <FileText className="h-4 w-4 text-ink-muted shrink-0" />
-              <div className="flex-1 min-w-0">
-                <p className="text-[11px] uppercase tracking-widest text-ink-muted">ADR {adr.id}</p>
-                <p className="text-sm font-medium text-ink-primary truncate">{adr.title}</p>
-              </div>
-              <ExternalLink className="h-3.5 w-3.5 text-ink-muted shrink-0" />
-            </a>
-          ))}
           <a
-            href={REPO_URL}
+            href={SOURCE_URL}
             target="_blank"
             rel="noreferrer"
             className="flex items-center gap-3 py-3 first:pt-1 last:pb-1 hover:bg-surface-sunken -mx-1 px-1 rounded-lg transition"
           >
             <Code2 className="h-4 w-4 text-ink-muted shrink-0" />
-            <span className="flex-1 text-sm font-medium text-ink-primary">Izvorni kod</span>
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-medium text-ink-primary">Izvorni kod</p>
+              <p className="text-[11px] text-ink-muted truncate">
+                github.com/domovinatv/pay.domovina.ai · wallet/
+              </p>
+            </div>
             <ExternalLink className="h-3.5 w-3.5 text-ink-muted shrink-0" />
           </a>
         </Card>

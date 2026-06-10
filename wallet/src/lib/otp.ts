@@ -27,7 +27,17 @@ export type OtpPollResponse = {
   verified_at: string | null;
   verified_phone: string | null;
   purpose: string | null;
+  /** Server-built friendly SMS text (same copy the QR encodes) — present when
+   * the object originates from the start call; the poll endpoint omits it. */
+  sms_body?: string;
 };
+
+/** Mirror of the server's buildSmsBody (sms.domovina.ai) — fallback when only
+ * poll data is at hand. Keeps the "vrati se u browser" instruction inside the
+ * prefilled SMS so the user knows to come back after tapping send. */
+export function otpSmsBody(code: string): string {
+  return `Potvrda broja na DOMOVINA.ai. Vrati se u browser nakon slanja. Kod: ${code}`;
+}
 
 export async function startOtpVerification(purpose: string): Promise<OtpStartResponse> {
   const res = await fetch(`${OTP_BASE}/api/verifications`, {

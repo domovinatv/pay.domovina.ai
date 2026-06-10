@@ -209,7 +209,7 @@ export function ExpandAccess() {
     toast({
       variant: 'success',
       title: 'Pristup proširen ✓',
-      description: 'Drugi passkey je sad dodatni vlasnik tvog Safea.',
+      description: 'Novi passkey je co-owner trenutno otvorenog računa.',
     });
   }
 
@@ -270,18 +270,18 @@ function IntroView({ onContinue }: { onContinue: () => void }) {
   return (
     <Section
       title="Dodaj passkey"
-      description="Drugi uređaj, iCloud + Google PM istovremeno, 1Password vault, YubiKey — svaki novi passkey postaje co-owner istog Safe-a. Threshold ostaje 1, bilo koji od njih sam može potpisati transakciju."
+      description="Rezervni passkey postaje co-owner istog Safe-a. Threshold ostaje 1, bilo koji od njih sam može potpisati transakciju. Preporuka za store: isključivo Apple Passwords ili Google Password Manager."
     >
       <Card padding="md" className="flex flex-col gap-4">
         <Step
           icon={<KeyRound />}
-          title="Kad je korisno"
-          description="iPhone + MacBook redundantno · Apple ekosistem + Android istovremeno · YubiKey kao backup · 1Password ako ne želiš ovisiti samo o iCloud Keychainu."
+          title="Spremi ga u Apple Passwords / Google Password Manager"
+          description="Na iPhoneu i Androidu oni otključavaju potpisnika hardverski (Secure Enclave / StrongBox + biometrija) — najsigurnija razina. Browser ekstenzije (LastPass, 1Password, Brave profil…) ne preporučujemo."
         />
         <Step
           icon={<ShieldCheck />}
-          title="Isti Safe, threshold = 1"
-          description="Postojeći passkey ostaje i radi kao prije. Novi je dodatan vlasnik istog Safe-a. Bilo koji od njih neovisno potpisuje — ako jedan izgubiš, drugi i dalje daje pristup."
+          title="Vrijedi samo za trenutno otvoreni račun"
+          description="Novi passkey postaje co-owner Safe-a koji je sad otvoren — ne i ostalih računa pod tvojim passkeyem. Za drugi račun prebaci se na njega (Postavke → Računi) i ponovi postupak. Threshold ostaje 1: bilo koji passkey sam potpisuje, ako jedan izgubiš drugi i dalje daje pristup."
         />
         <Step
           icon={<Globe2 />}

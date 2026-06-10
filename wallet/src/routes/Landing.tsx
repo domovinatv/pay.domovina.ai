@@ -257,7 +257,10 @@ export function Landing() {
 
   useEffect(() => {
     if (!condSupported) return;
-    if (stage.kind !== 'welcome' && stage.kind !== 'welcome-known') return;
+    // Only on the EMPTY welcome — on welcome-known the wallet cards + the
+    // explicit "Otvori postojeći" picker cover every open path, and a second
+    // passkey entry point read as a redundant duplicate of the card list.
+    if (stage.kind !== 'welcome') return;
     let done = false;
     const ctrl = new AbortController();
     conditionalAbortRef.current = ctrl;
@@ -635,9 +638,7 @@ export function Landing() {
       )}
 
       <main className="flex-1 flex flex-col justify-center gap-8 pb-12">
-        {condSupported && (stage.kind === 'welcome' || stage.kind === 'welcome-known') && (
-          <ConditionalSignInField />
-        )}
+        {condSupported && stage.kind === 'welcome' && <ConditionalSignInField />}
 
         {stage.kind === 'welcome' && (
           <WelcomeView onCreate={startCreate} onCrossDevice={() => openExisting()} />
@@ -877,7 +878,7 @@ function ConditionalSignInField() {
   return (
     <div className="flex flex-col gap-1.5">
       <label htmlFor="dw-passkey-autofill" className="px-1 text-xs text-ink-muted">
-        Već imaš novčanik na ovom uređaju ili u iCloud / Google?
+        Već imaš wallet? Otvori ga postojećim passkeyem:
       </label>
       <div className="relative">
         <Fingerprint className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-muted" />
@@ -931,11 +932,11 @@ function WelcomeView({
       <div className="flex flex-col gap-3">
         <Button onClick={onCreate} size="xl" block>
           <Plus className="h-5 w-5" />
-          Kreiraj wallet
+          Kreiraj novi wallet
         </Button>
         <Button onClick={onCrossDevice} variant="ghost" size="sm" block>
           <RefreshCw className="h-4 w-4" />
-          Već imam passkey
+          Otvori postojeći wallet (passkey)
         </Button>
       </div>
     </div>
@@ -1011,11 +1012,11 @@ function WelcomeKnownView({
       <div className="flex flex-col gap-2 pt-1">
         <Button onClick={onCrossDevice} variant="ghost" size="sm" block>
           <RefreshCw className="h-4 w-4" />
-          Otvori s drugog uređaja (iCloud / Google sync)
+          Wallet nije na popisu? Otvori ga passkeyem
         </Button>
         <Button onClick={onCreate} variant="ghost" size="sm" block>
           <Plus className="h-4 w-4" />
-          Kreiraj novi wallet
+          Kreiraj novi wallet (novi passkey)
         </Button>
       </div>
     </div>
@@ -1247,8 +1248,8 @@ function ConfirmArchiveView({
         </p>
         <p>
           Uvijek ga možeš vratiti preko{' '}
-          <span className="font-medium text-ink-primary">Otvori s drugog uređaja</span> na
-          prethodnom ekranu.
+          <span className="font-medium text-ink-primary">Wallet nije na popisu? Otvori ga
+          passkeyem</span> na prethodnom ekranu.
         </p>
       </Card>
 
@@ -1283,7 +1284,8 @@ function ConfirmCreateView({
         <p className="text-sm text-ink-secondary max-w-sm mx-auto">
           Otvorit ćemo Face ID i napraviti tvoj passkey. Dobit ćeš i{' '}
           <span className="font-semibold text-ink-primary">12-riječni recovery ključ</span> kao
-          rezervu (možeš ga uvesti u MetaMask). Wallet radi i bez njega — passkey je glavni.
+          rezervu — uvezeš ga u MetaMask ili Safe Mobile i isti wallet koristiš bilo gdje.
+          Wallet radi i bez njega — passkey je glavni.
         </p>
       </div>
 
@@ -1291,12 +1293,17 @@ function ConfirmCreateView({
         <FeatureRow
           icon={<KeyRound />}
           title="Jedan passkey"
-          description="Tvoj jedini ključ za prijavu — u iCloud / Google sync."
+          description="Tvoj jedini ključ za prijavu — u Apple Passwords / Google Password Manageru."
         />
         <FeatureRow
           icon={<ShieldCheck />}
           title="Recovery ključ"
-          description="Rezerva za MetaMask / app.safe.global. Prikaže se jednom."
+          description="Rezerva za MetaMask, app.safe.global i Safe Mobile. Prikaže se jednom."
+        />
+        <FeatureRow
+          icon={<Zap />}
+          title="Nula vendor lock-ina"
+          description="Tvoj wallet je standardni Safe — od prvog dana ga možeš koristiti i bez ove aplikacije. 100% P2P."
         />
       </Card>
 
@@ -1316,17 +1323,31 @@ function ConfirmCreateView({
 }
 
 /**
- * Collapsible note telling the user WHICH password manager will store the
- * passkey and how to switch the default. We cannot pick the provider for them
- * (WebAuthn gives the RP no such control — see passkeyProviderHint), so the
- * honest move is to point at the OS setting. Collapsed by default to avoid
- * cluttering the happy path.
+ * Passkey-store recommendation: Apple Passwords / Google Password Manager and
+ * NOTHING else. On iPhone/Android the native store gates the signer behind
+ * hardware unlock (Secure Enclave / StrongBox + biometrija) — browser-extension
+ * managers (LastPass, 1Password, Brave profil…) don't give that guarantee. We
+ * cannot pick the provider for the user (WebAuthn gives the RP no such control
+ * — see passkeyProviderHint), so we recommend loudly and point at the OS
+ * setting; the final choice stays theirs. Expanded steps collapsed by default.
  */
 function ProviderHintCard() {
   const [open, setOpen] = useState(false);
   const hint = passkeyProviderHint();
   return (
     <div className="rounded-2xl border border-surface-border bg-surface-sunken/50">
+      <div className="flex items-start gap-2 px-4 pt-3">
+        <ShieldCheck className="h-4 w-4 text-emerald-600 shrink-0 mt-0.5" />
+        <p className="text-xs leading-relaxed text-ink-secondary">
+          <span className="font-semibold text-ink-primary">
+            Preporuka: spremi passkey u Apple Passwords ili Google Password Manager.
+          </span>{' '}
+          Na iPhoneu i Androidu oni otključavaju potpisnika hardverski (Secure Enclave /
+          StrongBox + Face ID), pa je to najsigurnija razina zaštite. Browser ekstenzije
+          poput LastPassa, 1Passworda ili Brave profila{' '}
+          <span className="font-semibold">ne preporučujemo</span> — odluka je na kraju tvoja.
+        </p>
+      </div>
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
@@ -1457,8 +1478,10 @@ function CreatedView({
               Recovery seed (neobavezno)
             </span>
             <p className="text-xs text-ink-secondary leading-snug">
-              12-riječni rezervni ključ — uvezeš ga u MetaMask ili app.safe.global i isti
-              Safe koristiš svugdje. Možeš preskočiti i ostati samo na passkeyu. Prikazuje se{' '}
+              12-riječni rezervni ključ — uvezeš ga u MetaMask (desktop) ili{' '}
+              <span className="font-medium text-ink-primary">Safe Mobile</span> (iOS/Android)
+              i isti Safe koristiš svugdje, potpuno bez ove aplikacije. Možeš preskočiti i
+              ostati samo na passkeyu. Prikazuje se{' '}
               <span className="font-semibold">samo sad</span>.
             </p>
           </div>
@@ -1494,8 +1517,13 @@ function CreatedView({
             {copied ? 'Kopirano' : 'Kopiraj seed'}
           </Button>
           <p className="text-[11px] text-ink-muted leading-snug">
-            MetaMask: Uvezi račun → Tajna fraza za oporavak (SRP). Ovaj ključ je drugi
-            potpisnik (1-od-2) — wallet i dalje radi i bez njega, preko passkeya.
+            <span className="font-medium text-ink-secondary">Preporuka:</span> uvezi seed u{' '}
+            <span className="font-medium text-ink-secondary">Safe Mobile</span> (iOS/Android) —
+            ima potpisivanje, push notifikacije kad ti stignu tokeni i sve Safe funkcije. Na
+            desktopu radi i MetaMask (Uvezi račun → Tajna fraza za oporavak) uz
+            app.safe.global. Tako od prvog dana nisi vezan za DOMOVINA Wallet — tvoj Safe je
+            100% tvoj, u bilo kojem Safe walletu. Ovaj ključ je drugi potpisnik (1-od-2) —
+            wallet i dalje radi i bez njega, preko passkeya.
           </p>
           <label className="flex items-start gap-2.5 rounded-xl bg-surface-sunken px-3 py-2.5 cursor-pointer select-none">
             <input
@@ -1518,7 +1546,7 @@ function CreatedView({
             <span className="font-medium text-ink-primary">Sigurno bez seeda?</span> Prikazuje
             se samo sada — poslije ga nitko ne može vratiti (nije nigdje spremljen). Bez njega
             wallet radi isključivo preko passkeya; seed je jedini ključ koji radi i izvan ove
-            aplikacije (MetaMask, app.safe.global).
+            aplikacije (Safe Mobile, MetaMask, app.safe.global).
           </p>
           <Button
             onClick={() => {
