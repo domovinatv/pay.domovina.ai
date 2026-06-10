@@ -7,6 +7,11 @@ Durable design knowledge for this repo. Read these before touching connect/onboa
   (happy + dead-end) across every route and state machine, with 12 mermaid diagrams. Plus
   the **duplicate-passkey root-cause + phased fix plan** (the "two domovina-wallet-v1 in
   Apple Passwords" bug). Start here for a bird's-eye of the whole app.
+- **[passkey-onboarding-industry-standards.md](./passkey-onboarding-industry-standards.md)** —
+  research-backed reference: how Coinbase Smart Wallet (open-source contracts; **closed**
+  frontend) actually handles passkeys, why it does NOT solve duplicates better than us, and
+  the W3C/Chrome standard (conditional mediation + Signal API). The authoritative, revised
+  duplicate-passkey fix plan. Validates our 1-of-2 recovery model against Coinbase's.
 - **[cross-origin-wallet-connect.md](./cross-origin-wallet-connect.md)** — how a passkey
   wallet on `wallet.domovina.ai` is connected by dApps on other domains (e.g. pinka.io).
   Why NOT iframe, why NOT in-page RoR, why a deterministic full-page redirect + cached

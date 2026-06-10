@@ -362,6 +362,15 @@ one-time seed may already be gone (cf. Postmortem 0001).
 
 ### 8.2 Fix plan (phased, ranked)
 
+> **Revised & validated against industry research (Coinbase Smart Wallet + W3C/Chrome
+> standards) in [passkey-onboarding-industry-standards.md](./passkey-onboarding-industry-standards.md)
+> — read that for the authoritative plan.** Headline: Coinbase does *not* solve this
+> better (empty `excludeCredentials`, random `user.id`, no probe — they mask it with an
+> email/server account we deliberately don't have). The real standard is
+> conditional-mediation discovery + the WebAuthn Signal API for cleanup. The phases
+> below are the original sketch; the linked doc merges Phase 1+2 into conditional
+> mediation and adds Signal-API cleanup.
+
 ```mermaid
 flowchart LR
     P1[Phase 1<br/>get-first probe<br/>dismiss→create] --> P2[Phase 2<br/>conditional-mediation<br/>autofill discovery]
