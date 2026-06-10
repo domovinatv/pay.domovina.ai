@@ -14,6 +14,7 @@ import { Button, Card, Field, Input, Section, useToast } from '../ui';
 import {
   createPasskey,
   getActivePasskey,
+  listKnownPasskeys,
   recordRpId,
   savePasskey,
   setActivePasskey,
@@ -89,10 +90,15 @@ export function ExpandAccess() {
     haptic('tap');
 
     // Step 1: enroll the new passkey under the current (post-Phase-B = parent)
-    // RP. This is the Face ID prompt #1.
+    // RP. This is the Face ID prompt #1. Pass excludeCredentials = locally-known
+    // creds so the authenticator refuses to re-mint a passkey this device already
+    // holds (InvalidStateError) instead of adding a redundant co-owner. See
+    // docs/passkey-onboarding-industry-standards.md (Phase 2).
     let created: Awaited<ReturnType<typeof createPasskey>>;
     try {
-      created = await createPasskey(chosenName);
+      created = await createPasskey(chosenName, {
+        excludeCredentialIds: listKnownPasskeys().map((k) => k.credentialId),
+      });
     } catch (e) {
       haptic('error');
       setStage({ kind: 'error', message: humanizeError(e, 'passkey') });

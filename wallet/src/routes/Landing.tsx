@@ -266,17 +266,54 @@ export function Landing() {
    */
   async function confirmCreate() {
     haptic('tap');
-    // Create goes STRAIGHT to navigator.credentials.create() — NO get-first probe
-    // (a probe is a get() ceremony that shows "Use a saved passkey" and never
-    // offers create). We DO pass excludeCredentials = locally-known creds so the
-    // authenticator REFUSES to mint a same-device DUPLICATE (InvalidStateError →
-    // runCreate routes to "found-existing" → Otvori / Svejedno kreiraj). This is
-    // what stops the "3× domovina-wallet-v1" proliferation: a fresh random user.id
-    // each create means Apple/iCloud won't dedupe on its own, and a STABLE user.id
-    // is unsafe (it would OVERWRITE the passkey → orphan the funded Safe). Cross-
-    // device/cleared-storage dedup isn't possible without a picker, so that rarer
-    // case can still dup; "Svejedno kreiraj novi" is the explicit no-excludes path.
     const known = listKnownPasskeys();
+
+    // Phase-1 duplicate guard (docs/passkey-onboarding-industry-standards.md).
+    // When there is NO local record, a passkey for our RP may still exist in
+    // iCloud/Google: cleared site data, the installed PWA vs a Safari tab (separate
+    // localStorage), another browser, or a second synced device. Without a check,
+    // create() mints a SECOND 'domovina-wallet-v1' (each = a new identity + Safe +
+    // seed) because Apple/Google dedupe on (rpId, user.id) and our user.id is random
+    // per create (a stable one would OVERWRITE → orphan a funded Safe — never do
+    // that). So we PROBE with the OS passkey picker first and OPEN the existing one
+    // instead of duplicating it. The probe is gated to the empty-registry case so it
+    // adds ZERO friction to the common "create an additional wallet" path (where a
+    // local record exists and excludeCredentials already blocks a same-device dup).
+    // (A zero-friction conditional-mediation autofill probe is the future upgrade;
+    // it needs a welcome-screen sign-in field — see the doc.)
+    if (known.length === 0) {
+      let probed: string | null = null;
+      try {
+        probed = (await pickExistingPasskey()).credentialId;
+      } catch {
+        probed = null; // dismissed / none for our RP → genuine first-timer, create
+      }
+      if (probed) {
+        setStage({ kind: 'opening' });
+        try {
+          await enterByCredentialId(probed);
+          return;
+        } catch (e) {
+          if (e instanceof UnusableWalletError) {
+            setStage({ kind: 'unusable-passkey' });
+            return;
+          }
+          if (e instanceof RegistryUnavailableError) {
+            setStage({
+              kind: 'error',
+              message: 'Ne mogu dohvatiti tvoj novčanik (mreža ili server). Pokušaj ponovno.',
+            });
+            return;
+          }
+          // Unknown failure resolving the picked passkey — fall through to create.
+          console.warn('[Landing] probe-open failed, proceeding to create', e);
+        }
+      }
+    }
+
+    // excludeCredentials = locally-known creds → the authenticator refuses a
+    // same-device duplicate (InvalidStateError → found-existing). Random user.id is
+    // deliberate; "Svejedno kreiraj novi" remains the explicit no-excludes path.
     await runCreate(known.map((k) => k.credentialId));
   }
 
@@ -296,8 +333,15 @@ export function Landing() {
     haptic('tap');
     try {
       const eoa = await createBootstrapEoa();
+      // Phase-4 distinguishable label: append the short Safe address so two
+      // passkeys (if a duplicate ever slips through cross-provider/-device) are
+      // selectable in Apple Passwords / Google PM by their address — they no longer
+      // read as identical 'domovina-wallet-v1'. The address is known here (derived
+      // from the bootstrap EOA before the passkey exists). Stays under the 64-char
+      // keychain cap. See docs/passkey-onboarding-industry-standards.md.
+      const shortSafe = `${eoa.safeAddress.slice(2, 6)}…${eoa.safeAddress.slice(-4)}`;
       const { credentialId, pubKey, keychainName, rpId } = await createPasskey(
-        identityKeychainName(),
+        `${identityKeychainName()} · ${shortSafe}`,
         { excludeCredentialIds },
       );
       const { signerAddress, eoaSignature } = await signAttach({ eoa, pubKey, mode: 'add' });

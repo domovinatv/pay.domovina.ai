@@ -158,6 +158,35 @@ duplicates remain selectable.
 never ship 1/1 passkey-only ([[feedback_passkey_only_traps_funds]]) — the duplicate
 problem is one more reason recovery paths must exist independent of dedup hygiene.
 
+## 3b. Implementation status (2026-06-10)
+
+**Shipped:**
+- **Create-time existence probe** (`Landing.confirmCreate`) — the reliable form of
+  Phase 1. When the local registry is **empty** (the exact duplicate-risk window:
+  cleared storage / PWA-vs-Safari / other browser / second synced device), tapping
+  "Kreiraj" first runs the OS passkey picker (`pickExistingPasskey`); if the user
+  picks an existing passkey we **open** it instead of minting a duplicate. Gated to
+  the empty-registry case → **zero friction** for the common "create an additional
+  wallet" path. Reuses the tested `enterByCredentialId` error routing.
+- **Phase 2** — `excludeCredentials` now passed at the `ExpandAccess` create site too
+  (was missing), not just `Landing`.
+- **Phase 4** — new identity passkeys are labelled `domovina-wallet-v1 · <short Safe
+  addr>`, so a duplicate that slips through cross-provider/-device is distinguishable
+  in Apple Passwords / Google PM instead of reading as identical.
+
+**Deferred (with rationale):**
+- **Conditional-mediation autofill probe** — the *zero-friction* form of Phase 1.
+  Requires a welcome-screen sign-in field (`autocomplete="webauthn"`) and on-device
+  testing to verify it surfaces on our currently field-less screen; without that it
+  risks a silent no-op. Tracked as a welcome-screen redesign. The shipped modal probe
+  is the deterministic guard in the meantime (we chose a reliable guarantee over the
+  marginal first-timer friction, which only occurs on a truly fresh device).
+- **Signal API cleanup (Phase 3)** — `signalUnknownCredential` (delete a confirmed
+  stale/empty duplicate) needs a careful confirm-balance-zero UX; and
+  `signalAllAcceptedCredentials`'s hide mechanism is keyed by `userId`, which is
+  random-per-passkey here, so it cannot collapse our duplicates — limiting its value.
+  Deferred to a dedicated cleanup-UX piece.
+
 ## 4. Irreducible limits (set expectations)
 - `excludeCredentials` binds only the provider holding the match → **cross-provider /
   cross-device duplicates cannot be prevented**, only detected + cleaned after the fact.
