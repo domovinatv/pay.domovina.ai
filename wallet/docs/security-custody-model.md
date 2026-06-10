@@ -92,27 +92,55 @@ the servers, or the relayer does not confer the ability to sign. The relayer onl
 *pays gas* and *submits* transactions you already signed — it is never a Safe owner
 (see [relayer-threat-model.md](./relayer-threat-model.md)).
 
-## 4. The signing gate — what it actually takes to spend
+## 4. The signing gate — the entities that carry out a spend
+
+Moving funds involves **five distinct technical entities**. It matters to keep them
+separate: only your device holds anything that can *authorize*; the **Relayer is a
+separate Cloudflare cloud Worker** that merely *pays the gas* and *submits* your
+already-signed transaction — it is NOT part of the offline device, and it is NOT a
+Safe owner.
+
+| Entity | Where it runs | Role | Can it authorize a spend? |
+|---|---|---|---|
+| **You** | — | Provide the biometric | — |
+| **Secure Enclave / OS keychain** | your phone (hardware) | Holds the passkey P-256 **private key**; signs in-hardware on Face ID | Signs, but only at your biometric command |
+| **DOMOVINA Wallet** (offline dApp) | your device (browser/PWA) | Builds the exact SafeTx, obtains the passkey signature, encodes it | No — only assembles *your* signed tx |
+| **Relayer** (Cloudflare Worker + xDAI gas wallet) | Cloudflare cloud | Pays xDAI gas, submits the **pre-signed** `execTransaction` as an external sender | **No** — never a Safe owner; cannot alter the signed tx |
+| **Gnosis Safe + WebAuthn signer** | on-chain (Gnosis) | Verifies the P-256 signature (ERC-1271) and executes if valid | It *enforces* — runs ONLY a valid owner signature |
+
+> The **Registry** (Cloudflare D1, §2) is NOT in this path at all — it is a separate
+> public index for cross-device discovery, never consulted to authorize a transaction.
 
 ```mermaid
 sequenceDiagram
     participant U as You
-    participant OS as iOS/Android + Secure Enclave
-    participant App as Wallet (your device)
-    participant Chain as Gnosis (your Safe)
+    participant SE as Secure Enclave / OS keychain (phone)
+    participant App as DOMOVINA Wallet (offline dApp, device)
+    participant Relay as Relayer (Cloudflare Worker + xDAI gas)
+    participant Safe as Gnosis Safe + WebAuthn signer (on-chain)
 
-    App->>App: build the exact transaction (to, amount)
-    App->>OS: "sign this" → Face ID prompt
-    U->>OS: Face ID / biometric
-    OS->>OS: unlock passkey P-256 key IN HARDWARE, sign
-    OS-->>App: signature (key never exposed)
-    App->>Chain: relay submits execTransaction + signature
-    Chain->>Chain: Safe verifies the P-256 signature on-chain (ERC-1271)
-    Chain-->>App: ✅ only a biometric-backed signature executes
+    App->>App: build exact SafeTx (to, value, data, nonce)
+    App->>SE: sign this hash → Face ID prompt
+    U->>SE: Face ID / biometric
+    SE->>SE: unlock passkey P-256 key IN HARDWARE, sign
+    SE-->>App: signature (private key never leaves the device)
+    App->>App: encode ERC-1271 / WebAuthn signature blob
+    App->>Relay: POST pre-signed execTransaction
+    Note over Relay: pays xDAI gas from its OWN wallet,<br/>submits as external sender — NOT a Safe owner
+    Relay->>Safe: execTransaction(tx, signature)
+    Safe->>Safe: verify P-256 signature on-chain (ERC-1271)
+    Safe-->>Relay: executes ONLY if the signature is valid
+    Relay-->>App: txHash
 ```
 
-No Face ID → no signature → no transaction. The relayer/server can delay or refuse
-(liveness), but cannot forge your signature.
+**Trust boundary — the Relayer is a convenience, not a custodian.** It exists so you
+never need xDAI or a gas token of your own. It can **delay or refuse** to submit
+(liveness), but it **cannot forge or tamper**: your signature commits to the exact
+`to / value / data / nonce`, so anything the relayer changed would invalidate the
+signature and the Safe would reject it on-chain. If the relayer ever vanished, the same
+signed transaction could be submitted by anyone (you, paying your own gas) — or you
+operate the Safe directly via the seed in any standard Safe client. No Face ID → no
+signature → no transaction, by anyone.
 
 ## 5. Two ways YOU (and only you) keep control — recovery
 
