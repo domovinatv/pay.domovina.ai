@@ -25,6 +25,8 @@ type Props = {
 export function AppShell({ children }: Props) {
   const [location] = useLocation();
   const safeAddress = useWalletStore((s) => s.safeAddress);
+  const simpleMode = useWalletStore((s) => s.simpleMode);
+  const accountName = useWalletStore((s) => s.accountName);
   const isHome = location === '/';
 
   return (
@@ -34,7 +36,11 @@ export function AppShell({ children }: Props) {
           <div className="flex items-center gap-2 min-w-0">
             {isHome ? (
               safeAddress ? (
-                <AddressChip address={safeAddress} label="Tvoj wallet" />
+                simpleMode ? (
+                  <SimpleAccountMark name={accountName} />
+                ) : (
+                  <AddressChip address={safeAddress} label="Tvoj wallet" />
+                )
               ) : (
                 <BrandMark />
               )
@@ -70,6 +76,17 @@ function BrandMark() {
       </div>
       <span className="font-bold tracking-tight text-ink-primary">DOMOVINA</span>
       <span className="text-[11px] uppercase tracking-widest text-ink-muted">Wallet</span>
+    </div>
+  );
+}
+
+/** Simple-mode header: the account name instead of the raw Safe address —
+ * an everyday user recognizes "Glavni", not 0x…. */
+function SimpleAccountMark({ name }: { name: string | null }) {
+  return (
+    <div className="flex flex-col leading-tight pl-1 min-w-0">
+      <span className="text-[11px] uppercase tracking-widest text-ink-muted">Tvoj novčanik</span>
+      <span className="font-semibold text-ink-primary truncate">{name || 'Račun'}</span>
     </div>
   );
 }

@@ -1,6 +1,15 @@
 import { useEffect, useState } from 'react';
 import { useLocation } from 'wouter';
-import { ArrowDownToLine, ArrowUpFromLine, Phone, ShieldCheck, Layers, ChevronDown } from 'lucide-react';
+import {
+  ArrowDownToLine,
+  ArrowUpFromLine,
+  Phone,
+  ShieldCheck,
+  Layers,
+  ChevronDown,
+  Sparkles,
+  SlidersHorizontal,
+} from 'lucide-react';
 import { Badge, BalanceDisplay, Button, Card, Section } from '../ui';
 import { ActivityFeed } from '../components/ActivityFeed';
 import { WalletSwitcherSheet } from '../components/WalletSwitcherSheet';
@@ -18,7 +27,8 @@ type PhoneVerification = {
 
 export function Wallet() {
   const [, setLocation] = useLocation();
-  const { safeAddress, credentialId, balance, setBalance, accountName } = useWalletStore();
+  const { safeAddress, credentialId, balance, setBalance, accountName, simpleMode, setSimpleMode } =
+    useWalletStore();
   const [switcherOpen, setSwitcherOpen] = useState(false);
   const [phones, setPhones] = useState<PhoneVerification[]>([]);
   const [totalVerifications, setTotalVerifications] = useState<number>(0);
@@ -110,15 +120,28 @@ export function Wallet() {
 
   return (
     <div className="flex flex-col gap-6">
-      <button
-        type="button"
-        onClick={() => setSwitcherOpen(true)}
-        className="self-start inline-flex items-center gap-1.5 rounded-pill border border-surface-border bg-surface-raised px-3 py-1.5 text-sm font-medium text-ink-secondary hover:bg-surface-sunken active:scale-95 transition"
-      >
-        <Layers className="h-4 w-4 text-brand-navy-500" />
-        <span className="max-w-[60vw] truncate">{accountName || 'Račun'}</span>
-        <ChevronDown className="h-4 w-4 text-ink-muted" />
-      </button>
+      {!simpleMode && (
+        <div className="flex items-center justify-between gap-2">
+          <button
+            type="button"
+            onClick={() => setSwitcherOpen(true)}
+            className="inline-flex items-center gap-1.5 rounded-pill border border-surface-border bg-surface-raised px-3 py-1.5 text-sm font-medium text-ink-secondary hover:bg-surface-sunken active:scale-95 transition min-w-0"
+          >
+            <Layers className="h-4 w-4 shrink-0 text-brand-navy-500" />
+            <span className="truncate">{accountName || 'Račun'}</span>
+            <ChevronDown className="h-4 w-4 shrink-0 text-ink-muted" />
+          </button>
+          <button
+            type="button"
+            onClick={() => setSimpleMode(true)}
+            title="Sakrij napredne opcije — ostaju stanje, Primi, Pošalji i transakcije"
+            className="inline-flex shrink-0 items-center gap-1.5 rounded-pill border border-surface-border bg-surface-raised px-3 py-1.5 text-sm font-medium text-ink-secondary hover:bg-surface-sunken active:scale-95 transition"
+          >
+            <Sparkles className="h-4 w-4 text-brand-navy-500" />
+            Jednostavni prikaz
+          </button>
+        </div>
+      )}
 
       <Card padding="lg" elevation="elevated" className="flex flex-col gap-6">
         <BalanceDisplay
@@ -148,7 +171,8 @@ export function Wallet() {
         <ActivityFeed safeAddress={safeAddress} refetchKey={activityKey} />
       </Section>
 
-      {phones.length > 0 ? (
+      {!simpleMode &&
+        (phones.length > 0 ? (
         <Section
           title="Verificirani telefoni"
           description={`${phones.length} ${phones.length === 1 ? 'broj' : 'broja'} · ${totalVerifications}× ukupno`}
@@ -212,11 +236,22 @@ export function Wallet() {
             </div>
           </Card>
         </Section>
-      )}
+        ))}
 
-      <p className="text-center text-xs text-ink-muted pt-2">
-        Gnosis Chain · Safe smart account
-      </p>
+      {simpleMode ? (
+        <button
+          type="button"
+          onClick={() => setSimpleMode(false)}
+          className="self-center inline-flex items-center gap-1.5 rounded-pill px-3 py-2 text-xs font-medium text-ink-muted hover:text-ink-primary hover:bg-surface-sunken transition"
+        >
+          <SlidersHorizontal className="h-3.5 w-3.5" />
+          Prikaži sve opcije
+        </button>
+      ) : (
+        <p className="text-center text-xs text-ink-muted pt-2">
+          Gnosis Chain · Safe smart account
+        </p>
+      )}
 
       <WalletSwitcherSheet open={switcherOpen} onOpenChange={setSwitcherOpen} />
     </div>

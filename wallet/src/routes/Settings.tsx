@@ -17,6 +17,8 @@ import {
   KeyRound,
   Fingerprint,
   Rocket,
+  Sparkles,
+  SlidersHorizontal,
 } from 'lucide-react';
 import { Badge, Button, Card, IconButton, Section, SegmentedControl, useToast } from '../ui';
 import { WalletSwitcherSheet } from '../components/WalletSwitcherSheet';
@@ -42,8 +44,17 @@ export function Settings() {
   const [, setLocation] = useLocation();
   const { toast } = useToast();
   const { mode, setMode } = useTheme();
-  const { safeAddress, signerAddress, credentialId, reset, accountKind, saltNonce, recoveryOwner } =
-    useWalletStore();
+  const {
+    safeAddress,
+    signerAddress,
+    credentialId,
+    reset,
+    accountKind,
+    saltNonce,
+    recoveryOwner,
+    simpleMode,
+    setSimpleMode,
+  } = useWalletStore();
   const [phoneSummary, setPhoneSummary] = useState<PhoneSummary | null>(null);
   const [switcherOpen, setSwitcherOpen] = useState(false);
   const [accountCount, setAccountCount] = useState(0);
@@ -140,6 +151,23 @@ export function Settings() {
 
   return (
     <div className="flex flex-col gap-8">
+      <Section
+        title="Prikaz"
+        description="Jednostavni prikaz skriva napredne opcije — ostaju stanje, Primi, Pošalji i transakcije. Pamti se po računu, na ovom uređaju."
+      >
+        <SegmentedControl<'full' | 'simple'>
+          ariaLabel="Prikaz"
+          value={simpleMode ? 'simple' : 'full'}
+          onChange={(v) => setSimpleMode(v === 'simple')}
+          options={[
+            { value: 'simple', label: 'Jednostavni', icon: <Sparkles /> },
+            { value: 'full', label: 'Puni', icon: <SlidersHorizontal /> },
+          ]}
+        />
+      </Section>
+
+      {!simpleMode && (
+      <>
       <Section title="Računi">
         <button
           type="button"
@@ -357,6 +385,8 @@ export function Settings() {
           </Card>
         </div>
       </Section>
+      </>
+      )}
 
       <Section title="Izgled" description="Pamti se na ovom uređaju.">
         <SegmentedControl<ThemeMode>
@@ -371,6 +401,8 @@ export function Settings() {
         />
       </Section>
 
+      {!simpleMode && (
+      <>
       <Section title="O aplikaciji">
         <Card padding="md" className="flex flex-col divide-y divide-surface-border">
           <BuildInfoRow />
@@ -404,6 +436,8 @@ export function Settings() {
           </Button>
         </Card>
       </Section>
+      </>
+      )}
 
       <WalletSwitcherSheet
         open={switcherOpen}
