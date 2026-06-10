@@ -59,15 +59,22 @@ export function AddressChip({
         className="h-6 w-6 rounded-full shrink-0 ring-1 ring-black/5"
         style={{ background: gradientFor(address) }}
       />
-      <span className="flex flex-col items-start min-w-0 leading-tight">
+      <span className="flex flex-col items-start min-w-0 flex-1 leading-tight">
         {label && (
           <span className="text-[11px] text-ink-muted truncate max-w-[140px]">{label}</span>
         )}
-        <span className="text-sm font-medium text-ink-primary tabular">
+        {/* Full (untruncated) address must WRAP — a single line overflows past
+            the copy icon on narrow mobile screens. */}
+        <span
+          className={cn(
+            'text-sm font-medium text-ink-primary',
+            truncate ? 'tabular' : 'break-all text-left',
+          )}
+        >
           {truncate ? shorten(address) : address}
         </span>
       </span>
-      <span className="text-ink-muted group-hover:text-ink-primary transition-colors">
+      <span className="shrink-0 text-ink-muted group-hover:text-ink-primary transition-colors">
         {copied ? <Check className="h-4 w-4 text-emerald-500" /> : <Copy className="h-4 w-4" />}
       </span>
     </button>

@@ -13,6 +13,7 @@ import {
   Check,
   Copy,
   Eye,
+  Download,
   ShieldAlert,
 } from 'lucide-react';
 import type { Address } from 'viem';
@@ -72,7 +73,10 @@ type Stage =
   // A chosen passkey authenticated but resolves to no usable wallet (no registry
   // entry / undeployed) — e.g. an orphaned test passkey. Guide to create.
   | { kind: 'unusable-passkey' }
-  | { kind: 'creating' }
+  // 'passkey' = waiting on the Face ID ceremony; 'deploying' = ceremony done,
+  // backend is deploying the Safe on-chain (the slow part — needs visible progress
+  // or the screen reads as frozen).
+  | { kind: 'creating'; phase: CreatePhase }
   | { kind: 'opening' }
   | { kind: 'created'; record: PasskeyRecord; recoverySeed?: string }
   // SDK createAccount() handoff (e.g. pinka campaign): identity is established,
@@ -80,6 +84,8 @@ type Stage =
   | { kind: 'create-account-confirm'; record: PasskeyRecord; name: string }
   | { kind: 'create-account-deriving' }
   | { kind: 'error'; message: string };
+
+type CreatePhase = 'passkey' | 'deploying' | 'deriving';
 
 /** A passkey authenticated but maps to no usable wallet (no local record and no
  * backend registry entry) — distinct from a generic failure so the UI can guide
@@ -402,7 +408,7 @@ export function Landing() {
    * authenticator that already holds one of them refuses to mint a duplicate.
    */
   async function runCreate(excludeCredentialIds: string[]) {
-    setStage({ kind: 'creating' });
+    setStage({ kind: 'creating', phase: 'passkey' });
     haptic('tap');
     try {
       const eoa = await createBootstrapEoa();
@@ -417,6 +423,10 @@ export function Landing() {
         `${identityKeychainName()} · ${shortSafe}`,
         { excludeCredentialIds },
       );
+      // Face ID is done — the rest is the backend deploying the Safe on Gnosis.
+      // Without this phase switch the screen kept saying "Otvori Face ID" and
+      // read as frozen for the several seconds the deploy takes.
+      setStage({ kind: 'creating', phase: 'deploying' });
       const { signerAddress, eoaSignature } = await signAttach({ eoa, pubKey, mode: 'add' });
 
       const res = await submitBootstrapDeploy({
@@ -689,7 +699,7 @@ export function Landing() {
           <UnusablePasskeyView onCreate={() => runCreate([])} onCancel={resetToWelcome} />
         )}
 
-        {stage.kind === 'creating' && <CreatingView />}
+        {stage.kind === 'creating' && <CreatingView phase={stage.phase} />}
 
         {stage.kind === 'opening' && <OpeningView />}
 
@@ -716,7 +726,7 @@ export function Landing() {
           />
         )}
 
-        {stage.kind === 'create-account-deriving' && <CreatingView />}
+        {stage.kind === 'create-account-deriving' && <CreatingView phase="deriving" />}
 
         {stage.kind === 'error' && (
           <ErrorView message={stage.message} onRetry={resetToWelcome} />
@@ -1379,20 +1389,62 @@ function displayPasskeyLabel(record: PasskeyRecord): string {
   return 'Safe';
 }
 
-function CreatingView() {
+/** Rotating educational lines for the on-chain deploy wait — the user reads
+ * what's actually happening instead of staring at a frozen screen. */
+const DEPLOY_MESSAGES = [
+  'Deployam tvoj Safe smart account na Gnosis Chain…',
+  'Tvoj passkey postaje vlasnik novog Safe-a…',
+  'Standardni Safe — ista tehnologija koja onchain čuva milijarde eura…',
+  'Gas za deploy plaćamo mi — tebe ovo ništa ne košta…',
+  'Pripremam i tvoj 12-riječni recovery seed…',
+  'Još koja sekunda — blockchain potvrđuje transakciju…',
+];
+
+function CreatingView({ phase }: { phase: CreatePhase }) {
+  // Cycle the deploy messages so the wait feels alive; index resets per mount.
+  const [msgIdx, setMsgIdx] = useState(0);
+  useEffect(() => {
+    if (phase !== 'deploying') return;
+    const t = setInterval(() => setMsgIdx((i) => (i + 1) % DEPLOY_MESSAGES.length), 2800);
+    return () => clearInterval(t);
+  }, [phase]);
+
+  if (phase === 'passkey') {
+    return (
+      <div className="flex flex-col items-center justify-center gap-6 py-12 animate-route-enter">
+        <div className="relative">
+          <div className="absolute inset-0 rounded-full bg-brand-navy-400/20 animate-ping" />
+          <div className="relative flex h-20 w-20 items-center justify-center rounded-full bg-brand-navy-700 text-white dark:bg-brand-navy-400 dark:text-brand-navy-900">
+            <Fingerprint className="h-10 w-10" />
+          </div>
+        </div>
+        <div className="text-center flex flex-col gap-1">
+          <p className="font-semibold text-ink-primary text-lg">Otvori Face&nbsp;ID</p>
+          <p className="text-sm text-ink-secondary max-w-xs">
+            Sustav će tražiti potvrdu. Tvoj passkey će se pohraniti u Keychain.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="flex flex-col items-center justify-center gap-6 py-12 animate-route-enter">
       <div className="relative">
         <div className="absolute inset-0 rounded-full bg-brand-navy-400/20 animate-ping" />
         <div className="relative flex h-20 w-20 items-center justify-center rounded-full bg-brand-navy-700 text-white dark:bg-brand-navy-400 dark:text-brand-navy-900">
-          <Fingerprint className="h-10 w-10" />
+          <RefreshCw className="h-10 w-10 animate-spin" />
         </div>
       </div>
-      <div className="text-center flex flex-col gap-1">
-        <p className="font-semibold text-ink-primary text-lg">Otvori Face&nbsp;ID</p>
-        <p className="text-sm text-ink-secondary max-w-xs">
-          Sustav će tražiti potvrdu. Tvoj passkey će se pohraniti u Keychain.
+      <div className="text-center flex flex-col gap-2">
+        <p className="font-semibold text-ink-primary text-lg">
+          {phase === 'deriving' ? 'Otvaram novi račun…' : 'Kreiram tvoj wallet…'}
         </p>
+        {phase === 'deploying' && (
+          <p className="text-sm text-ink-secondary max-w-xs min-h-[2.5rem]" aria-live="polite">
+            {DEPLOY_MESSAGES[msgIdx]}
+          </p>
+        )}
       </div>
     </div>
   );
@@ -1407,6 +1459,57 @@ function OpeningView() {
   );
 }
 
+/** Self-contained, print-friendly paper-wallet HTML. Plaintext BY DESIGN — a
+ * paper wallet's whole point is an offline artifact the user prints / stores
+ * somewhere safe themselves. (A passkey-encrypted file was considered and
+ * rejected: decrypting would need our web app + the same passkey — useless in
+ * exactly the lost-passkey scenario it should cover.) */
+function paperWalletHtml(record: PasskeyRecord, seed: string): string {
+  const words = seed.split(/\s+/);
+  const date = new Date().toISOString().slice(0, 10);
+  const wordCells = words
+    .map(
+      (w, i) =>
+        `<div class="w"><span class="n">${i + 1}</span><span class="t">${w}</span></div>`,
+    )
+    .join('');
+  return `<!doctype html>
+<html lang="hr"><head><meta charset="utf-8">
+<title>DOMOVINA Wallet — paper backup ${record.safeAddress.slice(0, 8)}…</title>
+<style>
+  body{font-family:-apple-system,system-ui,sans-serif;color:#0b1f3a;max-width:640px;margin:32px auto;padding:0 20px;line-height:1.45}
+  h1{font-size:20px;border-bottom:3px solid #002F6C;padding-bottom:8px}
+  h1 span{color:#FF0000}
+  .warn{border:2px solid #FF0000;border-radius:8px;padding:10px 14px;font-size:13px;margin:16px 0;background:#fff5f5}
+  .addr{font-family:ui-monospace,monospace;font-size:13px;word-break:break-all;background:#f1f4f9;border-radius:8px;padding:10px 14px}
+  .grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:16px 0}
+  .w{display:flex;gap:6px;align-items:baseline;border:1px solid #c9d4e5;border-radius:8px;padding:8px 10px;font-family:ui-monospace,monospace}
+  .n{font-size:10px;color:#5A6570}.t{font-size:14px;font-weight:600}
+  .meta{font-size:12px;color:#5A6570}
+  ol{font-size:13px;padding-left:20px}
+  @media print{body{margin:10mm auto}.noprint{display:none}}
+</style></head><body>
+<h1>DOMOVINA <span>Wallet</span> — paper backup</h1>
+<p class="meta">Kreirano: ${date} · Mreža: Gnosis Chain (EVM, chain ID 100) · Safe v1.4.1</p>
+<div class="warn"><strong>ČUVAJ OVO KAO GOTOVINU.</strong> Tko ima ovih 12 riječi, ima potpunu
+kontrolu nad sredstvima na adresi ispod — u bilo kojem walletu, bez ikakve aplikacije ili
+lozinke. Isprintaj i spremi offline; ne šalji mailom, ne slikaj u galeriju, ne drži u cloudu.</div>
+<h3>Adresa (Safe smart account)</h3>
+<div class="addr">${record.safeAddress}</div>
+<h3>Recovery seed — 12 riječi (redoslijed je bitan)</h3>
+<div class="grid">${wordCells}</div>
+<h3>Kako vratiti pristup</h3>
+<ol>
+  <li><strong>Safe Mobile</strong> (iOS/Android) ili <strong>app.safe.global</strong>: uvezi seed
+  kao potpisnika (signer), zatim dodaj/učitaj Safe po adresi iznad.</li>
+  <li><strong>MetaMask</strong> (desktop): Uvezi račun → Tajna fraza za oporavak (SRP), pa upravljaj
+  Safe-om kroz app.safe.global.</li>
+  <li>Ovaj seed je 1-od-2 vlasnik — DOMOVINA Wallet passkey i dalje radi neovisno o njemu.</li>
+</ol>
+<p class="meta noprint">Ovu datoteku nakon ispisa obriši s uređaja ako ne želiš digitalnu kopiju.</p>
+</body></html>`;
+}
+
 function CreatedView({
   record,
   recoverySeed,
@@ -1418,16 +1521,21 @@ function CreatedView({
 }) {
   const [revealed, setRevealed] = useState(false);
   const [copied, setCopied] = useState(false);
-  // Backup robustness (safe-client-compatibility refinement 2): the seed is the
-  // ONLY portable key and it's shown once — so entering the wallet requires an
-  // explicit choice. Revealed → confirm "I wrote it down"; not revealed → a
-  // conscious "continue without seed" step instead of a silent skip.
+  // MANDATORY seed onboarding: the seed is the ONLY portable key and it's shown
+  // exactly once, so entering the wallet requires the full pass — reveal →
+  // copy/download (backedUp) → explicit "I know this never shows again"
+  // checkbox. The old "Nastavi bez seeda" skip is gone by product decision: we
+  // guarantee the user SAW and ACTED on the seed; whether they truly stored it
+  // safely is their responsibility.
+  const [backedUp, setBackedUp] = useState(false);
   const [savedConfirmed, setSavedConfirmed] = useState(false);
-  const [skipPrompt, setSkipPrompt] = useState(false);
   const words = recoverySeed ? recoverySeed.split(/\s+/) : [];
 
   async function copySeed() {
     if (!recoverySeed) return;
+    // The click itself is the act we gate on — clipboard failure (rare, non-secure
+    // contexts) must not dead-end the mandatory flow, the words stay readable.
+    setBackedUp(true);
     try {
       await navigator.clipboard.writeText(recoverySeed);
       setCopied(true);
@@ -1436,6 +1544,23 @@ function CreatedView({
     } catch {
       /* clipboard blocked — user can still read the words */
     }
+  }
+
+  function downloadPaperWallet() {
+    if (!recoverySeed) return;
+    const blob = new Blob([paperWalletHtml(record, recoverySeed)], {
+      type: 'text/html;charset=utf-8',
+    });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `DOMOVINA-paper-wallet-${record.safeAddress.slice(2, 8)}.html`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 10_000);
+    setBackedUp(true);
+    haptic('success');
   }
 
   return (
@@ -1473,17 +1598,17 @@ function CreatedView({
           <div className="flex flex-col gap-1">
             <span className="flex items-center gap-1.5 text-sm font-medium text-ink-primary">
               <ShieldCheck className="h-4 w-4 text-emerald-600" />
-              Recovery seed (neobavezno)
+              Recovery seed — obavezan korak
             </span>
             <p className="text-xs text-ink-secondary leading-snug">
               12-riječni rezervni ključ — uvezeš ga u MetaMask (desktop) ili{' '}
               <span className="font-medium text-ink-primary">Safe Mobile</span> (iOS/Android)
-              i isti Safe koristiš svugdje, potpuno bez ove aplikacije. Možeš preskočiti i
-              ostati samo na passkeyu. Prikazuje se{' '}
-              <span className="font-semibold">samo sad</span>.
+              i isti Safe koristiš svugdje, potpuno bez ove aplikacije. Prikazuje se{' '}
+              <span className="font-semibold">samo sad i nikad više</span> — nigdje nije
+              spremljen, zato ga moraš pogledati i spremiti prije ulaska u wallet.
             </p>
           </div>
-          <Button onClick={() => setRevealed(true)} variant="secondary" size="md" block>
+          <Button onClick={() => setRevealed(true)} size="md" block>
             <Eye className="h-4 w-4" />
             Prikaži recovery seed
           </Button>
@@ -1510,12 +1635,20 @@ function CreatedView({
               </div>
             ))}
           </div>
-          <Button onClick={copySeed} variant="secondary" size="md" block>
-            {copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
-            {copied ? 'Kopirano' : 'Kopiraj seed'}
-          </Button>
+          <div className="grid grid-cols-2 gap-2">
+            <Button onClick={copySeed} variant="secondary" size="md" block>
+              {copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
+              {copied ? 'Kopirano' : 'Kopiraj seed'}
+            </Button>
+            <Button onClick={downloadPaperWallet} variant="secondary" size="md" block>
+              <Download className="h-4 w-4" />
+              Paper wallet
+            </Button>
+          </div>
           <p className="text-[11px] text-ink-muted leading-snug">
-            <span className="font-medium text-ink-secondary">Preporuka:</span> uvezi seed u{' '}
+            <span className="font-medium text-ink-secondary">Paper wallet</span> je datoteka
+            za ispis — isprintaj je i spremi offline kao gotovinu, pa obriši s uređaja.{' '}
+            <span className="font-medium text-ink-secondary">Preporuka za uvoz:</span>{' '}
             <span className="font-medium text-ink-secondary">Safe Mobile</span> (iOS/Android) —
             ima potpisivanje, push notifikacije kad ti stignu tokeni i sve Safe funkcije. Na
             desktopu radi i MetaMask (Uvezi račun → Tajna fraza za oporavak) uz
@@ -1523,55 +1656,42 @@ function CreatedView({
             100% tvoj, u bilo kojem Safe walletu. Ovaj ključ je drugi potpisnik (1-od-2) —
             wallet i dalje radi i bez njega, preko passkeya.
           </p>
-          <label className="flex items-start gap-2.5 rounded-xl bg-surface-sunken px-3 py-2.5 cursor-pointer select-none">
+          <label
+            className={
+              'flex items-start gap-2.5 rounded-xl bg-surface-sunken px-3 py-2.5 select-none ' +
+              (backedUp ? 'cursor-pointer' : 'opacity-50 cursor-not-allowed')
+            }
+          >
             <input
               type="checkbox"
               checked={savedConfirmed}
+              disabled={!backedUp}
               onChange={(e) => setSavedConfirmed(e.target.checked)}
               className="mt-0.5 h-4 w-4 shrink-0 accent-brand-navy-500"
             />
             <span className="text-xs text-ink-primary leading-snug">
-              Spremio/la sam svih 12 riječi na sigurno mjesto. Znam da se nikad više neće
-              prikazati i da kontroliraju ovaj Safe u bilo kojem walletu.
+              Spremio/la sam svih 12 riječi na sigurno mjesto. Svjestan/na sam da je ovo{' '}
+              <span className="font-semibold">zadnji i jedini put</span> da se prikazuju —
+              nisu nigdje spremljene i nitko ih ne može vratiti.
             </span>
           </label>
+          {!backedUp && (
+            <p className="text-[11px] text-ink-muted text-center">
+              Kopiraj seed ili preuzmi paper wallet da nastaviš.
+            </p>
+          )}
         </Card>
       )}
 
-      {recoverySeed && !revealed && skipPrompt ? (
-        <Card padding="md" className="flex flex-col gap-3 border-brand-red-500/40">
-          <p className="text-sm text-ink-secondary leading-snug">
-            <span className="font-medium text-ink-primary">Sigurno bez seeda?</span> Prikazuje
-            se samo sada — poslije ga nitko ne može vratiti (nije nigdje spremljen). Bez njega
-            wallet radi isključivo preko passkeya; seed je jedini ključ koji radi i izvan ove
-            aplikacije (Safe Mobile, MetaMask, app.safe.global).
-          </p>
-          <Button
-            onClick={() => {
-              setSkipPrompt(false);
-              setRevealed(true);
-            }}
-            size="lg"
-            block
-          >
-            <Eye className="h-4 w-4" />
-            Ipak prikaži seed
-          </Button>
-          <Button onClick={onEnter} variant="ghost" size="sm" block>
-            Nastavi bez seeda
-          </Button>
-        </Card>
-      ) : (
-        <Button
-          onClick={recoverySeed && !revealed ? () => setSkipPrompt(true) : onEnter}
-          disabled={!!recoverySeed && revealed && !savedConfirmed}
-          size="xl"
-          block
-        >
-          Otvori wallet
-          <ChevronRight className="h-5 w-5" />
-        </Button>
-      )}
+      <Button
+        onClick={onEnter}
+        disabled={!!recoverySeed && !(revealed && savedConfirmed)}
+        size="xl"
+        block
+      >
+        Otvori wallet
+        <ChevronRight className="h-5 w-5" />
+      </Button>
     </div>
   );
 }
