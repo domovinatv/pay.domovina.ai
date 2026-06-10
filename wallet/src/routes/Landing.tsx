@@ -1614,10 +1614,14 @@ function CreatedView({
             </Button>
           </div>
           <p className="text-[11px] text-ink-muted leading-snug">
-            <span className="font-medium text-ink-secondary">Paper wallet</span> je gotov PDF
-            s QR kodom adrese — A4 za običan printer, 15×10 cm vodoravno za foto printer
-            (DNP termosublimacija, kao prava fotografija). Generira se potpuno offline na
-            ovom uređaju. Isprintaj i spremi kao gotovinu, pa obriši datoteku.{' '}
+            <span className="font-medium text-ink-secondary">Paper wallet</span> je obostrani
+            PDF (2 stranice): <span className="font-medium text-ink-secondary">javna strana</span>{' '}
+            s QR adresom koju smiješ slati za uplate i{' '}
+            <span className="font-medium text-ink-secondary">privatna strana</span> sa seedom
+            i označenom zonom za sigurnosnu naljepnicu. A4 za običan printer, 15×10 cm za
+            foto printer (DNP termosublimacija). Isprintaj obje strane, laminiraj ih
+            leđa-o-leđa, seed prelijepi naljepnicom — i spremi (ili zakopaj). Generira se
+            potpuno offline; obriši datoteku nakon ispisa.{' '}
             <span className="font-medium text-ink-secondary">Preporuka za uvoz:</span>{' '}
             <span className="font-medium text-ink-secondary">Safe Mobile</span> (iOS/Android) —
             ima potpisivanje, push notifikacije kad ti stignu tokeni i sve Safe funkcije. Na

@@ -1,8 +1,14 @@
 // Paper-wallet PDF generator — 100% client-side/offline (canvas → JPEG → a
-// hand-rolled single-page PDF; no network, no new dependencies). Plaintext BY
-// DESIGN: a paper wallet is an offline artifact the user prints and stores —
-// a passkey-encrypted file was rejected because it would be undecryptable in
+// hand-rolled PDF; no network, no new dependencies). Plaintext BY DESIGN: a
+// paper wallet is an offline artifact the user prints and stores — a
+// passkey-encrypted file was rejected because it would be undecryptable in
 // exactly the lost-passkey scenario it exists for.
+//
+// TWO-SIDED: every PDF has two pages meant to be printed on two sheets (or
+// duplex) and laminated back-to-back:
+//   page 1 — PUBLIC side: address + QR, freely shareable (receive card)
+//   page 2 — PRIVATE side: the 12-word seed, with a marked zone to cover
+//            with an opaque safety sticker after laminating
 //
 // Two print formats:
 //   'a4'    — 210×297 mm portrait, classic document print
@@ -11,7 +17,7 @@
 //
 // Branding follows the mediakit (/mediakit.domovina.tv): the family "D" mark
 // (vertical Croatian-flag fill + product symbol), navy #002F6C / red #FF0000
-// palette, tricolor stripe. Tenant name/colors come from brand config; the
+// palette, tricolor stripe. Tenant name/domain come from brand config; the
 // "D" mark itself is the DOMOVINA family mark.
 
 import QRCodeStyling from 'qr-code-styling';
@@ -123,6 +129,56 @@ function wrapText(ctx: CanvasRenderingContext2D, text: string, maxWidth: number)
   return lines;
 }
 
+/** 12-word grid; returns total height. Caller positions the sticker zone. */
+function drawSeedGrid(
+  ctx: CanvasRenderingContext2D,
+  words: string[],
+  x: number,
+  y: number,
+  totalW: number,
+  cols: number,
+  cellH: number,
+  gap: number,
+  numFontPx: number,
+  wordFontPx: number,
+): number {
+  const cellW = (totalW - (cols - 1) * gap) / cols;
+  words.forEach((word, i) => {
+    const cx = x + (i % cols) * (cellW + gap);
+    const cy = y + Math.floor(i / cols) * (cellH + gap);
+    ctx.strokeStyle = CELL_BORDER;
+    ctx.lineWidth = 3;
+    roundRectPath(ctx, cx, cy, cellW, cellH, Math.min(20, cellH / 6));
+    ctx.stroke();
+    ctx.fillStyle = MUTED;
+    ctx.font = `400 ${numFontPx}px ${FONT_SANS}`;
+    ctx.fillText(String(i + 1), cx + cellW * 0.05 + 10, cy + cellH * 0.63);
+    ctx.fillStyle = NAVY;
+    ctx.font = `700 ${wordFontPx}px ${FONT_MONO}`;
+    ctx.fillText(word, cx + cellW * 0.05 + 10 + numFontPx * 2, cy + cellH * 0.65);
+  });
+  const rows = Math.ceil(words.length / cols);
+  return rows * cellH + (rows - 1) * gap;
+}
+
+/** Dashed outline marking where the opaque safety sticker goes (applied OVER
+ * the laminate — peel to reveal the seed). */
+function drawStickerZone(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+) {
+  ctx.save();
+  ctx.strokeStyle = MUTED;
+  ctx.lineWidth = 3;
+  ctx.setLineDash([18, 14]);
+  roundRectPath(ctx, x, y, w, h, 26);
+  ctx.stroke();
+  ctx.restore();
+}
+
 /** Address QR as an ImageBitmap (navy modules on white, M error correction —
  * matches the in-app Receive QR styling). */
 async function addressQrBitmap(address: string, sizePx: number): Promise<ImageBitmap | null> {
@@ -151,39 +207,102 @@ type RenderInput = {
   qr: ImageBitmap | null;
 };
 
-// ── A4 portrait, 300dpi: 2480×3508 ──────────────────────────────────────────
-function renderA4(input: RenderInput): HTMLCanvasElement {
-  const W = 2480;
-  const H = 3508;
-  const M = 180;
+function newCanvas(w: number, h: number): [HTMLCanvasElement, CanvasRenderingContext2D] {
   const canvas = document.createElement('canvas');
-  canvas.width = W;
-  canvas.height = H;
+  canvas.width = w;
+  canvas.height = h;
   const ctx = canvas.getContext('2d')!;
   ctx.fillStyle = '#FFFFFF';
-  ctx.fillRect(0, 0, W, H);
+  ctx.fillRect(0, 0, w, h);
+  return [canvas, ctx];
+}
 
-  tricolorStripe(ctx, 0, W, 16);
+// ── A4 portrait, 300dpi: 2480×3508 ──────────────────────────────────────────
 
-  // Header
+function a4Header(ctx: CanvasRenderingContext2D, M: number, subtitle: string, subColor: string) {
+  tricolorStripe(ctx, 0, 2480, 16);
   drawLogo(ctx, M, 140, 250);
   ctx.fillStyle = NAVY;
   ctx.font = `700 116px ${FONT_SANS}`;
   ctx.fillText(brand.name, M + 310, 255);
-  ctx.fillStyle = MUTED;
+  ctx.fillStyle = subColor;
   ctx.font = `600 56px ${FONT_SANS}`;
-  ctx.fillText('PAPER BACKUP · RECOVERY SEED', M + 310, 345);
+  ctx.fillText(subtitle, M + 310, 345);
+}
 
-  ctx.font = `400 44px ${FONT_SANS}`;
+function a4Footer(ctx: CanvasRenderingContext2D, M: number, H: number) {
   ctx.fillStyle = MUTED;
+  ctx.font = `400 40px ${FONT_SANS}`;
+  ctx.fillText(`${brand.domain}   ·   Self-custody — ključ je 100% tvoj`, M, H - 130);
+  tricolorStripe(ctx, H - 48, 2480, 16);
+}
+
+/** A4 page 1 — PUBLIC: big receive QR + address. Freely shareable. */
+function renderA4Public(input: RenderInput): HTMLCanvasElement {
+  const W = 2480;
+  const H = 3508;
+  const M = 180;
+  const [canvas, ctx] = newCanvas(W, H);
+
+  a4Header(ctx, M, 'JAVNA STRANA · ADRESA ZA UPLATE', MUTED);
+  ctx.fillStyle = MUTED;
+  ctx.font = `400 44px ${FONT_SANS}`;
   ctx.fillText(
     `Kreirano: ${input.date}   ·   Mreža: Gnosis Chain (EVM, chain ID 100)   ·   Safe v1.4.1`,
     M,
     505,
   );
 
+  // Big centered QR
+  const qrSize = 1240;
+  const box = qrSize + 80;
+  const bx = (W - box) / 2;
+  const by = 640;
+  ctx.strokeStyle = CELL_BORDER;
+  ctx.lineWidth = 4;
+  ctx.strokeRect(bx, by, box, box);
+  if (input.qr) ctx.drawImage(input.qr, bx + 40, by + 40, qrSize, qrSize);
+
+  ctx.textAlign = 'center';
+  ctx.fillStyle = NAVY;
+  ctx.font = `700 72px ${FONT_MONO}`;
+  const half = Math.ceil(input.safeAddress.length / 2);
+  ctx.fillText(input.safeAddress.slice(0, half), W / 2, by + box + 150);
+  ctx.fillText(input.safeAddress.slice(half), W / 2, by + box + 245);
+
+  ctx.font = `700 56px ${FONT_SANS}`;
+  ctx.fillText('Skeniraj i pošalji EURe · Gnosis Chain', W / 2, by + box + 400);
+  ctx.fillStyle = MUTED;
+  ctx.font = `400 46px ${FONT_SANS}`;
+  ctx.fillText(
+    'Ova strana je JAVNA — slobodno je dijeli, fotografiraj ili pošalji uplatitelju.',
+    W / 2,
+    by + box + 490,
+  );
+  ctx.fillStyle = RED;
+  ctx.font = `600 44px ${FONT_SANS}`;
+  ctx.fillText(
+    'Druga strana sadrži privatni recovery seed — nju nikad ne dijeli.',
+    W / 2,
+    by + box + 600,
+  );
+  ctx.textAlign = 'left';
+
+  a4Footer(ctx, M, H);
+  return canvas;
+}
+
+/** A4 page 2 — PRIVATE: seed grid + sticker zone + restore instructions. */
+function renderA4Private(input: RenderInput): HTMLCanvasElement {
+  const W = 2480;
+  const H = 3508;
+  const M = 180;
+  const [canvas, ctx] = newCanvas(W, H);
+
+  a4Header(ctx, M, 'PRIVATNA STRANA · RECOVERY SEED — SAKRIJ OVU STRANU', RED);
+
   // Warning box
-  const warnY = 570;
+  const warnY = 480;
   const warnH = 270;
   ctx.fillStyle = '#FFF5F5';
   roundRectPath(ctx, M, warnY, W - 2 * M, warnH, 24);
@@ -197,61 +316,39 @@ function renderA4(input: RenderInput): HTMLCanvasElement {
   ctx.font = `400 44px ${FONT_SANS}`;
   const warnLines = wrapText(
     ctx,
-    'Tko ima ovih 12 riječi, ima potpunu kontrolu nad sredstvima na adresi ispod — u bilo kojem walletu, bez aplikacije i bez lozinke. Spremi offline; ne šalji mailom, ne slikaj u galeriju, ne drži u cloudu.',
+    'Tko ima ovih 12 riječi, ima potpunu kontrolu nad sredstvima — u bilo kojem walletu, bez aplikacije i bez lozinke. Spremi offline; ne šalji mailom, ne slikaj u galeriju, ne drži u cloudu.',
     W - 2 * M - 100,
   );
   warnLines.forEach((l, i) => ctx.fillText(l, M + 50, warnY + 155 + i * 56));
 
-  // Address + QR
-  let y = 1000;
-  ctx.fillStyle = NAVY;
-  ctx.font = `700 52px ${FONT_SANS}`;
-  ctx.fillText('ADRESA (SAFE SMART ACCOUNT)', M, y);
-  y += 50;
-  const qrSize = 620;
-  if (input.qr) {
-    ctx.strokeStyle = CELL_BORDER;
-    ctx.lineWidth = 3;
-    ctx.strokeRect(M, y, qrSize + 40, qrSize + 40);
-    ctx.drawImage(input.qr, M + 20, y + 20, qrSize, qrSize);
-  }
-  const addrX = M + qrSize + 110;
-  ctx.font = `700 60px ${FONT_MONO}`;
-  ctx.fillStyle = NAVY;
-  const half = Math.ceil(input.safeAddress.length / 2);
-  ctx.fillText(input.safeAddress.slice(0, half), addrX, y + 240);
-  ctx.fillText(input.safeAddress.slice(half), addrX, y + 320);
-  ctx.font = `400 42px ${FONT_SANS}`;
+  // Owner address (so the buried sheet is self-contained)
+  let y = 940;
   ctx.fillStyle = MUTED;
-  ctx.fillText('Skeniraj QR za primanje na Gnosis Chainu.', addrX, y + 430);
-  ctx.fillText('Adresa je javna — smije se dijeliti.', addrX, y + 490);
+  ctx.font = `400 42px ${FONT_SANS}`;
+  ctx.fillText('PRIPADA ADRESI (vidi javnu stranu):', M, y);
+  ctx.fillStyle = NAVY;
+  ctx.font = `700 52px ${FONT_MONO}`;
+  ctx.fillText(input.safeAddress, M, y + 75);
 
-  // Seed grid
-  y = 1880;
+  // Seed grid inside the sticker zone
+  y = 1180;
   ctx.fillStyle = NAVY;
   ctx.font = `700 52px ${FONT_SANS}`;
   ctx.fillText('RECOVERY SEED — 12 RIJEČI (REDOSLIJED JE BITAN)', M, y);
-  y += 50;
-  const gap = 36;
-  const cellW = (W - 2 * M - 2 * gap) / 3;
-  const cellH = 150;
-  input.words.forEach((word, i) => {
-    const cx = M + (i % 3) * (cellW + gap);
-    const cy = y + Math.floor(i / 3) * (cellH + gap);
-    ctx.strokeStyle = CELL_BORDER;
-    ctx.lineWidth = 3;
-    roundRectPath(ctx, cx, cy, cellW, cellH, 20);
-    ctx.stroke();
-    ctx.fillStyle = MUTED;
-    ctx.font = `400 36px ${FONT_SANS}`;
-    ctx.fillText(String(i + 1), cx + 34, cy + 95);
-    ctx.fillStyle = NAVY;
-    ctx.font = `700 60px ${FONT_MONO}`;
-    ctx.fillText(word, cx + 110, cy + 98);
-  });
+  const gy = y + 70;
+  const gridH = drawSeedGrid(ctx, input.words, M, gy, W - 2 * M, 3, 160, 36, 36, 60);
+  drawStickerZone(ctx, M - 45, gy - 45, W - 2 * M + 90, gridH + 90);
+  ctx.fillStyle = MUTED;
+  ctx.font = `400 42px ${FONT_SANS}`;
+  const stickerLines = wrapText(
+    ctx,
+    'Iscrtkano područje: nakon laminiranja prelijepi ga neprozirnom sigurnosnom naljepnicom — seed ostaje skriven i vidljiv je tek kad se naljepnica fizički ukloni.',
+    W - 2 * M - 60,
+  );
+  stickerLines.forEach((l, i) => ctx.fillText(l, M, gy + gridH + 140 + i * 56));
 
   // Restore instructions
-  y = y + 4 * (cellH + gap) + 70;
+  y = gy + gridH + 140 + stickerLines.length * 56 + 110;
   ctx.fillStyle = NAVY;
   ctx.font = `700 52px ${FONT_SANS}`;
   ctx.fillText('KAKO VRATITI PRISTUP', M, y);
@@ -268,85 +365,92 @@ function renderA4(input: RenderInput): HTMLCanvasElement {
     sy += lines.length * 58 + 28;
   }
 
-  // Footer
-  ctx.fillStyle = MUTED;
-  ctx.font = `400 40px ${FONT_SANS}`;
-  ctx.fillText(`${brand.domain}   ·   Self-custody — ključ je 100% tvoj`, M, H - 130);
-  tricolorStripe(ctx, H - 48, W, 16);
+  a4Footer(ctx, M, H);
   return canvas;
 }
 
 // ── 15×10 cm (6×4") landscape, 300dpi: 1800×1200 — DNP photo media ──────────
-function renderPhoto(input: RenderInput): HTMLCanvasElement {
-  const W = 1800;
-  const H = 1200;
-  const M = 90; // generous safe margin: borderless photo printers crop edges
-  const canvas = document.createElement('canvas');
-  canvas.width = W;
-  canvas.height = H;
-  const ctx = canvas.getContext('2d')!;
-  ctx.fillStyle = '#FFFFFF';
-  ctx.fillRect(0, 0, W, H);
 
-  // Header band
+function photoHeader(ctx: CanvasRenderingContext2D, M: number, title: string, date: string) {
   ctx.fillStyle = NAVY;
-  ctx.fillRect(0, 0, W, 150);
+  ctx.fillRect(0, 0, 1800, 150);
   drawLogo(ctx, M, 25, 100);
   ctx.fillStyle = '#FFFFFF';
   ctx.font = `700 56px ${FONT_SANS}`;
-  ctx.fillText(`${brand.name} — paper backup`, M + 135, 95);
+  ctx.fillText(title, M + 135, 95);
   ctx.font = `400 34px ${FONT_SANS}`;
   ctx.textAlign = 'right';
-  ctx.fillText(input.date, W - M, 92);
+  ctx.fillText(date, 1800 - M, 92);
   ctx.textAlign = 'left';
+}
 
-  // Left column: QR + address
-  const qrSize = 470;
-  const qrY = 210;
-  if (input.qr) {
-    ctx.strokeStyle = CELL_BORDER;
-    ctx.lineWidth = 2;
-    ctx.strokeRect(M, qrY, qrSize + 28, qrSize + 28);
-    ctx.drawImage(input.qr, M + 14, qrY + 14, qrSize, qrSize);
-  }
+/** Photo page 1 — PUBLIC: receive QR + address (shareable photo card). */
+function renderPhotoPublic(input: RenderInput): HTMLCanvasElement {
+  const W = 1800;
+  const H = 1200;
+  const M = 90; // generous safe margin: borderless photo printers crop edges
+  const [canvas, ctx] = newCanvas(W, H);
+
+  photoHeader(ctx, M, `${brand.name} — javna strana`, input.date);
+
+  const qrSize = 700;
+  const qrY = 215;
+  ctx.strokeStyle = CELL_BORDER;
+  ctx.lineWidth = 3;
+  ctx.strokeRect(M, qrY, qrSize + 36, qrSize + 36);
+  if (input.qr) ctx.drawImage(input.qr, M + 18, qrY + 18, qrSize, qrSize);
+
+  const colX = M + qrSize + 110;
   ctx.fillStyle = NAVY;
-  ctx.font = `700 34px ${FONT_MONO}`;
+  ctx.font = `700 44px ${FONT_MONO}`;
   const half = Math.ceil(input.safeAddress.length / 2);
-  ctx.fillText(input.safeAddress.slice(0, half), M, qrY + qrSize + 90);
-  ctx.fillText(input.safeAddress.slice(half), M, qrY + qrSize + 134);
+  ctx.fillText(input.safeAddress.slice(0, half), colX, 350);
+  ctx.fillText(input.safeAddress.slice(half), colX, 410);
+  ctx.font = `700 46px ${FONT_SANS}`;
+  ctx.fillText('Skeniraj i pošalji EURe', colX, 540);
+  ctx.fillStyle = MUTED;
+  ctx.font = `400 34px ${FONT_SANS}`;
+  ctx.fillText('Gnosis Chain (EVM, chain ID 100) · Safe', colX, 605);
+  ctx.fillText('Ova strana je javna — slobodno je dijeli.', colX, 660);
+  ctx.fillStyle = RED;
+  ctx.font = `600 34px ${FONT_SANS}`;
+  ctx.fillText('Seed je na drugoj strani — nju sakrij.', colX, 745);
+
   ctx.fillStyle = MUTED;
   ctx.font = `400 28px ${FONT_SANS}`;
-  ctx.fillText('Safe adresa · Gnosis Chain · skeniraj za primanje', M, qrY + qrSize + 190);
+  ctx.fillText(`${brand.domain} · Self-custody — ključ je 100% tvoj`, M, H - 60);
+  tricolorStripe(ctx, H - 24, W, 8);
+  return canvas;
+}
 
-  // Right column: seed grid 3×4
-  const gridX = M + qrSize + 110;
-  const gridY = 230;
+/** Photo page 2 — PRIVATE: seed grid + sticker zone. */
+function renderPhotoPrivate(input: RenderInput): HTMLCanvasElement {
+  const W = 1800;
+  const H = 1200;
+  const M = 90;
+  const [canvas, ctx] = newCanvas(W, H);
+
+  photoHeader(ctx, M, 'RECOVERY SEED — privatna strana', input.date);
+
+  const gy = 280;
+  const gridH = drawSeedGrid(ctx, input.words, M, gy, W - 2 * M, 4, 160, 20, 26, 42);
+  drawStickerZone(ctx, M - 30, gy - 30, W - 2 * M + 60, gridH + 60);
+  ctx.fillStyle = MUTED;
+  ctx.font = `400 30px ${FONT_SANS}`;
+  ctx.fillText(
+    'Nakon laminiranja prelijepi iscrtkano područje neprozirnom sigurnosnom naljepnicom.',
+    M,
+    gy + gridH + 90,
+  );
+
   ctx.fillStyle = NAVY;
-  ctx.font = `700 36px ${FONT_SANS}`;
-  ctx.fillText('RECOVERY SEED — 12 RIJEČI', gridX, gridY - 30);
-  const gap = 18;
-  const cellW = (W - M - gridX - 2 * gap) / 3;
-  const cellH = 130;
-  input.words.forEach((word, i) => {
-    const cx = gridX + (i % 3) * (cellW + gap);
-    const cy = gridY + Math.floor(i / 3) * (cellH + gap);
-    ctx.strokeStyle = CELL_BORDER;
-    ctx.lineWidth = 2;
-    roundRectPath(ctx, cx, cy, cellW, cellH, 14);
-    ctx.stroke();
-    ctx.fillStyle = MUTED;
-    ctx.font = `400 26px ${FONT_SANS}`;
-    ctx.fillText(String(i + 1), cx + 20, cy + 80);
-    ctx.fillStyle = NAVY;
-    ctx.font = `700 42px ${FONT_MONO}`;
-    ctx.fillText(word, cx + 70, cy + 83);
-  });
+  ctx.font = `700 32px ${FONT_MONO}`;
+  ctx.fillText(`Pripada adresi: ${input.safeAddress}`, M, gy + gridH + 165);
 
-  // Bottom warning + footer
   ctx.fillStyle = RED;
   ctx.font = `700 32px ${FONT_SANS}`;
   ctx.fillText(
-    'ČUVAJ KAO GOTOVINU — tko ima ovih 12 riječi, kontrolira sredstva. Spremi offline.',
+    'ČUVAJ KAO GOTOVINU — tko ima ovih 12 riječi, kontrolira sredstva.',
     M,
     H - 105,
   );
@@ -361,16 +465,12 @@ function renderPhoto(input: RenderInput): HTMLCanvasElement {
   return canvas;
 }
 
-// ── Minimal single-page PDF with one embedded JPEG (DCTDecode) ───────────────
-// Hand-rolled to stay dependency-free: catalog → pages → page → image XObject
-// → content stream that paints the image across the full MediaBox.
-function buildPdfWithJpeg(
-  jpeg: Uint8Array,
-  imgW: number,
-  imgH: number,
-  pageWPt: number,
-  pageHPt: number,
-): Blob {
+// ── Minimal multi-page PDF with embedded JPEGs (DCTDecode) ───────────────────
+// Hand-rolled to stay dependency-free: catalog → pages → per page {page,
+// image XObject, content stream painting the image across the MediaBox}.
+type PdfPageImage = { jpeg: Uint8Array; w: number; h: number };
+
+function buildPdfWithJpegPages(pages: PdfPageImage[], pageWPt: number, pageHPt: number): Blob {
   const enc = new TextEncoder();
   const chunks: Uint8Array[] = [];
   let offset = 0;
@@ -381,31 +481,43 @@ function buildPdfWithJpeg(
     offset += b.length;
   };
 
+  // Object ids: 1=catalog, 2=pages, then per page i: page=3+3i, image=4+3i, contents=5+3i
+  const n = pages.length;
+  const kids = pages.map((_, i) => `${3 + 3 * i} 0 R`).join(' ');
+
   push('%PDF-1.4\n');
-  const content = `q ${pageWPt} 0 0 ${pageHPt} 0 0 cm /Im0 Do Q\n`;
   offsets[1] = offset;
   push('1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n');
   offsets[2] = offset;
-  push('2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n');
-  offsets[3] = offset;
-  push(
-    `3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${pageWPt} ${pageHPt}] ` +
-      '/Resources << /XObject << /Im0 4 0 R >> /ProcSet [/PDF /ImageC] >> /Contents 5 0 R >>\nendobj\n',
-  );
-  offsets[4] = offset;
-  push(
-    `4 0 obj\n<< /Type /XObject /Subtype /Image /Width ${imgW} /Height ${imgH} ` +
-      `/ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ${jpeg.length} >>\nstream\n`,
-  );
-  push(jpeg);
-  push('\nendstream\nendobj\n');
-  offsets[5] = offset;
-  push(`5 0 obj\n<< /Length ${content.length} >>\nstream\n${content}endstream\nendobj\n`);
+  push(`2 0 obj\n<< /Type /Pages /Kids [${kids}] /Count ${n} >>\nendobj\n`);
+
+  pages.forEach((p, i) => {
+    const pageId = 3 + 3 * i;
+    const imgId = 4 + 3 * i;
+    const contId = 5 + 3 * i;
+    const content = `q ${pageWPt} 0 0 ${pageHPt} 0 0 cm /Im${i} Do Q\n`;
+    offsets[pageId] = offset;
+    push(
+      `${pageId} 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${pageWPt} ${pageHPt}] ` +
+        `/Resources << /XObject << /Im${i} ${imgId} 0 R >> /ProcSet [/PDF /ImageC] >> /Contents ${contId} 0 R >>\nendobj\n`,
+    );
+    offsets[imgId] = offset;
+    push(
+      `${imgId} 0 obj\n<< /Type /XObject /Subtype /Image /Width ${p.w} /Height ${p.h} ` +
+        `/ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ${p.jpeg.length} >>\nstream\n`,
+    );
+    push(p.jpeg);
+    push('\nendstream\nendobj\n');
+    offsets[contId] = offset;
+    push(`${contId} 0 obj\n<< /Length ${content.length} >>\nstream\n${content}endstream\nendobj\n`);
+  });
+
+  const maxId = 2 + 3 * n;
   const xrefStart = offset;
-  let xref = 'xref\n0 6\n0000000000 65535 f \n';
-  for (let i = 1; i <= 5; i++) xref += `${String(offsets[i]).padStart(10, '0')} 00000 n \n`;
+  let xref = `xref\n0 ${maxId + 1}\n0000000000 65535 f \n`;
+  for (let i = 1; i <= maxId; i++) xref += `${String(offsets[i]).padStart(10, '0')} 00000 n \n`;
   push(xref);
-  push(`trailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n${xrefStart}\n%%EOF\n`);
+  push(`trailer\n<< /Size ${maxId + 1} /Root 1 0 R >>\nstartxref\n${xrefStart}\n%%EOF\n`);
   return new Blob(chunks as BlobPart[], { type: 'application/pdf' });
 }
 
@@ -422,35 +534,41 @@ function canvasToJpeg(canvas: HTMLCanvasElement): Promise<Uint8Array> {
   });
 }
 
-/** Render the paper wallet to a 300dpi canvas — exported for previews/tests. */
-export async function renderPaperWalletCanvas(
+/** Render both sides to 300dpi canvases — exported for previews/tests. */
+export async function renderPaperWalletCanvases(
   safeAddress: string,
   seed: string,
   format: PaperWalletFormat,
-): Promise<HTMLCanvasElement> {
+): Promise<{ publicSide: HTMLCanvasElement; privateSide: HTMLCanvasElement }> {
   const input: RenderInput = {
     safeAddress,
     words: seed.split(/\s+/),
     date: new Date().toISOString().slice(0, 10),
-    qr: await addressQrBitmap(safeAddress, 1000),
+    qr: await addressQrBitmap(safeAddress, 1400),
   };
-  return format === 'a4' ? renderA4(input) : renderPhoto(input);
+  return format === 'a4'
+    ? { publicSide: renderA4Public(input), privateSide: renderA4Private(input) }
+    : { publicSide: renderPhotoPublic(input), privateSide: renderPhotoPrivate(input) };
 }
 
-/** Generate the paper-wallet PDF and trigger a download. Throws on failure so
- * the caller can keep its backup gating honest. */
+/** Generate the two-sided paper-wallet PDF (page 1 public, page 2 private)
+ * and trigger a download. Throws on failure so the caller can keep its
+ * backup gating honest. */
 export async function downloadPaperWalletPdf(
   safeAddress: string,
   seed: string,
   format: PaperWalletFormat,
 ): Promise<void> {
-  const canvas = await renderPaperWalletCanvas(safeAddress, seed, format);
-  const jpeg = await canvasToJpeg(canvas);
+  const { publicSide, privateSide } = await renderPaperWalletCanvases(safeAddress, seed, format);
+  const pages: PdfPageImage[] = [
+    { jpeg: await canvasToJpeg(publicSide), w: publicSide.width, h: publicSide.height },
+    { jpeg: await canvasToJpeg(privateSide), w: privateSide.width, h: privateSide.height },
+  ];
   // PDF points: A4 = 595.28×841.89; 6×4" landscape = 432×288
   const pdf =
     format === 'a4'
-      ? buildPdfWithJpeg(jpeg, canvas.width, canvas.height, 595.28, 841.89)
-      : buildPdfWithJpeg(jpeg, canvas.width, canvas.height, 432, 288);
+      ? buildPdfWithJpegPages(pages, 595.28, 841.89)
+      : buildPdfWithJpegPages(pages, 432, 288);
   const suffix = format === 'a4' ? 'A4' : 'foto-15x10';
   const url = URL.createObjectURL(pdf);
   const a = document.createElement('a');
