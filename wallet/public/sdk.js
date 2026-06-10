@@ -144,6 +144,73 @@
     }
   }
 
+  // On returning from a createAccount() handoff, the wallet appends the newly
+  // derived campaign account (dw_account = derived Safe) plus the connecting
+  // identity (dw_safe/signer/cred) and the account's saltNonce. Distinguished
+  // from a plain connect-return by the presence of dw_account OR dw_error.
+  // CSRF-checks the single-use state, strips all dw_* params. Returns null when
+  // this isn't a createAccount return (so connect()'s consumer can handle it).
+  function consumeAccountReturnParams() {
+    try {
+      const u = new URL(window.location.href);
+      const p = u.searchParams;
+      if (p.get('dw_return') !== '1') return null;
+      const accountAddress = p.get('dw_account');
+      const error = p.get('dw_error');
+      if (!accountAddress && !error) return null; // a plain connect-return, not ours
+      const safeAddress = p.get('dw_safe');
+      const signerAddress = p.get('dw_signer');
+      const credentialId = p.get('dw_cred');
+      const saltNonce = p.get('dw_salt');
+      const state = p.get('dw_state');
+      for (const k of [
+        'dw_return', 'dw_account', 'dw_safe', 'dw_signer', 'dw_cred', 'dw_salt', 'dw_state', 'dw_error',
+      ]) {
+        p.delete(k);
+      }
+      const clean = u.pathname + (p.toString() ? '?' + p.toString() : '') + u.hash;
+      window.history.replaceState(null, '', clean);
+      let expected = null;
+      try {
+        expected = sessionStorage.getItem(STATE_KEY);
+        sessionStorage.removeItem(STATE_KEY);
+      } catch (_) {
+        /* ignore */
+      }
+      if (!expected || !state || state !== expected) return null;
+      if (error) return { error };
+      if (!accountAddress || !safeAddress || !signerAddress) return null;
+      return {
+        accountAddress,
+        safeAddress,
+        signerAddress,
+        credentialId: credentialId || null,
+        saltNonce: saltNonce || null,
+      };
+    } catch (_) {
+      return null;
+    }
+  }
+
+  function redirectToWalletForAccount(name) {
+    let state = '';
+    try {
+      state = newState();
+      sessionStorage.setItem(STATE_KEY, state);
+    } catch (_) {
+      /* sessionStorage blocked — proceed without CSRF token */
+    }
+    const url =
+      WALLET_ORIGIN +
+      '/?dw_create_account=1' +
+      '&dw_name=' +
+      encodeURIComponent(name || '') +
+      (state ? '&dw_state=' + encodeURIComponent(state) : '') +
+      '&dw_return=' +
+      encodeURIComponent(location.href);
+    window.location.assign(url);
+  }
+
   // Single-use CSRF token for the redirect handoff (sessionStorage survives the
   // same-tab round-trip to the wallet and back).
   const STATE_KEY = 'domovina_connect_state';
@@ -224,6 +291,35 @@
       redirectToWallet();
       return new Promise(function () {}); // navigation in progress; never resolves
     },
+    /** Open a NEW dedicated wallet account (e.g. one per pinka campaign) and
+     * resolve with its address. A derived 1-of-2 [signer, recoveryOwner] Safe in
+     * the user's DOMOVINA wallet — listed, signable, recoverable like any account.
+     *
+     * Deterministic full-page handoff, same shape as connect(): the first call
+     * redirects to the wallet (which ensures a passkey session, shows a consent
+     * card, derives the account locally) and never resolves; on the return
+     * navigation the wallet appends dw_account + identity, which this consumes.
+     * NOT cached — every call opens a fresh account. Rejects with 'cancelled' if
+     * the user declines.
+     * → Promise<{ accountAddress, safeAddress, signerAddress, credentialId?, saltNonce? }> */
+    createAccount(opts) {
+      const returned = consumeAccountReturnParams();
+      if (returned) {
+        if (returned.error) {
+          return Promise.reject(new Error('DOMOVINA: ' + returned.error));
+        }
+        // The return leg also carries the connect identity — cache it so a later
+        // connect() resolves instantly without a second handoff.
+        storeIdentity({
+          safeAddress: returned.safeAddress,
+          signerAddress: returned.signerAddress,
+          credentialId: returned.credentialId,
+        });
+        return Promise.resolve(returned);
+      }
+      redirectToWalletForAccount(opts && opts.name);
+      return new Promise(function () {}); // navigation in progress; never resolves
+    },
     /** Forget the cached connection so the next connect() re-picks a wallet. */
     disconnect() {
       try {
@@ -252,7 +348,7 @@
       });
     },
     /** For diagnostics / debug. */
-    _version: '0.9.0',
+    _version: '0.10.0',
   };
 
   Object.defineProperty(window, 'Domovina', { value: api, writable: false });

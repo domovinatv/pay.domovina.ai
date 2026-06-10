@@ -34,7 +34,7 @@ import {
   type PasskeyRecord,
 } from '../lib/passkey';
 import { createBootstrapEoa, signAttach, submitBootstrapDeploy } from '../lib/bootstrap';
-import { bootstrapAccountView, setActiveAccountAddress } from '../lib/accounts';
+import { bootstrapAccountView, deriveAccount, setActiveAccountAddress } from '../lib/accounts';
 import { fetchEureBalances, formatEureShort } from '../lib/balances';
 import {
   lookupWallet,
@@ -66,6 +66,10 @@ type Stage =
   | { kind: 'creating' }
   | { kind: 'opening' }
   | { kind: 'created'; record: PasskeyRecord; recoverySeed?: string }
+  // SDK createAccount() handoff (e.g. pinka campaign): identity is established,
+  // now ask consent to open a NEW derived account named after the host's request.
+  | { kind: 'create-account-confirm'; record: PasskeyRecord; name: string }
+  | { kind: 'create-account-deriving' }
   | { kind: 'error'; message: string };
 
 /** A passkey authenticated but maps to no usable wallet (no local record and no
@@ -116,15 +120,92 @@ function finishConnectReturn(cr: ConnectReturn, record: PasskeyRecord): void {
   window.location.replace(u.toString());
 }
 
+/** Read the createAccount() handoff (`?dw_create_account=1&dw_name=…&dw_return=…`).
+ * Same CSRF/allowlist contract as connect; `name` is the host's requested account
+ * label (e.g. the pinka campaign title). Null when this isn't that handoff. */
+type CreateAccountReturn = { url: string; state: string | null; name: string };
+function readCreateAccountReturn(): CreateAccountReturn | null {
+  if (typeof window === 'undefined') return null;
+  const p = new URLSearchParams(window.location.search);
+  if (p.get('dw_create_account') !== '1') return null;
+  const ret = p.get('dw_return');
+  if (!ret || !isAllowedReturn(ret)) return null;
+  return { url: ret, state: p.get('dw_state'), name: p.get('dw_name') ?? '' };
+}
+
+/** Hand the newly derived campaign account back to the host. `dw_account` is the
+ * derived (campaign) Safe; `dw_safe`/`dw_signer`/`dw_cred` are the connecting
+ * identity (the return doubles as a connect), `dw_salt` the account's saltNonce. */
+function finishCreateAccountReturn(
+  cr: CreateAccountReturn,
+  record: PasskeyRecord,
+  account: { safeAddress: string; saltNonce?: string },
+): void {
+  const u = new URL(cr.url);
+  u.searchParams.set('dw_return', '1');
+  u.searchParams.set('dw_account', account.safeAddress);
+  u.searchParams.set('dw_safe', record.safeAddress);
+  u.searchParams.set('dw_signer', record.signerAddress);
+  u.searchParams.set('dw_cred', record.credentialId);
+  if (account.saltNonce) u.searchParams.set('dw_salt', account.saltNonce);
+  if (cr.state) u.searchParams.set('dw_state', cr.state);
+  window.location.replace(u.toString());
+}
+
+/** Tell the host the user declined (or derivation failed). The host SDK rejects
+ * createAccount() with this so its wizard can restore the draft and offer a retry. */
+function finishCreateAccountReturnError(cr: CreateAccountReturn, code = 'cancelled'): void {
+  const u = new URL(cr.url);
+  u.searchParams.set('dw_return', '1');
+  u.searchParams.set('dw_error', code);
+  if (cr.state) u.searchParams.set('dw_state', cr.state);
+  window.location.replace(u.toString());
+}
+
 export function Landing() {
   const setAccount = useWalletStore((s) => s.setAccount);
   // When opened via the SDK "Kreiraj novčanik" handoff, redirect back to the
   // host with the wallet identity instead of entering the wallet UI.
   const connectReturn = useMemo(() => readConnectReturn(), []);
+  const createAccountReturn = useMemo(() => readCreateAccountReturn(), []);
+  // Called once an identity (passkey) is established. Routes the post-identity step:
+  // a createAccount handoff → consent screen (then derive+return); a plain connect
+  // handoff → redirect identity back; otherwise → false so the caller enters the UI.
   function maybeReturn(record: PasskeyRecord): boolean {
+    if (createAccountReturn) {
+      setStage({ kind: 'create-account-confirm', record, name: createAccountReturn.name });
+      return true;
+    }
     if (!connectReturn) return false;
     finishConnectReturn(connectReturn, record);
     return true;
+  }
+
+  async function confirmCreateAccount(record: PasskeyRecord, name: string) {
+    if (!createAccountReturn) return;
+    haptic('tap');
+    setStage({ kind: 'create-account-deriving' });
+    try {
+      // Pure-local derive of a 1-of-2 [signer, recoveryOwner] Safe — no Face ID, no
+      // tx (deploys lazily on first send via the relay cold path). Reuses the same
+      // "Novi račun" path as WalletSwitcher so the account is native + cross-device.
+      const acc = await deriveAccount(record.credentialId, name.trim() || 'Kampanja');
+      finishCreateAccountReturn(createAccountReturn, record, acc);
+    } catch (e) {
+      // e.g. a legacy identity with no recoveryOwner can't derive — tell the host so
+      // its wizard can fall back to the legacy client-side derive path.
+      console.error('[Landing] createAccount derive failed', e);
+      finishCreateAccountReturnError(createAccountReturn, 'derive_failed');
+    }
+  }
+
+  function rejectCreateAccount() {
+    haptic('tap');
+    if (createAccountReturn) {
+      finishCreateAccountReturnError(createAccountReturn, 'cancelled');
+      return;
+    }
+    resetToWelcome();
   }
   const [stage, setStage] = useState<Stage>(() => {
     const known = listKnownPasskeys();
@@ -408,6 +489,21 @@ export function Landing() {
         </div>
       )}
 
+      {createAccountReturn && (
+        <div className="mt-4 rounded-2xl border border-surface-border bg-surface-raised px-4 py-3 text-sm text-ink-secondary">
+          <span className="font-medium text-ink-primary">
+            {(() => {
+              try {
+                return new URL(createAccountReturn.url).hostname;
+              } catch {
+                return 'Aplikacija';
+              }
+            })()}
+          </span>{' '}
+          traži otvaranje novog računa. Prijavi se ili kreiraj novčanik — vraćamo te natrag.
+        </div>
+      )}
+
       <main className="flex-1 flex flex-col justify-center gap-8 pb-12">
         {stage.kind === 'welcome' && (
           <WelcomeView onCreate={startCreate} onCrossDevice={() => openExisting()} />
@@ -471,10 +567,73 @@ export function Landing() {
           />
         )}
 
+        {stage.kind === 'create-account-confirm' && (
+          <CreateAccountConfirmView
+            name={stage.name}
+            host={(() => {
+              try {
+                return new URL(createAccountReturn?.url ?? '').hostname;
+              } catch {
+                return 'Aplikacija';
+              }
+            })()}
+            onConfirm={() => confirmCreateAccount(stage.record, stage.name)}
+            onReject={rejectCreateAccount}
+          />
+        )}
+
+        {stage.kind === 'create-account-deriving' && <CreatingView />}
+
         {stage.kind === 'error' && (
           <ErrorView message={stage.message} onRetry={resetToWelcome} />
         )}
       </main>
+    </div>
+  );
+}
+
+/** Consent card for the SDK createAccount() handoff. Opening a derived account is
+ * pure-local (no Face ID beyond the already-established session), so this is a
+ * consent step, not a signature. */
+function CreateAccountConfirmView({
+  name,
+  host,
+  onConfirm,
+  onReject,
+}: {
+  name: string;
+  host: string;
+  onConfirm: () => void;
+  onReject: () => void;
+}) {
+  const label = name.trim() || 'Kampanja';
+  return (
+    <div className="flex flex-col gap-6 animate-route-enter">
+      <div className="text-center flex flex-col gap-2">
+        <Sparkles className="h-10 w-10 mx-auto text-brand-navy-500" />
+        <h2 className="text-2xl font-semibold text-ink-primary">Otvori novi račun</h2>
+        <p className="text-ink-secondary">
+          <span className="font-medium text-ink-primary">{host}</span> traži otvaranje novog
+          računa u tvom novčaniku:
+        </p>
+      </div>
+      <Card padding="md" className="flex flex-col gap-1 text-center">
+        <span className="text-[11px] uppercase tracking-widest text-ink-muted">Naziv računa</span>
+        <span className="text-lg font-semibold text-ink-primary break-words">{label}</span>
+      </Card>
+      <p className="text-center text-xs text-ink-muted">
+        Novi račun je nova adresa pod istim passkeyem i istim recovery ključem. Bez gas-a dok
+        ne primi ili pošalje sredstva.
+      </p>
+      <div className="flex flex-col gap-3">
+        <Button onClick={onConfirm} size="xl" block>
+          <Check className="h-5 w-5" />
+          Otvori račun
+        </Button>
+        <Button onClick={onReject} variant="ghost" size="md" block>
+          Odbij
+        </Button>
+      </div>
     </div>
   );
 }
