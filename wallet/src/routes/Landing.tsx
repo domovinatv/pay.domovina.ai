@@ -31,10 +31,8 @@ import {
   lookupPasskey,
   passkeyProviderHint,
   pickExistingPasskey,
-  recordRpId,
   savePasskey,
   setActivePasskey,
-  signalRemovePasskey,
   type PasskeyRecord,
 } from '../lib/passkey';
 import { RP_ID } from '../lib/constants';
@@ -318,12 +316,12 @@ export function Landing() {
 
   function confirmArchive(record: PasskeyRecord) {
     haptic('success');
+    // LOCAL-ONLY by design: archive hides the wallet from THIS device's list and
+    // nothing more. ██ NEVER signal the password manager to delete the passkey
+    // (signalUnknownCredential or similar) — the passkey is a Safe owner that may
+    // sign for N accounts across all synced devices; deleting it can permanently
+    // lock funds on-chain. See the WARNING block in lib/passkey.ts. ██
     archivePasskey(record.credentialId);
-    // Best-effort: ask the password manager (Apple Passwords / Google PM) to also
-    // REMOVE the stale entry — the only standard way to clean up a duplicate (the
-    // local archive alone leaves the OS entry behind). Advisory + only on recent
-    // Chrome/Safari, so ConfirmArchiveView also shows a manual-delete instruction.
-    void signalRemovePasskey(recordRpId(record), record.credentialId);
     const known = listKnownPasskeys();
     setStage(known.length > 0 ? { kind: 'welcome-known', known } : { kind: 'welcome' });
   }
@@ -1241,13 +1239,13 @@ function ConfirmArchiveView({
 
       <Card padding="md" className="flex flex-col gap-2 text-sm text-ink-secondary">
         <p>
-          Pokušat ćemo ga ukloniti i iz{' '}
-          <span className="font-medium text-ink-primary">Apple Passwords / Google</span>{' '}
-          menadžera lozinki. Ako tvoj uređaj to (još) ne podržava, unos ostaje — obriši ga
-          ručno u postavkama menadžera lozinki.
+          Uklanjanje vrijedi <span className="font-medium text-ink-primary">samo za popis na
+          ovom uređaju</span>. Tvoj passkey ostaje netaknut u Apple Passwords / Google
+          Password Manageru — i dalje je potpisnik svih svojih računa, pa mu uvijek možeš
+          pristupiti.
         </p>
         <p>
-          Uvijek ga možeš vratiti preko{' '}
+          Wallet vraćaš preko{' '}
           <span className="font-medium text-ink-primary">Wallet nije na popisu? Otvori ga
           passkeyem</span> na prethodnom ekranu.
         </p>

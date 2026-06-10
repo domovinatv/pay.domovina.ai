@@ -89,6 +89,11 @@ Support: Chrome/Edge **132+**, Safari **26+/iOS 26+** (with a known promise-reso
 bug, WebKit #298951), Firefox none — *"Limited availability."* Deletion is **advisory**
 (authenticator decides), so treat as best-effort.
 
+> ⚠️ Research reference only. In THIS codebase the deletion-capable signals
+> (`signalUnknownCredential`, and `signalAllAcceptedCredentials` with an omitting
+> list) are **permanently forbidden** — see §3 Phase 3 and the WARNING block in
+> `src/lib/passkey.ts`. `signalCurrentUserDetails` (label update only) remains fine.
+
 ### `user.id` semantics — confirms our choice
 `user.id` is an opaque ≤64-byte handle; re-using the same `(rpId, user.id)` on
 `create()` **overwrites** the existing credential — Apple documents this as the
@@ -120,13 +125,15 @@ flowchart TD
     BTN --> CREATE["create() with excludeCredentials = ALL known cred IDs"]
     CREATE -->|InvalidStateError| FE[found-existing → open]
     CREATE -->|ok| MADE[🟢 wallet created]
-    OPEN --> SIGNAL
-    MADE --> SIGNAL["after success: signalAllAcceptedCredentials(authoritative list)"]
-    DETECT[≥2 identities detected] --> CLEAN["cleanup UX + signalUnknownCredential(stale)"]
+    DETECT[≥2 identities detected] --> CLEAN["cleanup UX: balances + labels — user decides; deletion only MANUALLY in the PM"]
 
     classDef ok fill:#e6f7e6,stroke:#2e7d32;
     class OPEN,MADE ok;
 ```
+
+> The original version of this diagram had Signal-API nodes
+> (`signalAllAcceptedCredentials` after open, `signalUnknownCredential` on cleanup).
+> Both are **forbidden** — see the Phase 3 warning below.
 
 **Phase 1 — conditional-mediation discovery on the welcome screen (THE probe).**
 Replace the removed modal probe with `mediation:'conditional'` autofill, gated on
@@ -141,14 +148,24 @@ the research is explicit that a modal get()+fallthrough is the inferior form.*
 (currently passes none). Seed the list from every durable source we have (local
 registry + any backend-registry IDs we can resolve) — knowing it's still partial.
 
-**Phase 3 — duplicate detection + Signal API cleanup (load-bearing, not optional).**
+**Phase 3 — duplicate detection (NO Signal API deletion — FORBIDDEN).**
 Because self-custody gives us no authoritative server enumeration, `excludeCredentials`
-is permanently partial → cleanup is the real safety net. When ≥2 identities exist
-(esp. sharing `domovina-wallet-v1`): show each wallet's EURe balance + a cleanup
-affordance; call `signalAllAcceptedCredentials` after each open to hide non-authoritative
-entries, and `signalUnknownCredential` to ask the PM to delete a confirmed-empty stale
-one (feature-detected, best-effort, with the manual "delete in Apple Passwords"
-instruction as fallback).
+is permanently partial → detection + distinguishable labels are the real safety net.
+When ≥2 identities exist (esp. sharing `domovina-wallet-v1`): show each wallet's EURe
+balance and let the user decide what to do — in their own password manager, manually.
+
+> ███ **FORBIDDEN: app-initiated passkey deletion.** This plan originally called for
+> Signal-API cleanup; it was implemented (commit `fceab4d`, wired into Arhiviraj) and
+> **reverted the same day** after review. A passkey is a Safe OWNER that signs for N
+> accounts (bootstrap + every derived account) across ALL synced devices; the Signal
+> API makes Apple Passwords / Google PM permanently delete the entry. A user who
+> archives a wallet without a written seed (seed is optional!) would have funds on any
+> of those Safes **permanently locked on-chain** — the Postmortem-0001 failure mode
+> triggered by our own UI. Archive must stay a local, per-device list operation. The
+> ONLY acceptable passkey deletion is the user doing it manually in their password
+> manager. Never call `signalUnknownCredential`; never call
+> `signalAllAcceptedCredentials` with a list that omits a live credential (same
+> effect). Full rationale: WARNING block in `src/lib/passkey.ts`.
 
 **Phase 4 — distinguishable labels.** Move the visible passkey label toward the
 ADR-0011 address-as-name (or append a short Safe-address suffix) so unavoidable
@@ -185,14 +202,12 @@ problem is one more reason recovery paths must exist independent of dedup hygien
   "already pending" clash; the modal probe remains the fallback where conditional UI is
   unsupported. ⚠️ Needs on-device verification (autofill surfacing varies by
   platform/version) — that's the manual testing step.
-- **Signal API cleanup** — archiving a wallet now also calls `signalRemovePasskey`
-  (`signalUnknownCredential`, feature-detected, best-effort) to remove the stale entry
-  from Apple Passwords / Google PM; `ConfirmArchiveView` shows the account's **balance**
-  (red warning if funded), marks empty ones safe to remove, and always shows the
-  manual-delete fallback for browsers without the Signal API. We use
-  `signalUnknownCredential` (delete-by-credentialId) and NOT
-  `signalAllAcceptedCredentials` — the latter's hide mechanism is keyed by `userId`,
-  which is random-per-passkey here, so it can't collapse our duplicates.
+- ~~**Signal API cleanup**~~ — **REVERTED same day (see Phase 3 warning).** Archiving
+  briefly also called `signalRemovePasskey` (`signalUnknownCredential`) to delete the
+  PM entry. Removed: deleting the passkey kills the signer for ALL its Safe accounts on
+  ALL synced devices and can permanently lock funds. Archive is now local-list-only;
+  `ConfirmArchiveView` still shows the account's **balance** (red warning if funded)
+  and explains that the passkey stays intact in the password manager.
 
 ## 4. Irreducible limits (set expectations)
 - `excludeCredentials` binds only the provider holding the match → **cross-provider /

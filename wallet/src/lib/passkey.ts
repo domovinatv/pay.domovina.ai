@@ -624,45 +624,65 @@ export async function discoverViaConditional(
   }
 }
 
-// ── WebAuthn Signal API — best-effort password-manager cleanup ────────────────
-
-type SignalCapablePublicKeyCredential = {
-  signalUnknownCredential?: (opts: { rpId: string; credentialId: string }) => Promise<void>;
-};
-
-/** Whether the browser exposes the WebAuthn Signal API (Chrome 132+, Safari 26+). */
-export function isSignalApiSupported(): boolean {
-  if (typeof window === 'undefined' || !window.PublicKeyCredential) return false;
-  return (
-    typeof (window.PublicKeyCredential as unknown as SignalCapablePublicKeyCredential)
-      .signalUnknownCredential === 'function'
-  );
-}
-
-/**
- * Ask the password manager to REMOVE a passkey entry we've archived (a
- * confirmed-stale/duplicate). The only standard way to clean up a duplicate — but
- * ADVISORY (the authenticator decides) and only on recent Chrome/Safari, so callers
- * MUST still show a manual-delete fallback. Our credentialId is canonical 0x-hex;
- * the Signal API expects base64url. Never throws.
- */
-export async function signalRemovePasskey(rpId: string, credentialId: string): Promise<boolean> {
-  try {
-    const PK = window.PublicKeyCredential as unknown as SignalCapablePublicKeyCredential;
-    if (typeof PK.signalUnknownCredential !== 'function') return false;
-    await PK.signalUnknownCredential({ rpId, credentialId: hexToBase64Url(credentialId) });
-    return true;
-  } catch (e) {
-    console.warn('[passkey] signalUnknownCredential failed', e);
-    return false;
-  }
-}
-
-function hexToBase64Url(hex: string): string {
-  const clean = hex.startsWith('0x') ? hex.slice(2) : hex;
-  let bin = '';
-  for (let i = 0; i < clean.length; i += 2) {
-    bin += String.fromCharCode(parseInt(clean.slice(i, i + 2), 16));
-  }
-  return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-}
+// ─────────────────────────────────────────────────────────────────────────────
+// ██ WARNING ██ WARNING ██ WARNING ██ WARNING ██ WARNING ██ WARNING ██ WARNING
+//
+// NEVER ask the password manager to DELETE a passkey from this app. EVER.
+//
+// The WebAuthn Signal API (`PublicKeyCredential.signalUnknownCredential`) tells
+// Apple Passwords / Google Password Manager that a credential is unknown to the
+// RP — and providers respond by PERMANENTLY DELETING the entry. That passkey is
+// a Safe OWNER. One passkey signs for N Safe accounts (bootstrap + every
+// derived account under the identity). Deleting it from the password manager
+// destroys the signer EVERYWHERE (all synced devices), not just on the device
+// where the user tapped "Arhiviraj". If the user never wrote down the 12-word
+// seed (it is OPTIONAL — explicit "Nastavi bez seeda" path exists), any funds
+// on ANY of those Safes are PERMANENTLY LOCKED ON-CHAIN. This is exactly the
+// Postmortem 0001 failure mode (4.16 EURe stuck forever in a 1/1 passkey-only
+// Safe), except triggered BY OUR OWN UI.
+//
+// This existed briefly (commit fceab4d, 2026-06-10) wired into the Arhiviraj
+// flow, reasoning "archive = confirmed-stale duplicate, so clean up the PM
+// entry too". That reasoning was WRONG: Arhiviraj is a local, per-device UI
+// action (hide from list); the passkey is a global, cross-device, multi-account
+// signing key. Removed the same day after review.
+//
+// The ONLY acceptable passkey deletion is the user doing it MANUALLY in their
+// own password manager (Apple Passwords / Google PM settings) — their store,
+// their decision, outside our code. UI copy may point them there; code must
+// never do it for them.
+//
+// Do not re-add `signalUnknownCredential`, `signalAllAcceptedCredentials` (with
+// a curated list that drops a live credential — same effect), or any other
+// credential-deletion signal. If a future WebAuthn API offers "delete/disable
+// credential", the answer is still NO for this codebase.
+//
+// ██ WARNING ██ WARNING ██ WARNING ██ WARNING ██ WARNING ██ WARNING ██ WARNING
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// Dead code kept for the record (do NOT revive):
+//
+// type SignalCapablePublicKeyCredential = {
+//   signalUnknownCredential?: (opts: { rpId: string; credentialId: string }) => Promise<void>;
+// };
+//
+// export async function signalRemovePasskey(rpId: string, credentialId: string): Promise<boolean> {
+//   try {
+//     const PK = window.PublicKeyCredential as unknown as SignalCapablePublicKeyCredential;
+//     if (typeof PK.signalUnknownCredential !== 'function') return false;
+//     await PK.signalUnknownCredential({ rpId, credentialId: hexToBase64Url(credentialId) });
+//     return true;
+//   } catch (e) {
+//     console.warn('[passkey] signalUnknownCredential failed', e);
+//     return false;
+//   }
+// }
+//
+// function hexToBase64Url(hex: string): string {
+//   const clean = hex.startsWith('0x') ? hex.slice(2) : hex;
+//   let bin = '';
+//   for (let i = 0; i < clean.length; i += 2) {
+//     bin += String.fromCharCode(parseInt(clean.slice(i, i + 2), 16));
+//   }
+//   return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+// }
