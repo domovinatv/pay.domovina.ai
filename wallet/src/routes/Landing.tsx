@@ -38,6 +38,7 @@ import {
 } from '../lib/passkey';
 import { RP_ID } from '../lib/constants';
 import { createBootstrapEoa, signAttach, submitBootstrapDeploy } from '../lib/bootstrap';
+import { downloadPaperWalletPdf, type PaperWalletFormat } from '../lib/paperWallet';
 import {
   bootstrapAccountView,
   deriveAccount,
@@ -1459,57 +1460,6 @@ function OpeningView() {
   );
 }
 
-/** Self-contained, print-friendly paper-wallet HTML. Plaintext BY DESIGN — a
- * paper wallet's whole point is an offline artifact the user prints / stores
- * somewhere safe themselves. (A passkey-encrypted file was considered and
- * rejected: decrypting would need our web app + the same passkey — useless in
- * exactly the lost-passkey scenario it should cover.) */
-function paperWalletHtml(record: PasskeyRecord, seed: string): string {
-  const words = seed.split(/\s+/);
-  const date = new Date().toISOString().slice(0, 10);
-  const wordCells = words
-    .map(
-      (w, i) =>
-        `<div class="w"><span class="n">${i + 1}</span><span class="t">${w}</span></div>`,
-    )
-    .join('');
-  return `<!doctype html>
-<html lang="hr"><head><meta charset="utf-8">
-<title>DOMOVINA Wallet — paper backup ${record.safeAddress.slice(0, 8)}…</title>
-<style>
-  body{font-family:-apple-system,system-ui,sans-serif;color:#0b1f3a;max-width:640px;margin:32px auto;padding:0 20px;line-height:1.45}
-  h1{font-size:20px;border-bottom:3px solid #002F6C;padding-bottom:8px}
-  h1 span{color:#FF0000}
-  .warn{border:2px solid #FF0000;border-radius:8px;padding:10px 14px;font-size:13px;margin:16px 0;background:#fff5f5}
-  .addr{font-family:ui-monospace,monospace;font-size:13px;word-break:break-all;background:#f1f4f9;border-radius:8px;padding:10px 14px}
-  .grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:16px 0}
-  .w{display:flex;gap:6px;align-items:baseline;border:1px solid #c9d4e5;border-radius:8px;padding:8px 10px;font-family:ui-monospace,monospace}
-  .n{font-size:10px;color:#5A6570}.t{font-size:14px;font-weight:600}
-  .meta{font-size:12px;color:#5A6570}
-  ol{font-size:13px;padding-left:20px}
-  @media print{body{margin:10mm auto}.noprint{display:none}}
-</style></head><body>
-<h1>DOMOVINA <span>Wallet</span> — paper backup</h1>
-<p class="meta">Kreirano: ${date} · Mreža: Gnosis Chain (EVM, chain ID 100) · Safe v1.4.1</p>
-<div class="warn"><strong>ČUVAJ OVO KAO GOTOVINU.</strong> Tko ima ovih 12 riječi, ima potpunu
-kontrolu nad sredstvima na adresi ispod — u bilo kojem walletu, bez ikakve aplikacije ili
-lozinke. Isprintaj i spremi offline; ne šalji mailom, ne slikaj u galeriju, ne drži u cloudu.</div>
-<h3>Adresa (Safe smart account)</h3>
-<div class="addr">${record.safeAddress}</div>
-<h3>Recovery seed — 12 riječi (redoslijed je bitan)</h3>
-<div class="grid">${wordCells}</div>
-<h3>Kako vratiti pristup</h3>
-<ol>
-  <li><strong>Safe Mobile</strong> (iOS/Android) ili <strong>app.safe.global</strong>: uvezi seed
-  kao potpisnika (signer), zatim dodaj/učitaj Safe po adresi iznad.</li>
-  <li><strong>MetaMask</strong> (desktop): Uvezi račun → Tajna fraza za oporavak (SRP), pa upravljaj
-  Safe-om kroz app.safe.global.</li>
-  <li>Ovaj seed je 1-od-2 vlasnik — DOMOVINA Wallet passkey i dalje radi neovisno o njemu.</li>
-</ol>
-<p class="meta noprint">Ovu datoteku nakon ispisa obriši s uređaja ako ne želiš digitalnu kopiju.</p>
-</body></html>`;
-}
-
 function CreatedView({
   record,
   recoverySeed,
@@ -1546,21 +1496,23 @@ function CreatedView({
     }
   }
 
-  function downloadPaperWallet() {
-    if (!recoverySeed) return;
-    const blob = new Blob([paperWalletHtml(record, recoverySeed)], {
-      type: 'text/html;charset=utf-8',
-    });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `DOMOVINA-paper-wallet-${record.safeAddress.slice(2, 8)}.html`;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    setTimeout(() => URL.revokeObjectURL(url), 10_000);
-    setBackedUp(true);
-    haptic('success');
+  const [generating, setGenerating] = useState<PaperWalletFormat | null>(null);
+
+  async function downloadPaperWallet(format: PaperWalletFormat) {
+    if (!recoverySeed || generating) return;
+    setGenerating(format);
+    try {
+      await downloadPaperWalletPdf(record.safeAddress, recoverySeed, format);
+      setBackedUp(true);
+      haptic('success');
+    } catch (e) {
+      // PDF generation is pure-local; a failure here shouldn't dead-end the
+      // flow — the user still has Kopiraj seed as the backup action.
+      console.error('[CreatedView] paper wallet PDF failed', e);
+      haptic('error');
+    } finally {
+      setGenerating(null);
+    }
   }
 
   return (
@@ -1635,19 +1587,37 @@ function CreatedView({
               </div>
             ))}
           </div>
+          <Button onClick={copySeed} variant="secondary" size="md" block>
+            {copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
+            {copied ? 'Kopirano' : 'Kopiraj seed'}
+          </Button>
           <div className="grid grid-cols-2 gap-2">
-            <Button onClick={copySeed} variant="secondary" size="md" block>
-              {copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
-              {copied ? 'Kopirano' : 'Kopiraj seed'}
-            </Button>
-            <Button onClick={downloadPaperWallet} variant="secondary" size="md" block>
+            <Button
+              onClick={() => void downloadPaperWallet('a4')}
+              disabled={generating !== null}
+              variant="secondary"
+              size="md"
+              block
+            >
               <Download className="h-4 w-4" />
-              Paper wallet
+              {generating === 'a4' ? 'Generiram…' : 'Paper wallet A4'}
+            </Button>
+            <Button
+              onClick={() => void downloadPaperWallet('photo')}
+              disabled={generating !== null}
+              variant="secondary"
+              size="md"
+              block
+            >
+              <Download className="h-4 w-4" />
+              {generating === 'photo' ? 'Generiram…' : 'Foto 15×10'}
             </Button>
           </div>
           <p className="text-[11px] text-ink-muted leading-snug">
-            <span className="font-medium text-ink-secondary">Paper wallet</span> je datoteka
-            za ispis — isprintaj je i spremi offline kao gotovinu, pa obriši s uređaja.{' '}
+            <span className="font-medium text-ink-secondary">Paper wallet</span> je gotov PDF
+            s QR kodom adrese — A4 za običan printer, 15×10 cm vodoravno za foto printer
+            (DNP termosublimacija, kao prava fotografija). Generira se potpuno offline na
+            ovom uređaju. Isprintaj i spremi kao gotovinu, pa obriši datoteku.{' '}
             <span className="font-medium text-ink-secondary">Preporuka za uvoz:</span>{' '}
             <span className="font-medium text-ink-secondary">Safe Mobile</span> (iOS/Android) —
             ima potpisivanje, push notifikacije kad ti stignu tokeni i sve Safe funkcije. Na
