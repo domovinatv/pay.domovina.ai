@@ -467,6 +467,22 @@ switch (cmd) {
     break;
   }
 
+  // Ad-hoc passthrough: node scripts/gp-spike.mjs get /api/v1/user/terms [eoa|safe]
+  case 'get':
+  case 'post': {
+    const jwt = args[args.length - 1] === 'safe' ? state.jwtSafe : state.jwtA;
+    const path = args[0];
+    const body = cmd === 'post' && args[1] && args[1] !== 'safe' && args[1] !== 'eoa' ? args[1] : undefined;
+    await gp(
+      state,
+      `${cmd} ${path}`,
+      path,
+      { method: cmd.toUpperCase(), ...(body ? { body } : {}) },
+      jwt,
+    );
+    break;
+  }
+
   case 'log': {
     console.log(JSON.stringify(state.log, null, 2));
     break;
