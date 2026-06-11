@@ -35,7 +35,13 @@ kvalifikaciju kao money remittance (PSD2 Annex I t. 6) za ITalk osobno.
 **§11:** standing izjava *"funds used in exchange for e-money belong to the legal entity"* —
 napeta ako su SEPA priljevi ekonomski korisnikov novac. **§19(3):** puno pravo i naslov na
 sredstvima, bez tereta. **§19(6):** *"the legal entity will not remit e-money to US
-residents"* — rail mora geofencati US destinacije.
+residents"* — **važno čitati ispravno**: klauzula veže ITalk-ove *vlastite* remit radnje
+(transfere koje ITalk inicira sa svog računa, tj. MPT forward odluke), NE downstream kretanje
+tokena. Tehnički "geofence" nad ERC-20 tokenom u tuđem self-custody walletu ne postoji i
+nitko ga ni ne očekuje — on-chain adresa nema rezidentnost. Realne mitigacije: (a) naši
+uvjeti korištenja izričito isključuju US osobe, (b) bez US-targetiranog marketinga,
+(c) u per-user modelu klauzula za ITalk postaje bespredmetna jer svaki korisnik daje vlastite
+izjave Moneriumu u svom ugovoru.
 
 **§18 Reversal:** SEPA recall NAKON što smo EURe već proslijedili = direktan gubitak ITalk-a.
 **§22.2:** LHV može jednostrano narediti gašenje IBAN noge. **API ToS §9:** odgovornost
@@ -90,11 +96,26 @@ predviđeni kanal; jedina obveza je proći GP-ovo partner-odobrenje (B2B ugovor,
 GDPR urediti za identifikatore kartica. Kartični tok korisnikov EURe nikad ne vodi kroz
 ITalk — čist je od prvog dana.
 
+## Odluka (Matija, 2026-06-11)
+
+**Cilj = opcija 3, per-user Monerium profili — potvrđeno i preferirano.** Citat: "meni je čak
+i više super da koristeći Monerium API kroz moj softver dolazi end-customer i njemu direktno
+mogu issuati njegov personalizirani IBAN i taj isti korisnik može otići na monerium.com i
+tamo vidjeti listu svojih Safe walleta napravljenih u DOMOVINA Wallet."
+
+Napomena uz to: vidljivost na monerium.app (korisnik se logira kod Moneriuma i vidi svoje
+linkane adrese) odgovara **OAuth** modelu; per docs "Compare plans" OAuth ima IBAN "Shared",
+a **Whitelabel** "Dedicated" (ali "your users interact only with your app, never with
+Monerium" → bez monerium.app vidljivosti). Koja kombinacija daje *i* personalizirani IBAN
+*i* monerium.app login = pitanje za Monerium (u emailu). Kontakt ide ODMAH (ne post-MVP) —
+draft: [monerium-outreach-email.md](monerium-outreach-email.md).
+
 ## Akcije
 
 - [ ] Provjeriti što je ITalk deklarirao u Monerium KYB-u (purpose / fundOrigin)
 - [ ] Pripremiti one-pager raila za Monerium (tok, volumeni, reference, AML touchpointi)
-- [ ] Post-MVP poziv s Moneriumom: opcija 3 (per-user) kao cilj, §16 odobrenje kao prijelaz,
-      suglasnost za javni dokument
+- [ ] **Poslati email Moneriumu** (draft u ovom folderu): per-user model kao cilj, §16
+      odobrenje kao prijelaz, suglasnost za javni dokument
 - [ ] Odvjetničko mišljenje (HR): kvalifikacija raila po ZPP/PSD2 prije skaliranja volumena
-- [ ] US geofence + SEPA recall rezerva u backendu raila
+- [ ] Uvjeti korištenja DOMOVINA Walleta: klauzula o isključenju US osoba; SEPA recall
+      rezerva u backendu raila (§18)
