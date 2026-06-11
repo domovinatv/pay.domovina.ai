@@ -131,11 +131,7 @@ function siweDomain(): { domain: string; uri: string } {
  * SafeTx). encodeWebAuthnSignature vraća Safe contract-signature blob koji
  * GP-ov verifier validira pozivom isValidSignature na (deployani!) Safe.
  */
-async function signSiweWithPasskey(
-  passkey: PasskeyRecord,
-  message: string,
-): Promise<Hex> {
-  const dataHash = hashMessage(message);
+async function signHashWithPasskey1271(passkey: PasskeyRecord, dataHash: Hex): Promise<Hex> {
   const safeMessageHash = hashTypedData({
     domain: { chainId: GNOSIS_CHAIN_ID, verifyingContract: passkey.safeAddress },
     types: { SafeMessage: [{ name: 'message', type: 'bytes' }] },
@@ -148,6 +144,30 @@ async function signSiweWithPasskey(
     recordRpId(passkey),
   );
   return encodeWebAuthnSignature({ ...assertion, signerAddress: passkey.signerAddress });
+}
+
+function signSiweWithPasskey(passkey: PasskeyRecord, message: string): Promise<Hex> {
+  return signHashWithPasskey1271(passkey, hashMessage(message));
+}
+
+/**
+ * Potpiši GP ModuleTx typed-data paket (withdraw / daily limit / owner add)
+ * passkeyem kao Safe ERC-1271. GP-u uz potpis ide i `smartWalletAddress`
+ * (naš Safe) — bez njega verifier tretira potpis kao EOA ECDSA i pada.
+ */
+export async function signGpModuleTx(
+  typedData: GpModuleTxTypedData,
+): Promise<{ signature: Hex; message: GpModuleTxTypedData['message']; smartWalletAddress: Address }> {
+  const passkey = getActivePasskey();
+  if (!passkey) throw new Error('Nema aktivnog passkeya');
+  const dataHash = hashTypedData({
+    domain: typedData.domain,
+    types: typedData.types,
+    primaryType: typedData.primaryType,
+    message: typedData.message,
+  });
+  const signature = await signHashWithPasskey1271(passkey, dataHash);
+  return { signature, message: typedData.message, smartWalletAddress: passkey.safeAddress };
 }
 
 /**
@@ -232,6 +252,67 @@ export type GpSafeConfig = {
   hasNoApprovals?: boolean;
 };
 
+// ── Faza 2 tipovi (kartice, balansi, ModuleTx operacije) ──────────────────────
+
+export type GpCard = {
+  id: string;
+  cardToken: string;
+  lastFourDigits: string;
+  activatedAt: string | null;
+  virtual: boolean;
+  statusCode: number;
+  statusName?: string;
+};
+
+export type GpCardStatus = {
+  statusCode: number;
+  isFrozen: boolean;
+  isStolen: boolean;
+  isLost: boolean;
+  isBlocked: boolean;
+  isVoid: boolean;
+  activatedAt?: string;
+};
+
+/** Svi iznosi su stringovi u base units tokena (EURe = 18 decimala). */
+export type GpBalances = { total: string; spendable: string; pending: string };
+
+/** EIP-712 paket koji GP vraća za Delay-module operacije (withdraw, limit,
+ * owner add/remove). Potpisuje ga Delay-owner — kod nas DOMOVINA Safe (1271). */
+export type GpModuleTxTypedData = {
+  domain: { verifyingContract: Address; chainId: number };
+  primaryType: 'ModuleTx';
+  types: Record<string, { type: string; name: string }[]>;
+  message: { data: Hex; salt: Hex };
+};
+
+export type GpDelayTx = {
+  id: string;
+  safeAddress: Address;
+  transactionData: Hex;
+  operationType: 'CALL' | 'DELEGATECALL';
+  userId: string;
+  status: 'QUEUING' | 'WAITING' | 'EXECUTING' | 'EXECUTED' | 'FAILED';
+  createdAt: string;
+  readyAt?: string;
+};
+
+export type GpCardTxEvent = {
+  kind: 'Payment' | 'Refund' | 'Reversal';
+  threadId: string;
+  createdAt: string;
+  clearedAt?: string | null;
+  isPending: boolean;
+  mcc?: string;
+  merchant?: { name: string; city?: string; country?: string };
+  /** Minor units string (npr. '2550' uz decimals 2 = 25,50). */
+  billingAmount: string;
+  billingCurrency: { symbol: string; code: string; decimals: number; name?: string };
+  status?: string;
+  cardToken?: string;
+  transactions?: { status?: string; to?: string; value?: string; hash?: Hex }[];
+};
+
 // ── Endpointi (samo onboarding domena iz 02-onboarding.md) ────────────────────
 
 export const gpApi = {
@@ -303,4 +384,125 @@ export const gpApi = {
     gpFetch<{ status: GpDeployStatus; updatedAt?: string }>('/api/v1/safe/deploy'),
 
   safeConfig: () => gpFetch<GpSafeConfig>('/api/v1/safe/config'),
+
+  // ── Faza 2: kartice ─────────────────────────────────────────────────────────
+
+  /** 201 {cardId}; 409 = narudžba u tijeku; 422 = preduvjeti (max 5 kartica…). */
+  createVirtualCard: () => gpFetch<{ cardId: string }>('/api/v1/cards/virtual', { method: 'POST' }),
+
+  cards: () => gpFetch<GpCard[]>('/api/v1/cards'),
+
+  cardStatus: (cardId: string) => gpFetch<GpCardStatus>(`/api/v1/cards/${cardId}/status`),
+
+  freezeCard: (cardId: string) =>
+    gpFetch<{ status: string }>(`/api/v1/cards/${cardId}/freeze`, { method: 'POST' }),
+
+  unfreezeCard: (cardId: string) =>
+    gpFetch<{ status: string }>(`/api/v1/cards/${cardId}/unfreeze`, { method: 'POST' }),
+
+  /** Samo virtualne; terminalno. */
+  voidCard: (cardId: string) =>
+    gpFetch<{ status: string }>(`/api/v1/cards/${cardId}/void`, { method: 'POST' }),
+
+  reportCardLost: (cardId: string) =>
+    gpFetch<{ status: string }>(`/api/v1/cards/${cardId}/lost`, { method: 'POST' }),
+
+  reportCardStolen: (cardId: string) =>
+    gpFetch<{ status: string }>(`/api/v1/cards/${cardId}/stolen`, { method: 'POST' }),
+
+  // ── Faza 2: balansi, withdraw, limit, owneri (ModuleTx + 1271) ──────────────
+
+  balances: () => gpFetch<GpBalances>('/api/v1/account-balances'),
+
+  withdrawTransactionData: (tokenAddress: Address, to: Address, amount: bigint) =>
+    gpFetch<{ data: GpModuleTxTypedData }>(
+      `/api/v1/accounts/withdraw/transaction-data?tokenAddress=${tokenAddress}&to=${to}&amount=${amount}`,
+    ),
+
+  withdraw: (args: {
+    tokenAddress: Address;
+    to: Address;
+    amount: bigint;
+    signature: Hex;
+    message: GpModuleTxTypedData['message'];
+    smartWalletAddress: Address;
+  }) =>
+    gpFetch<{ data: GpDelayTx }>('/api/v1/accounts/withdraw', {
+      method: 'POST',
+      body: JSON.stringify({ ...args, amount: args.amount.toString() }),
+    }),
+
+  /** {dailyLimit, dailyRemaining} u whole token units (1–8000). */
+  dailyLimit: () =>
+    gpFetch<{ data: { dailyLimit: number; dailyRemaining: number } }>(
+      '/api/v1/accounts/daily-limit',
+    ),
+
+  dailyLimitTransactionData: (newLimit: number) =>
+    gpFetch<{ data: GpModuleTxTypedData }>(
+      `/api/v1/accounts/daily-limit/transaction-data?newLimit=${newLimit}`,
+    ),
+
+  setDailyLimit: (args: {
+    newLimit: number;
+    signature: Hex;
+    message: GpModuleTxTypedData['message'];
+    smartWalletAddress: Address;
+  }) =>
+    gpFetch<{ data: GpDelayTx }>('/api/v1/accounts/daily-limit', {
+      method: 'PUT',
+      body: JSON.stringify(args),
+    }),
+
+  owners: () => gpFetch<{ data: { owners: Address[] } }>('/api/v1/owners'),
+
+  addOwnerTransactionData: (newOwner: Address) =>
+    gpFetch<{ data: GpModuleTxTypedData }>(
+      `/api/v1/owners/add/transaction-data?newOwner=${newOwner}`,
+    ),
+
+  addOwner: (args: {
+    newOwner: Address;
+    signature: Hex;
+    message: GpModuleTxTypedData['message'];
+    smartWalletAddress: Address;
+  }) =>
+    gpFetch<{ data: GpDelayTx }>('/api/v1/owners', {
+      method: 'POST',
+      body: JSON.stringify(args),
+    }),
+
+  /** Sve Delay-module operacije u redu/izvršene — polling nakon withdraw/limit/owner. */
+  delayRelay: () => gpFetch<GpDelayTx[]>('/api/v1/delay-relay'),
+
+  safeMigration: () =>
+    gpFetch<{
+      migrationId: string;
+      status?: string | null;
+      hasOldSafe: boolean;
+      newSafe?: { address: Address };
+      oldSafe?: { address: Address };
+    }>('/api/v1/safe/migration'),
+
+  cardTransactions: (limit = 25, offset = 0) =>
+    gpFetch<{ count: number; next?: string | null; results: GpCardTxEvent[] }>(
+      `/api/v1/cards/transactions?limit=${Math.max(limit, 10)}&offset=${offset}`,
+    ),
 };
+
+/**
+ * Adresa GP Safe-a za punjenje. NIKAD se ne hardkodira niti kešira preko
+ * sesije: GP migracije (`safe-replacement-*`) mijenjaju adresu — prije svakog
+ * punjenja čitati svježe iz /user + provjeriti aktivnu migraciju.
+ */
+export async function resolveGpSafeAddress(): Promise<Address | null> {
+  const user = await gpApi.user();
+  let addr = user.safeWallets[0]?.address ?? null;
+  try {
+    const mig = await gpApi.safeMigration();
+    if (mig.newSafe?.address && mig.status === 'COMPLETED') addr = mig.newSafe.address;
+  } catch {
+    /* migracijski endpoint je advisory — bez njega vrijedi /user */
+  }
+  return addr;
+}
