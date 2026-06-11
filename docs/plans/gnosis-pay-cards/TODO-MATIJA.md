@@ -41,11 +41,19 @@ koje blokiraju razvoj (i to tek od Faze 3); Faze 0–2 idu odmah bez ičega s ov
 - ⚠️ Tvoja SIWE adresa se trajno veže za tvoj GP account — odaberi je svjesno (po Plan A/B
       odluci iz Faze 0, dogovorit ćemo se prije nego potpišeš)
 
-## 5. Monerium — službeni kontakt (post-MVP, tvoj postojeći plan)
-- [ ] Kad kartični MVP bude složen, javi se Moneriumu službeno (danas: samo ITalk KYB + firmin
-      IBAN; korisnici nemaju Monerium profile). Partnerski odnos bi otvorio osobne IBAN-e
-      vezane na DOMOVINA Safe-ove kroz naš vlastiti integration — do tada GP-ov IBAN wrapper
-      pokriva taj use-case za korisnike kartice (vidi 04)
+## 5. Monerium — službeni kontakt (post-MVP, tvoj postojeći plan) ⚠️ VAŽNIJE NEGO ŠTO SMO MISLILI
+- [ ] Kad kartični MVP bude složen, javi se Moneriumu službeno. **Prije razgovora obavezno
+      pročitaj `docs/compliance/INTERNO-monerium-tos-analiza.md`**: Business ToS §16 doslovno
+      navodi MPT hold-and-forward obrazac (SEPA na tvoj IBAN → forward EURe istom uplatitelju)
+      kao zabranjen bez pisanog odobrenja ili statusa distributera. Putovi rješenja su u
+      internom dokumentu (cilj: per-user Monerium profili — mint direktno u korisnikov Safe).
+- [ ] U istom razgovoru: pisana suglasnost za javnu objavu compliance dokumenta koji opisuje
+      Monerium integraciju (Monerium API ToS §4 traži "prior written and express permission"
+      za javne izjave o API-ju)
+- [ ] Provjeri što je ITalk deklarirao u Monerium KYB formi (purpose / fundOrigin) — odredi
+      poziciju za razgovor
+- [ ] Odvjetničko mišljenje (HR odvjetnik za platni promet): kvalifikacija MPT raila prije
+      skaliranja volumena; javni dokument `docs/compliance/README.md` mu daj kao podlogu
 
 ## 6. Legal / compliance (paralelno, ne blokira development)
 - [ ] Pročitaj **Monavate cardholder ToS** (EEA) i GP Privacy Policy — naši korisnici ih
