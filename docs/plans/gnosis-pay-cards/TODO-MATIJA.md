@@ -41,8 +41,9 @@ koje blokiraju razvoj (i to tek od Faze 3); Faze 0–2 idu odmah bez ičega s ov
 - ⚠️ Tvoja SIWE adresa se trajno veže za tvoj GP account — odaberi je svjesno (po Plan A/B
       odluci iz Faze 0, dogovorit ćemo se prije nego potpišeš)
 
-## 5. Monerium — službeni kontakt (post-MVP, tvoj postojeći plan) ⚠️ VAŽNIJE NEGO ŠTO SMO MISLILI
-- [ ] Kad kartični MVP bude složen, javi se Moneriumu službeno. **Prije razgovora obavezno
+## 5. Monerium — službeni kontakt (ODMAH — email draft spreman) ⚠️
+- [ ] **Pošalji email**: draft u `docs/compliance/monerium-outreach-email.md` (pregledaj
+      interne napomene na dnu, prilagodi volumene). **Prije razgovora obavezno
       pročitaj `docs/compliance/INTERNO-monerium-tos-analiza.md`**: Business ToS §16 doslovno
       navodi MPT hold-and-forward obrazac (SEPA na tvoj IBAN → forward EURe istom uplatitelju)
       kao zabranjen bez pisanog odobrenja ili statusa distributera. Putovi rješenja su u
