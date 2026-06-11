@@ -17,7 +17,8 @@ import {
   Rocket,
   ShieldCheck,
 } from 'lucide-react';
-import { Badge, Button, Card, Field, Input, Section, StatusPill, useToast } from '../ui';
+import { Button, Card, Field, Input, Section, StatusPill, useToast } from '../ui';
+import { GpCardScreen } from '../components/GpCardScreen';
 import { useWalletStore } from '../state/store';
 import { useGpStore, type GpStep } from '../state/gpStore';
 import {
@@ -752,26 +753,7 @@ function DeployStep() {
 }
 
 function ReadyStep() {
-  const { user } = useGpStore();
-  const gpSafe = user?.safeWallets[0]?.address;
-  return (
-    <Card padding="lg" elevation="elevated" className="flex flex-col items-center gap-4">
-      <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-emerald-50 text-emerald-600 dark:bg-emerald-900/30 dark:text-emerald-300">
-        <CreditCard className="h-6 w-6" />
-      </div>
-      <div className="text-center">
-        <p className="font-semibold text-ink-primary">Kartični račun je otvoren</p>
-        {gpSafe && (
-          <p className="mt-1 font-mono text-xs text-ink-secondary break-all">{gpSafe}</p>
-        )}
-      </div>
-      <Badge tone="info">Izdavanje kartice stiže u sljedećoj nadogradnji</Badge>
-      <p className="text-xs text-ink-muted text-center">
-        Do tada karticu možeš izdati i vidjeti na app.gnosispay.com — prijava istim računom
-        (passkey).
-      </p>
-    </Card>
-  );
+  return <GpCardScreen />;
 }
 
 /* ── sitnice ─────────────────────────────────────────────────────────────────── */
