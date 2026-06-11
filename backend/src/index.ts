@@ -36,6 +36,7 @@ import { forwardViaSafe } from './router/safe';
 import { mountAdminUi } from './admin/app';
 import { buildIntentApi } from './intents/api';
 import { buildWalletApi } from './wallets/api';
+import { buildGnosisPayApi } from './gnosispay/api';
 import {
   getIntent,
   markIntentPaid,
@@ -367,6 +368,9 @@ app.route('/api/intents', buildIntentApi());
 // See [[reference-wallet-domovina]] and [[reference-otp-domovina]].
 // Admin endpoints + HTML dashboard live under /admin/wallets (see admin/app.ts).
 app.route('/api/wallets', buildWalletApi());
+
+// Gnosis Pay onboarding mirror (kartice) — vidi docs/plans/gnosis-pay-cards/.
+app.route('/api/gp', buildGnosisPayApi());
 
 // Manual trigger for the on-chain donation indexer (same logic as the cron).
 // Guarded by the indexer secret so it can be poked for testing/backfill.

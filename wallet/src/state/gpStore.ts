@@ -14,6 +14,8 @@ import {
   type GpTerm,
   type GpUser,
 } from '../lib/gnosispay';
+import { PAYMENT_INTENT_API_BASE } from '../lib/constants';
+import { useWalletStore } from './store';
 
 export type GpStep =
   | 'anon' //          nema (važećeg) JWT-a → SIWE login
@@ -94,6 +96,7 @@ export const useGpStore = create<GpState>((set, get) => ({
       const terms = allAccepted ? prevTerms : (await gpApi.userTerms()).terms;
       const step = deriveGpStep(user, terms);
       set({ user, terms, step, refreshing: false });
+      void syncMirror(user, step);
       return step;
     } catch (e) {
       set({ refreshing: false });
@@ -109,3 +112,28 @@ export const useGpStore = create<GpState>((set, get) => ({
 
   reset: () => set({ user: null, terms: null, step: 'anon', refreshing: false }),
 }));
+
+/** Fire-and-forget mirror onboarding stanja u naš backend (support/analytics).
+ * Nikad ne blokira ni ne ruši wizard — backend je write-behind keš. */
+async function syncMirror(user: GpUser, step: string): Promise<void> {
+  try {
+    const { credentialId, safeAddress } = useWalletStore.getState();
+    const jwt = decodeGpJwt();
+    if (!credentialId || !safeAddress || !jwt) return;
+    await fetch(`${PAYMENT_INTENT_API_BASE}/api/gp/sync`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        credentialId,
+        safeAddress,
+        gpUserId: user.id,
+        gpSigner: jwt.signerAddress,
+        gpSafeAddress: user.safeWallets[0]?.address,
+        onboardingStep: step,
+        kycStatus: user.kycStatus,
+      }),
+    });
+  } catch {
+    /* mirror je best-effort */
+  }
+}
