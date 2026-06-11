@@ -2,6 +2,13 @@ import { defineChain } from 'viem';
 
 export const GNOSIS_CHAIN_ID = 100;
 
+/**
+ * Gnosis Pay kartica (ruta /kartica) — vidljiva samo s VITE_GP_ENABLED=1.
+ * Produkcijski SIWE ne radi dok wallet.domovina.ai nije na GP partner
+ * whitelistu (TODO-MATIJA #1); do tada bi tab korisnicima pucao na prijavi.
+ */
+export const GP_CARDS_ENABLED = import.meta.env.VITE_GP_ENABLED === '1';
+
 export const gnosis = defineChain({
   id: GNOSIS_CHAIN_ID,
   name: 'Gnosis',

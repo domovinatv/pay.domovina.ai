@@ -16,6 +16,7 @@ import { ActivityFeed } from '../components/ActivityFeed';
 import { WalletSwitcherSheet } from '../components/WalletSwitcherSheet';
 import { useWalletStore } from '../state/store';
 import { getEureBalance } from '../lib/balance';
+import { GP_CARDS_ENABLED } from '../lib/constants';
 import { lookupWallet, registerWalletWithBackend } from '../lib/registry';
 import { getActivePasskey, recordRpId } from '../lib/passkey';
 
@@ -173,7 +174,7 @@ export function Wallet() {
       </Section>
 
       {/* Kartica zasad samo u punom prikazu — simple-mode odluka je TODO-MATIJA #7. */}
-      {!simpleMode && (
+      {GP_CARDS_ENABLED && !simpleMode && (
         <Section title="Kartica">
           <Card padding="md" className="flex items-start gap-3">
             <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-surface-sunken text-brand-navy-500">

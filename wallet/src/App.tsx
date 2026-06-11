@@ -14,6 +14,7 @@ import { UiPreview } from './routes/UiPreview';
 import { Embed } from './routes/Embed';
 import { Recover } from './routes/Recover';
 import { BuildInfoFooter } from './components/BuildInfoFooter';
+import { GP_CARDS_ENABLED } from './lib/constants';
 
 export function App() {
   const safeAddress = useWalletStore((s) => s.safeAddress);
@@ -46,7 +47,7 @@ export function App() {
               <Route path="/receive" component={Receive} />
               <Route path="/send" component={Send} />
               <Route path="/activity" component={Activity} />
-              <Route path="/kartica" component={Kartica} />
+              {GP_CARDS_ENABLED && <Route path="/kartica" component={Kartica} />}
               <Route path="/settings" component={Settings} />
               <Route path="/settings/phone" component={BindPhone} />
               <Route path="/settings/expand-access" component={ExpandAccess} />
