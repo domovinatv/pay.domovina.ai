@@ -7,6 +7,7 @@ import { Receive } from './routes/Receive';
 import { Send } from './routes/Send';
 import { Activity } from './routes/Activity';
 import { BindPhone } from './routes/BindPhone';
+import { Kartica } from './routes/Kartica';
 import { ExpandAccess } from './routes/ExpandAccess';
 import { Settings } from './routes/Settings';
 import { UiPreview } from './routes/UiPreview';
@@ -45,6 +46,7 @@ export function App() {
               <Route path="/receive" component={Receive} />
               <Route path="/send" component={Send} />
               <Route path="/activity" component={Activity} />
+              <Route path="/kartica" component={Kartica} />
               <Route path="/settings" component={Settings} />
               <Route path="/settings/phone" component={BindPhone} />
               <Route path="/settings/expand-access" component={ExpandAccess} />

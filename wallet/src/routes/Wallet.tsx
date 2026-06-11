@@ -3,6 +3,7 @@ import { useLocation } from 'wouter';
 import {
   ArrowDownToLine,
   ArrowUpFromLine,
+  CreditCard,
   Phone,
   ShieldCheck,
   Layers,
@@ -170,6 +171,28 @@ export function Wallet() {
       <Section title="Aktivnost">
         <ActivityFeed safeAddress={safeAddress} refetchKey={activityKey} />
       </Section>
+
+      {/* Kartica zasad samo u punom prikazu — simple-mode odluka je TODO-MATIJA #7. */}
+      {!simpleMode && (
+        <Section title="Kartica">
+          <Card padding="md" className="flex items-start gap-3">
+            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-surface-sunken text-brand-navy-500">
+              <CreditCard className="h-5 w-5" />
+            </div>
+            <div className="flex-1 flex flex-col gap-2">
+              <div>
+                <p className="font-medium text-ink-primary">VISA kartica</p>
+                <p className="text-sm text-ink-secondary">
+                  Besplatna virtualna kartica — troši EURe na POS-u, uz Apple/Google Pay.
+                </p>
+              </div>
+              <Button onClick={() => setLocation('/kartica')} variant="secondary" size="sm">
+                Otvori karticu
+              </Button>
+            </div>
+          </Card>
+        </Section>
+      )}
 
       {!simpleMode &&
         (phones.length > 0 ? (

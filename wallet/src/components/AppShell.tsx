@@ -8,6 +8,7 @@ import { useWalletStore } from '../state/store';
 const BACK_LABELS: Record<string, string> = {
   '/receive': 'Primi',
   '/send': 'Pošalji',
+  '/kartica': 'Kartica',
   '/settings': 'Postavke',
   '/settings/phone': 'Telefon',
 };
