@@ -96,8 +96,8 @@ Cilj: empirijski odgovoriti na pitanja koja određuju Plan A vs Plan B (vidi 01-
 
 | Pitanje | Blokira | Kanal |
 |---|---|---|
-| Apple/Google Pay regija HR? | samo tap-to-pay vrijednost | GP call (TODO-MATIJA #2) |
+| ~~Apple/Google Pay regija HR?~~ | — | ✅ POTVRĐENO 2026-06-11 (Apple/Google službene HR liste + Apple Wallet bank picker; linkovi u 03) |
 | Push provisioning za partnere? | ništa (nice-to-have) | GP call |
-| Hrvatska u supported countries? | Fazu 4 (e2e KYC) | empirijski u Fazi 1 / GP call |
+| Hrvatska u supported countries za KYC/izdavanje? | Fazu 4 (e2e KYC) | empirijski u Fazi 1 / GP call (HR na Apple/Google listama = jak pozitivan signal) |
 | Max 5 vs 3 kartice? | ništa | GP call |
 | CF Workers mTLS s GP certom? | samo PSE dio Faze 3 | spike |

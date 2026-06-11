@@ -55,15 +55,20 @@ graph LR
 5. **ERC-1271 eksplicitno podržan svugdje** — SIWE login i sva 4 signing endpointa (add/remove
    owner, daily limit, withdraw) primaju smart-account potpise (`smartWalletAddress` polje).
    Passkey Safe može biti GP identitet; fallback je korisnikov recovery/interop EOA.
-6. **Apple Pay / Google Pay: push provisioning NE postoji u javnoj dokumentaciji.** Korisnik
-   gleda PAN/expiry/CVV u PSE iframeu i ručno ih upisuje u Apple/Google Wallet. PWA ionako ne
-   može push provisioning (Apple entitlement je samo za native issuer app). Pitanje za GP call.
-7. **KYC = Sumsub, obavezan za svakog korisnika.** Postojeći Monerium KYC se NE može uvesti
-   (sharing je samo jednosmjeran GP→partner). Hrvatska nije eksplicitno navedena, ali Monavate
-   EEA cardholder terms + EURe default za "ostale zemlje" impliciraju podršku — treba potvrditi.
-8. **Monerium one-account kolizija**: naši postojeći pay.domovina.ai korisnici već imaju Monerium
-   profil → GP-ov IBAN endpoint će im pasti; rješenje je link postojećeg profila direktno preko
-   Monerium API-ja (mi smo već Monerium partner).
+6. **Apple Pay / Google Pay rade u Hrvatskoj — POTVRĐENO** (2026-06-11): Gnosis Pay je na
+   službenoj Apple listi za HR (https://support.apple.com/hr-hr/109516), u Google Wallet HR
+   tablici kao "Gnosis Pay | Visa Debit"
+   (https://support.google.com/wallet/answer/12059326?hl=en&co=GENIE.CountryCode%3DHR), i
+   pojavljuje se u Apple Wallet bank pickeru na iPhoneu u HR (empirijski screenshot). **Ali
+   push provisioning (one-click add à la Revolut) NE postoji u partner API-ju** — korisnik
+   ručno upisuje PAN iz PSE iframea u Wallet (jednokratno, ~1 min). Detalji u 03-kartice-pse.md.
+7. **KYC = Sumsub, obavezan za svakog korisnika, embedan u naš UI.** Naši korisnici nikad nisu
+   prošli nikakav KYC (MPT rail počiva na ITalk-ovom KYB-u) — kartica im pokreće GP-ov vlastiti
+   Sumsub KYC unutar našeg walleta; korisnik postaje GP/Monavate klijent, mi smo distribucijski
+   frontend. Vanjski KYC se u GP ne može uvesti (sharing je samo jednosmjeran GP→partner).
+8. **Monerium**: odnos s Moneriumom ima samo ITalk (KYB, firmin IBAN + MPT routing po
+   referenci) — korisnici nemaju Monerium profile, pa GP-ov osobni-IBAN flow za njih radi čisto
+   i zapravo je feature koji sami danas ne možemo ponuditi. Detalji u 04.
 9. **Webhooks** (partner tier): Ed25519 potpisi, 3 retryja kroz 21 min, potpuni event katalog
    (transakcije, KYC, kartice, Safe, IBAN). Per-user opt-in potpisanom porukom.
 10. **PSE zahtijeva mTLS backend** (klijentski cert `CN=gp_<APP_ID>`) — jedini dio koji možda ne

@@ -84,26 +84,41 @@ Ključne činjenice:
 
 ## Apple Pay / Google Pay — realno stanje
 
-**Push provisioning NIJE u javnoj dokumentaciji.** Grep cijelog docs cachea: jedina dva spomena
+### ✅ Hrvatska JE podržana regija (potvrđeno 2026-06-11)
+
+- **Apple Pay**: Gnosis Pay je na Appleovoj službenoj listi banaka/izdavatelja koji podržavaju
+  Apple Pay (stranica za Hrvatsku): https://support.apple.com/hr-hr/109516
+- **Google Wallet**: Gnosis Pay je u službenoj tablici za Hrvatsku kao **"Gnosis Pay | Visa
+  Debit"**: https://support.google.com/wallet/answer/12059326?hl=en&co=GENIE.CountryCode%3DHR
+- **Empirijski dokaz**: Apple Wallet na iPhoneu 15 Pro (HR) u "Add Card → Debit or Credit Card →
+  Choose a bank" pretragom "gno" nudi **Gnosis Pay** kao banku (screenshot 2026-06-11).
+  Gnosis Pay je dakle registrirani issuer u Apple Wallet bank pickeru za HR.
+
+Doc-fraza "some regions are not yet available" za HR dakle **ne vrijedi** — tokenizacija
+GP BIN-a radi u Hrvatskoj za oba wallet ekosustava.
+
+### Push provisioning (one-click "Add to Apple Wallet" à la Revolut)
+
+**NIJE u javnoj partner dokumentaciji.** Grep cijelog docs cachea: jedina dva spomena
 Apple/Google Paya su u opisu virtualnih kartica. Nema `PKAddPaymentPassViewController`, nema
 Google TapAndPay, nema wallet-provisioning endpointa.
 
-Što to znači za nas:
+Revolutov one-tap UX je **issuer-level native integracija**: Apple entitlement
+`com.apple.developer.payment-pass-provisioning` dodjeljuje se issuerovoj native aplikaciji
+(Revolut = vlastiti issuer). Za treće strane (nas) to po javnoj dokumentaciji ne postoji.
 
 | Put | Izvedivost | Napomena |
 |---|---|---|
-| **Ručni unos PAN-a iz PSE-a u Wallet** | ✅ jedini dokumentirani put | korisnik prepiše broj/expiry/CVV u Apple Wallet ("Add Card → Enter Card Details Manually") / Google Wallet; tokenizacija ide kroz issuera (Monavate) |
-| Push provisioning iz PWA | ❌ nemoguće | Apple entitlement `payment-pass-provisioning` ne postoji za web |
-| Push provisioning iz native appa | ❓ | zahtijeva i Apple entitlement (restriktivan, ide kroz issuera) i GP-ovu partner podršku koja nije dokumentirana → **pitanje za GP call** |
+| **Ručni unos PAN-a iz PSE-a u Wallet** | ✅ jedini dokumentirani put za naš UI | korisnik prepiše broj/expiry/CVV; tokenizacija kroz issuera (Monavate) radi jer je HR podržana |
+| Apple Wallet bank picker → "Gnosis Pay" | ❓ vjerojatno vodi u službenu GP app / issuer flow | testirati što se događa nakon odabira banke; možda traži GP-ovu native aplikaciju |
+| Službena Gnosis Pay mobilna app | ❓ | korisnikov GP account je isti (SIWE) — teoretski može instalirati GP app, ulogirati se istim walletom i odande push-provisionati; provjeriti kako se GP app autenticira |
+| Push provisioning iz naše PWA | ❌ nemoguće | Apple entitlement ne postoji za web |
+| Push provisioning iz našeg budućeg native appa | ❓ | treba i Apple entitlement i GP partner podršku koja nije dokumentirana → **pitanje za GP call** |
 
 **UX plan**: nakon izdavanja kartice prikazati vodič "Dodaj u Apple Pay" s PSE prikazom +
 koracima za ručni unos (3 ekrana, hrvatski). Jednom dodana u Wallet, kartica radi beskontaktno
 na svakom POS-u — *cilj iz vizije je ostvariv i bez push provisioninga*, samo je prvi unos ručni
-(~1 min).
-
-**Otvoreno pitanje #1 za GP**: je li Apple Pay / Google Pay tokenizacija njihovog BIN-a
-**omogućena za Hrvatsku** ("some regions are not yet available")? Bez toga tap-to-pay ne radi i
-ostaje samo online plaćanje. → empirijski test čim prva kartica bude izdana.
+(~1 min, jednokratno po kartici).
 
 ## Cashback (sekundarno)
 

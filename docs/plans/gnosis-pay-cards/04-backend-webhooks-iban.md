@@ -114,32 +114,45 @@ Webhooci su lossy (3 retryja); server ne može pollat u ime korisnika (nema JWT)
 ⚠️ jedinice: webhook `account.balance.changed` kaže "in wei", REST vraća stringove, kartični
 iznosi su minor-units — kalibrirati na stvarnim payloadima prije ikakve matematike.
 
-## IBAN / Monerium — kolizija s našim postojećim railom
+## IBAN / Monerium — kako se GP-ov IBAN odnosi na naš MPT rail
 
-GP nudi "IBAN za GP Safe" kao **tanki wrapper oko Moneriuma** (KYC passporting):
+**Točan model našeg postojećeg raila (korekcija 2026-06-11):** Monerium odnos ima **samo ITalk
+d.o.o.** (prošao **KYB**, business onboarding) — *krajnji korisnici nikad nisu prošli nikakav
+Monerium KYC i nemaju Monerium profile*. SEPA uplate idu uvijek na **ITalk-ov IBAN (Estonija,
+LHV)**; Monerium izdaje EURe na ITalk-ov default Gnosis address; MPT detektira uplatu po
+**referenci** i radi custom routing (Zodiac Roles) na specifični korisnikov Safe. Zato u
+DOMOVINA Walletu uvijek piše "primatelj: ITalk d.o.o., isti IBAN". Nismo (još) službeni
+Monerium partner — plan je javiti se Moneriumu nakon MVP-a.
+
+GP nudi "IBAN za GP Safe" kao **tanki wrapper oko Moneriuma** (KYC passporting): GP-ov
+**per-user KYC** (Sumsub) se šalje Moneriumu i korisnik dobiva **vlastiti osobni IBAN**:
 `GET /api/v1/ibans/available` → `GET /api/v1/ibans/signing-message` (potpisuje **verificirani
 EOA**: "I hereby declare that I am the address owner.") → `POST /api/v1/integrations/monerium`.
 
-**Ali**: "Monerium only allows the user to have one single account with them."
+Posljedica korekcije: **kolizije za naše korisnike NEMA** — oni nemaju Monerium profile, pa je
+GP-ov IBAN flow za njih čist (constraint "Monerium only allows the user to have one single
+account" pogađa samo korisnike koji su *negdje drugdje* već otvorili osobni Monerium račun —
+rubni slučaj, pre-check u UI). Štoviše, GP-ov IBAN je **feature koji danas ne možemo sami
+ponuditi**: osobni IBAN po korisniku, bez da ITalk postane Monerium partner.
 
 ```mermaid
 flowchart TD
-    A[Korisnik želi IBAN za GP Safe] --> B{Ima li već Monerium profil<br/>kroz pay.domovina.ai?}
-    B -- "da (naši postojeći korisnici)" --> C["NE zvati GP endpoint<br/>(past će na Monerium strani)"]
-    C --> D["Link GP sign-in adrese na POSTOJEĆI<br/>Monerium profil direktno kroz Monerium API<br/>(mi smo već partner — ne treba GP)"]
-    B -- ne --> E["GP-ov flow: POST /integrations/monerium<br/>(GP-ov KYC se šalje Moneriumu)"]
-    E --> F["bankingDetails u GET /user:<br/>moneriumIban, BIC, status"]
-    D --> F
-    F --> G["SEPA uplata → EURe issuance<br/>na adresu registriranu za IBAN"]
+    A[Korisnik s GP karticom] --> B{Želi li osobni IBAN<br/>za direktne SEPA uplate?}
+    B -- ne --> C["Punjenje kartice kroz postojeći MPT rail:<br/>SEPA → ITalk IBAN → MPT routing →<br/>DOMOVINA Safe → EURe transfer → GP Safe"]
+    B -- da --> D["GP flow: POST /integrations/monerium<br/>(GP-ov Sumsub KYC se šalje Moneriumu)"]
+    D --> E["Osobni IBAN korisnika<br/>(bankingDetails u GET /user)<br/>SEPA → EURe direktno na GP Safe"]
+    D -. "409/400 ako korisnik već ima<br/>osobni Monerium račun (rijetko)" .-> F["link postojećeg profila<br/>kroz Monerium API (korisnik sam)"]
 ```
 
-Strateški zaključak: **IBAN funkcionalnost već imamo** (mi smo Monerium partner) — GP-ov IBAN
-wrapper nam treba samo za korisnike koji uđu kroz karticu, a nemaju naš onramp. Smjer issuance
-adrese (GP Safe vs DOMOVINA Safe) je stvar registracije adrese na Monerium profilu — **zadržati
-DOMOVINA Safe kao primarni landing**, pa funding kartice ostaje naš kontrolirani transfer.
+Strateški zaključak: dva komplementarna on-rampa — **MPT rail** (ITalk IBAN + referenca,
+landing na DOMOVINA Safe, naš kontrolirani routing) ostaje primarni; **GP osobni IBAN**
+(landing direktno na GP Safe) je opcionalni dodatak za korisnike kartice. Budući službeni
+Monerium partnerski odnos (post-MVP) otvara treću opciju: osobni IBAN-i vezani na DOMOVINA
+Safe-ove kroz naš vlastiti integration — tada redizajnirati ovu sekciju.
 
 KYC sharing: **isključivo GP→partner** (tripartitni ugovor GP+Sumsub+partner; Noah, BRLA).
-Naš Monerium KYC se NE može uvesti u GP. Za nas sharing nije potreban ni u jednom smjeru.
+U GP se ne može uvesti nikakav vanjski KYC — ni Moneriumov ni naš. Za nas sharing nije
+potreban ni u jednom smjeru.
 
 ## Tajne (wrangler secrets)
 

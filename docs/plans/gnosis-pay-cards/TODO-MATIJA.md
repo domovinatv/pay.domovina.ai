@@ -12,10 +12,12 @@ koje blokiraju razvoj (i to tek od Faze 3); Faze 0–2 idu odmah bez ičega s ov
 - ℹ️ Bez ovoga: nema webhooka, nema PSE-a, nema SIWE s produkcijske domene. Besplatno je i instantno.
 
 ## 2. Pitanja za Gnosis Pay ekipu (imaš kontakt s calla) — pošalji prije Faze 3
-- [ ] **Je li Apple Pay / Google Pay tokenizacija omogućena za Hrvatsku?** (docs: "some regions
-      are not yet available" — ovo je jedino pitanje koje ugrožava core vrijednost)
-- [ ] Postoji li **push provisioning** za partnere (in-app Add to Apple Wallet) ili je ručni
-      unos PAN-a jedini put? Planira li se?
+- [x] ~~Je li Apple Pay / Google Pay tokenizacija omogućena za Hrvatsku?~~ **POTVRĐENO
+      2026-06-11**: Gnosis Pay na Apple HR listi (support.apple.com/hr-hr/109516), u Google
+      Wallet HR tablici kao "Visa Debit", i u Apple Wallet bank pickeru (tvoj screenshot)
+- [ ] Postoji li **push provisioning** za partnere (one-click in-app Add to Apple Wallet kao u
+      Revolutu) ili je ručni unos PAN-a jedini put? Planira li se? Što se događa kad korisnik u
+      Apple Wallet bank pickeru odabere "Gnosis Pay" — vodi li u njihovu native app?
 - [ ] Potvrda da je **Hrvatska na listi podržanih zemalja** za KYC/izdavanje (nigdje nije objavljena lista)
 - [ ] Max aktivnih kartica: 5 ili 3? (docs su kontradiktorni)
 - [ ] Verificira li se ERC-1271 SIWE na Gnosis chainu? Može li **smart account biti signup
@@ -39,7 +41,13 @@ koje blokiraju razvoj (i to tek od Faze 3); Faze 0–2 idu odmah bez ičega s ov
 - ⚠️ Tvoja SIWE adresa se trajno veže za tvoj GP account — odaberi je svjesno (po Plan A/B
       odluci iz Faze 0, dogovorit ćemo se prije nego potpišeš)
 
-## 5. Legal / compliance (paralelno, ne blokira development)
+## 5. Monerium — službeni kontakt (post-MVP, tvoj postojeći plan)
+- [ ] Kad kartični MVP bude složen, javi se Moneriumu službeno (danas: samo ITalk KYB + firmin
+      IBAN; korisnici nemaju Monerium profile). Partnerski odnos bi otvorio osobne IBAN-e
+      vezane na DOMOVINA Safe-ove kroz naš vlastiti integration — do tada GP-ov IBAN wrapper
+      pokriva taj use-case za korisnike kartice (vidi 04)
+
+## 6. Legal / compliance (paralelno, ne blokira development)
 - [ ] Pročitaj **Monavate cardholder ToS** (EEA) i GP Privacy Policy — naši korisnici ih
       prihvaćaju kroz naš UI; provjeri ima li išta sporno za ITalk kao distributera
 - [ ] Naša Pravila privatnosti: dopuna da kartični onboarding ide kroz Gnosis Pay/Sumsub/Monavate
@@ -47,7 +55,7 @@ koje blokiraju razvoj (i to tek od Faze 3); Faze 0–2 idu odmah bez ičega s ov
 - [ ] Razmisli treba li ITalk-u pravno mišljenje o ulozi "distributera" GP kartica u HR
       (GP/Monavate su issuer i regulirani subjekt, mi smo tehnički integrator — ali provjeri)
 
-## 6. Odluke koje trebam od tebe (možeš odmah)
+## 7. Odluke koje trebam od tebe (možeš odmah)
 - [ ] **Scope tenanata**: kartica samo za domovina brand ili i sportklub/zupa? (utječe na
       domain whitelist u #1 i feature flag)
 - [ ] **Default daily limit** pri deployu (GP default 350 €; raspon 1–8000) — prijedlog: 200 €
