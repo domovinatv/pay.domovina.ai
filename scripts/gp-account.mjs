@@ -215,16 +215,16 @@ async function siweDump(privateKey) {
 const [cmd, a, b] = process.argv.slice(2);
 switch (cmd) {
   case 'dump':
-    if (!a) return console.log("Daj JWT: node scripts/gp-account.mjs dump '<jwt>'");
-    dump(a);
+    if (!a) console.log("Daj JWT: node scripts/gp-account.mjs dump '<jwt>'");
+    else dump(a);
     break;
   case 'link':
-    if (!a) return console.log("Daj JWT i Safe: node scripts/gp-account.mjs link '<jwt>' 0x…");
-    link(a, b);
+    if (!a) console.log("Daj JWT i Safe: node scripts/gp-account.mjs link '<jwt>' 0x…");
+    else link(a, b);
     break;
   case 'siwe-dump':
-    if (!a) return console.log('Daj privatni ključ: node scripts/gp-account.mjs siwe-dump <0x…>');
-    await siweDump(a);
+    if (!a) console.log('Daj privatni ključ: node scripts/gp-account.mjs siwe-dump <0x…>');
+    else await siweDump(a);
     break;
   default:
     console.log('Naredbe: dump <jwt> | link <jwt> <safeAddress> | siwe-dump <privateKey>');
