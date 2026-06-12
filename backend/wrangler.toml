@@ -49,7 +49,7 @@ id = "8b9f1c0c575246e284b8a18157990b38"
 [vars]
 # Choose: "enable_banking" (default) or "gocardless"
 BANKING_PROVIDER = "enable_banking"
-ALLOWED_ORIGINS = "https://pay.domovina.ai,https://wallet.domovina.ai,https://mpt.domovina.ai,https://monerium.domovina.ai,https://domovina.ai,https://www.domovina.ai,https://pinka.io,https://www.pinka.io,https://pinka.finance,https://www.pinka.finance,https://app.pinka.finance,https://pinka-app.pages.dev,http://localhost:5173,http://localhost:3007"
+ALLOWED_ORIGINS = "https://pay.domovina.ai,https://wallet.domovina.ai,https://wallet-staging.domovina.ai,https://mpt.domovina.ai,https://monerium.domovina.ai,https://domovina.ai,https://www.domovina.ai,https://pinka.io,https://www.pinka.io,https://pinka.finance,https://www.pinka.finance,https://app.pinka.finance,https://pinka-app.pages.dev,http://localhost:5173,http://localhost:3007"
 
 # Enable Banking
 ENABLE_BANKING_BASE_URL = "https://api.enablebanking.com"
