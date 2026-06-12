@@ -118,6 +118,12 @@ async function gpFetch<T>(
 // ── SIWE login (Plan A: Safe ERC-1271 preko passkeya) ─────────────────────────
 
 function siweDomain(): { domain: string; uri: string } {
+  // Eksplicitni override (staging prije partner registracije): GP whitelistu
+  // provjerava ISKLJUČIVO nad domain poljem potpisane poruke, ne nad stvarnim
+  // originom requesta — pa build s VITE_GP_SIWE_DOMAIN=<demo domena> radi s
+  // bilo kojeg hosta. Maknuti nakon TODO-MATIJA #1 (vlastiti whitelist).
+  const override = import.meta.env.VITE_GP_SIWE_DOMAIN as string | undefined;
+  if (override) return { domain: override, uri: `https://${override}` };
   const h = window.location.hostname;
   if (h === 'localhost' || h === '127.0.0.1') {
     return { domain: DEV_SIWE_DOMAIN, uri: `https://${DEV_SIWE_DOMAIN}` };
