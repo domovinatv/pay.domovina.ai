@@ -37,6 +37,7 @@ import { mountAdminUi } from './admin/app';
 import { buildIntentApi } from './intents/api';
 import { buildWalletApi } from './wallets/api';
 import { buildGnosisPayApi } from './gnosispay/api';
+import { buildGnosisPayProxy } from './gnosispay/proxy';
 import {
   getIntent,
   markIntentPaid,
@@ -56,7 +57,9 @@ app.use('*', async (c, next) => {
   const origin = origins.includes('*') ? '*' : origins;
   return cors({
     origin,
-    allowMethods: ['GET', 'POST', 'OPTIONS'],
+    // PUT/DELETE za GP proxy (daily-limit PUT, owners DELETE); ostale rute ih
+    // jednostavno ne koriste.
+    allowMethods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
     allowHeaders: ['Content-Type', 'Authorization'],
   })(c, next);
 });
@@ -371,6 +374,9 @@ app.route('/api/wallets', buildWalletApi());
 
 // Gnosis Pay onboarding mirror (kartice) — vidi docs/plans/gnosis-pay-cards/.
 app.route('/api/gp', buildGnosisPayApi());
+
+// GP API proxy (zaobilaženje browser CORS-a prije partner registracije).
+app.route('/api/gp-proxy', buildGnosisPayProxy());
 
 // Manual trigger for the on-chain donation indexer (same logic as the cron).
 // Guarded by the indexer secret so it can be poked for testing/backfill.

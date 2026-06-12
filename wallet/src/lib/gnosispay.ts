@@ -26,7 +26,13 @@ import { GNOSIS_CHAIN_ID } from './constants';
 import { getActivePasskey, recordRpId, signWithPasskey, type PasskeyRecord } from './passkey';
 import { encodeWebAuthnSignature } from './safe';
 
-const GP_API = 'https://api.gnosispay.com';
+/**
+ * GP API base. Default je izravni GP origin (radi samo s whitelistane domene
+ * nakon partner registracije). Prije toga staging build pokazuje na naš
+ * backend proxy (`VITE_GP_API_BASE=https://mpt.domovina.ai/api/gp-proxy`) koji
+ * zaobilazi browser CORS — vidi backend/src/gnosispay/proxy.ts.
+ */
+const GP_API = (import.meta.env.VITE_GP_API_BASE as string | undefined) ?? 'https://api.gnosispay.com';
 
 /** GP-ova vlastita SIWE helper aplikacija (linkana iz docs) — jedina domena koja
  * prolazi i WAF i app-level whitelist u developmentu. */
