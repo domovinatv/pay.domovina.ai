@@ -13,6 +13,7 @@
     "build:sportklub": "VITE_BRAND=sportklub npm run build",
     "build:zupa": "VITE_BRAND=zupa npm run build",
     "build:edemokracija": "VITE_BRAND=edemokracija npm run build",
+    "build:multi": "npm run build",
     "deploy:default": "BRAND_PROJECT=wallet-domovina npm run deploy",
     "deploy:sportklub": "BRAND_PROJECT=wallet-sportklub npm run deploy",
     "deploy:zupa": "BRAND_PROJECT=wallet-zupa npm run deploy",
@@ -22,6 +23,7 @@
     "ship:sportklub": "npm run build:sportklub && npm run deploy:sportklub",
     "ship:zupa": "npm run build:zupa && npm run deploy:zupa",
     "ship:edemokracija": "npm run build:edemokracija && npm run deploy:edemokracija",
+    "ship:multi": "npm run build:multi && npm run deploy:default",
     "ship:staging": "npm run build:default && npm run deploy:staging",
     "ship:all": "npm run ship:default && npm run ship:sportklub && npm run ship:zupa && npm run ship:edemokracija"
   },

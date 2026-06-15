@@ -7,12 +7,8 @@ import { brand as edemokracijaBrand } from '../brands/edemokracija/brand';
 /**
  * Brand registry. All known tenants are imported eagerly here — each
  * config is a few hundred bytes of plain data so the tree-shaking
- * overhead of importing all three is negligible. When a 10th tenant
- * lands we will revisit with dynamic imports or build-time aliasing.
- *
- * The active brand is selected by `VITE_BRAND` at build time. CI passes
- * the env per matrix step; local `npm run build` defaults to `default`
- * and the same dist deploys to `wallet-domovina` CF Pages project.
+ * overhead of importing all of them is negligible. When the tenant count
+ * grows large we will revisit with dynamic imports or build-time aliasing.
  */
 const REGISTRY: Record<string, BrandConfig> = {
   default: defaultBrand,
@@ -21,14 +17,39 @@ const REGISTRY: Record<string, BrandConfig> = {
   edemokracija: edemokracijaBrand,
 };
 
+/**
+ * Active-brand resolution (ADR 0015 — runtime multi-tenant). Priority:
+ *
+ *   1. `VITE_BRAND` build-time env — explicit override for a dedicated
+ *      per-brand deployment (kept for back-compat / isolated builds).
+ *   2. `location.hostname` match against each brand's `domain` — this is
+ *      the multi-tenant path: ONE deployment (wallet-domovina) serves
+ *      every brand, selected by the hostname the user loaded. The shared
+ *      same-origin relayer Functions (`/api/relay`) and the shared intents
+ *      API (`mpt.domovina.ai`) are reused verbatim — no per-brand backend.
+ *   3. `default`.
+ *
+ * Build-time bits that can only bake ONE brand per deployment (index.html
+ * <title>/theme-color, the PWA manifest in vite.config) stay on the build
+ * brand; the in-app experience (CSS vars, document.title, copy) is
+ * corrected at first paint by `applyBrandCss` reading this resolved brand.
+ * A per-hostname dynamic manifest is a tracked follow-up.
+ */
 function resolveActiveBrand(): BrandConfig {
-  const id = (import.meta.env.VITE_BRAND as string | undefined)?.trim() || 'default';
-  const found = REGISTRY[id];
-  if (!found) {
-    console.warn(`[brand] unknown VITE_BRAND="${id}", falling back to "default"`);
-    return defaultBrand;
+  const envId = (import.meta.env.VITE_BRAND as string | undefined)?.trim();
+  if (envId) {
+    const found = REGISTRY[envId];
+    if (found) return found;
+    console.warn(`[brand] unknown VITE_BRAND="${envId}", falling back to hostname/default`);
   }
-  return found;
+
+  if (typeof window !== 'undefined' && window.location?.hostname) {
+    const host = window.location.hostname.toLowerCase();
+    const byHost = Object.values(REGISTRY).find((b) => b.domain.toLowerCase() === host);
+    if (byHost) return byHost;
+  }
+
+  return defaultBrand;
 }
 
 export const brand: BrandConfig = resolveActiveBrand();
