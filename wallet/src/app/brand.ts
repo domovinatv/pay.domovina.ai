@@ -2,6 +2,7 @@ import type { BrandConfig } from '../brands/_shared/types';
 import { brand as defaultBrand } from '../brands/default/brand';
 import { brand as sportklubBrand } from '../brands/sportklub/brand';
 import { brand as zupaBrand } from '../brands/zupa/brand';
+import { brand as edemokracijaBrand } from '../brands/edemokracija/brand';
 
 /**
  * Brand registry. All known tenants are imported eagerly here — each
@@ -17,6 +18,7 @@ const REGISTRY: Record<string, BrandConfig> = {
   default: defaultBrand,
   sportklub: sportklubBrand,
   zupa: zupaBrand,
+  edemokracija: edemokracijaBrand,
 };
 
 function resolveActiveBrand(): BrandConfig {

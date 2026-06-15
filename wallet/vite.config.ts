@@ -8,6 +8,7 @@ import { readFileSync } from 'node:fs';
 import { brand as defaultBrand } from './src/brands/default/brand';
 import { brand as sportklubBrand } from './src/brands/sportklub/brand';
 import { brand as zupaBrand } from './src/brands/zupa/brand';
+import { brand as edemokracijaBrand } from './src/brands/edemokracija/brand';
 import type { BrandConfig } from './src/brands/_shared/types';
 
 // Resolve build-time identifiers so the deployed PWA can show users which
@@ -36,6 +37,7 @@ const BRAND_REGISTRY: Record<string, BrandConfig> = {
   default: defaultBrand,
   sportklub: sportklubBrand,
   zupa: zupaBrand,
+  edemokracija: edemokracijaBrand,
 };
 const activeBrandId = (process.env.VITE_BRAND ?? '').trim() || 'default';
 const activeBrand: BrandConfig = BRAND_REGISTRY[activeBrandId] ?? defaultBrand;
