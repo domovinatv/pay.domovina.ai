@@ -51,6 +51,7 @@ history.
 | [0012](0012-recovery-seed-second-owner-interop.md) | Recovery seed as optional 2nd owner (1-of-2) + app.safe.global interop | 2026-06-06 | ✅ Accepted (direction) | 🟢 Coded (swap/add modes, default 1-of-2); on-chain test + backend registry pending |
 | [0013](0013-passkey-as-identity-safe-as-account.md) | Passkey = identity, Safe = account (one daily passkey, many accounts) | 2026-06-07 | ✅ Accepted (direction) | 🟢 First slice coded (single-identity creation + simplified homepage); multi-account next. Supersedes 0011 name=address as default |
 | [0014](0014-mobile-wallet-baseline-and-stack.md) | Native mobile wallet: baseline (fork safe-wallet-monorepo) & stack (RN/Expo) | 2026-06-08 | 🔬 Proposed (leaning) | ⏳ Local toolchain proven (web+iOS+Android build/run on M4 Pro); Safe-monorepo fork + passkey-owner port not started |
+| [0015](0015-runtime-brand-resolution-and-external-brand-repos.md) | Runtime brand resolution (hostname) + external repo for flagship brands | 2026-06-15 | ✅ Accepted (partial) | 🟢 Resolver shipped (`45b49d5`); `ship:multi` to prod paused; first external repo live (`edemokracija/novcanik-prototip`) |
 
 ---
 
