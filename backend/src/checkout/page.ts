@@ -361,10 +361,13 @@ function blindWindowNote(elapsed) {
   if (elapsed < 25) {
     return 'Tvoja banka obrađuje uplatu… <span class="elapsed">' + fmtClock(elapsed) + '</span>';
   }
+  // Deliberately NO revolut:// deep link: the scheme exists but is only
+  // documented for the native Revolut Pay SDK (LSApplicationQueriesSchemes),
+  // not as a web href — behaviour from mobile browsers is undefined.
   return 'Čekamo tvoju banku. <span class="elapsed">' + fmtClock(elapsed) + '</span>' +
     '<span class="reassure">Prva uplata s novog računa zna potrajati (do 30 min). ' +
     'Novac je siguran. Ne moraš ništa raditi. ' +
-    '<a href="revolut://" rel="noopener">Provjeri u Revolutu</a> je li uplata poslana.</span>';
+    'Provjeri u Revolutu (ili svojoj banci) je li uplata poslana.</span>';
 }
 
 function stepNote(step, status) {
