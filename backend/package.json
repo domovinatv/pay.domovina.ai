@@ -8,7 +8,8 @@
     "deploy": "wrangler deploy",
     "db:migrate:local": "wrangler d1 migrations apply pay_domovina --local",
     "db:migrate:prod": "wrangler d1 migrations apply pay_domovina --remote",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
   },
   "dependencies": {
     "hono": "^4.6.14",
@@ -19,6 +20,7 @@
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20250101.0",
     "typescript": "^5.7.2",
+    "vitest": "^4.1.10",
     "wrangler": "^3.99.0"
   }
 }

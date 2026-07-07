@@ -17,6 +17,7 @@ import '../models/hub3_payload.dart';
 import '../utils/eip55.dart';
 import 'gnosis_history_page.dart';
 import 'hpb_history_page.dart';
+import 'payment_status_page.dart';
 
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
@@ -727,6 +728,8 @@ class _HomePageState extends State<HomePage> {
     // irreversibly painful, so the QR is unscannable until checkbox ticked.
     if (!_addressConfirmed) return _unconfirmedPlaceholder();
 
+    final trackCard = _buildTrackStatusCard();
+
     final epcCard = _previewCard(
       index: 1,
       title: 'EPC QR (SEPA Credit Transfer)',
@@ -767,7 +770,7 @@ class _HomePageState extends State<HomePage> {
     );
 
     final wide = constraints.maxWidth >= 700;
-    return wide
+    final cards = wide
         ? Flex(
             direction: Axis.horizontal,
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -790,6 +793,91 @@ class _HomePageState extends State<HomePage> {
               walletCard,
             ],
           );
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [trackCard, const SizedBox(height: 16), cards],
+    );
+  }
+
+  /// Entry into the in-app status timeline (and merchant POS mode). Creates
+  /// the payment intent on the backend with the SAME sid the QR remittance
+  /// carries, then polls the per-stage status. Requires a sid (without it
+  /// the backend cannot correlate the incoming Monerium order).
+  Widget _buildTrackStatusCard() {
+    final canTrack =
+        _isValidGnosisAddress && _sidValue.isNotEmpty && _amountValue > 0;
+    return Card(
+      clipBehavior: Clip.antiAlias,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(14),
+        side: BorderSide(
+            color: DomovinaBrand.navy.withValues(alpha: 0.25), width: 1),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: const [
+                Icon(Icons.timeline, color: DomovinaBrand.navy, size: 22),
+                SizedBox(width: 8),
+                Text(
+                  'Status uplate uživo',
+                  style: TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w700,
+                    color: DomovinaBrand.navy,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 6),
+            Text(
+              canTrack
+                  ? 'Prati uplatu korak po korak — od banke, preko Moneriuma, '
+                      'do primatelja. POS mod daje veliki prikaz za pult.'
+                  : 'Za praćenje statusa unesi iznos > 0 i Session ID '
+                      '(gumb Random).',
+              style: TextStyle(color: Colors.grey[700], height: 1.4),
+            ),
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                Expanded(
+                  child: FilledButton.icon(
+                    onPressed: canTrack ? () => _openStatus(false) : null,
+                    icon: const Icon(Icons.travel_explore, size: 18),
+                    label: const Text('Prati status'),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: OutlinedButton.icon(
+                    onPressed: canTrack ? () => _openStatus(true) : null,
+                    icon: const Icon(Icons.storefront, size: 18),
+                    label: const Text('POS mod'),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _openStatus(bool posMode) {
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => PaymentStatusPage(
+          sid: _sidValue,
+          targetAddress: _gnosisAddr,
+          amountEur: _amountValue,
+          startInPosMode: posMode,
+        ),
+      ),
+    );
   }
 
   Widget _previewCard({

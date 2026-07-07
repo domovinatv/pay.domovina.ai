@@ -1,6 +1,7 @@
 import qrcode from 'qrcode-generator';
 
 import type { PaymentIntentRow } from '../intents/db';
+import type { StageResult } from '../intents/stage';
 
 /// Server-side render of the EPC text as an inline SVG. Keeps the HTML
 /// fully self-contained (no client-side library, no CDN dependency, no
@@ -14,19 +15,21 @@ function renderQrSvg(text: string): string {
 }
 
 /// Buyer-facing checkout page. Server-renders once with the snapshot, then
-/// client polls /api/intents/<sid> every 2s for state changes.
+/// client polls /api/intents/<sid> every 2s and re-renders the timeline.
 ///
-/// Branded in DOMOVINA palette (navy #002F6C + red #FF0000 + Croatian
-/// tricolor stripes) to match admin + sms.domovina.ai patterns. EPC QR
-/// rendered client-side via inline qrjs2 (~3KB) so the page is fully
-/// self-contained and embeddable as an iframe.
-///
-/// UX flow mirrors otp.domovina.ai's SMS verification:
-///   pending → countdown + pulse animation
-///   paid    → success overlay modal + chime + vibration
-///   expired → expired overlay with retry CTA
-
-export function renderCheckoutPage(intent: PaymentIntentRow): string {
+/// Honest per-stage timeline ("gdje su moji novci"):
+///   - vertical steps, each naming the current CUSTODIAN of the money
+///   - markers distinguish proof from assumption: ✓ proven, animated dot
+///     in-progress, hollow circle waiting (blind), ⚠ failed
+///   - the user→bank→SEPA window is BLIND (no Monerium order exists yet),
+///     so that step shows only elapsed time + progressively-revealed
+///     expectation copy — never fake progress
+///   - success overlay fires on `settled` (forward mined on-chain, or
+///     direct mint processed), not merely on broadcast
+export function renderCheckoutPage(
+  intent: PaymentIntentRow,
+  status: StageResult,
+): string {
   const sid = intent.sid;
   const amount = (intent.amount_cents / 100).toFixed(2);
   const target = intent.target_address;
@@ -50,10 +53,11 @@ export function renderCheckoutPage(intent: PaymentIntentRow): string {
     target_address: target,
     label: intent.label ?? null,
     memo,
-    epc_qr_data: epcText,
     expires_at_unix: intent.expires_at,
     paid_at: intent.paid_at,
     forward_tx_hash: intent.forward_tx_hash,
+    amount_received_cents: intent.amount_received_cents,
+    status,
   };
 
   return `<!doctype html>
@@ -106,14 +110,43 @@ h1 { font-size: 1.5rem; margin: 0 0 .4rem; }
   letter-spacing: .02em; line-height: 1;
 }
 .amount-label { font-size: .8rem; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; margin-top: .25rem; }
-.detail-rows { font-size: .88rem; }
-.detail-rows .row {
-  display: flex; justify-content: space-between; gap: 1rem;
-  padding: .5rem 0; border-bottom: 1px solid var(--border);
+
+/* ---- Vertical status timeline ---- */
+.timeline { margin: 1rem 0 .5rem; padding: .25rem 0; }
+.tl-step { display: flex; gap: .8rem; position: relative; }
+.tl-rail { display: flex; flex-direction: column; align-items: center; width: 26px; flex: none; }
+.tl-marker {
+  width: 22px; height: 22px; border-radius: 50%; flex: none;
+  display: flex; align-items: center; justify-content: center;
+  font-size: .8rem; font-weight: 800; background: var(--bg);
+  border: 2px solid var(--border); color: var(--muted);
 }
-.detail-rows .row:last-child { border-bottom: 0; }
-.detail-rows .label { color: var(--muted); }
-.detail-rows .value { color: var(--navy); font-weight: 600; font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; word-break: break-all; text-align: right; }
+.tl-step.proven .tl-marker { background: var(--success); border-color: var(--success); color: #fff; }
+.tl-step.in_progress .tl-marker { border-color: var(--warning); color: var(--warning); }
+.tl-step.in_progress .tl-marker::after {
+  content: ''; width: 9px; height: 9px; border-radius: 50%;
+  background: var(--warning); animation: pulse-anim 1.4s ease-in-out infinite;
+}
+.tl-step.failed .tl-marker { background: var(--danger); border-color: var(--danger); color: #fff; }
+.tl-line { width: 2px; flex: 1; min-height: 14px; background: var(--border); }
+.tl-step.proven .tl-line { background: var(--success); }
+.tl-step:last-child .tl-line { display: none; }
+.tl-body { padding: 0 0 1rem; flex: 1; min-width: 0; }
+.tl-title { font-size: .92rem; font-weight: 700; line-height: 22px; }
+.tl-step.waiting .tl-title { color: var(--muted); font-weight: 600; }
+.tl-custodian { font-size: .78rem; color: var(--muted); margin-top: .1rem; }
+.tl-note { font-size: .84rem; color: var(--navy); line-height: 1.45; margin-top: .35rem; }
+.tl-note .soft { color: var(--muted); }
+.tl-note a { color: var(--navy); font-weight: 600; }
+.tl-note .reassure {
+  display: block; margin-top: .4rem; padding: .55rem .7rem;
+  background: #FDF6EC; border: 1px solid #E8B96E; border-radius: .45rem;
+  color: var(--warning); font-size: .82rem; line-height: 1.45;
+}
+.tl-tx { font-size: .78rem; margin-top: .25rem; }
+.tl-tx a { color: var(--navy); font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; }
+.elapsed { font-variant-numeric: tabular-nums; font-weight: 700; }
+
 .status-bar {
   margin: .8rem 0 .25rem; padding: .55rem .75rem;
   border-radius: .5rem; display: flex; align-items: center; gap: .55rem;
@@ -131,6 +164,14 @@ h1 { font-size: 1.5rem; margin: 0 0 .4rem; }
   50%      { opacity: 1; transform: scale(1.15); }
 }
 .countdown { font-variant-numeric: tabular-nums; }
+.detail-rows { font-size: .88rem; }
+.detail-rows .row {
+  display: flex; justify-content: space-between; gap: 1rem;
+  padding: .5rem 0; border-bottom: 1px solid var(--border);
+}
+.detail-rows .row:last-child { border-bottom: 0; }
+.detail-rows .label { color: var(--muted); }
+.detail-rows .value { color: var(--navy); font-weight: 600; font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; word-break: break-all; text-align: right; }
 .success-overlay {
   position: fixed; inset: 0; z-index: 100;
   background: rgba(0,47,108,.55);
@@ -197,9 +238,9 @@ footer a { color: var(--navy); text-decoration: none; font-weight: 600; }
 </header>
 <main>
   <h1 id="title">Skenirajte za plaćanje</h1>
-  <p class="lede" id="lede">Otvorite Revolut ili banku, skenirajte EPC QR kod i potvrdite plaćanje. Stranica će se automatski ažurirati kad uplata stigne.</p>
+  <p class="lede" id="lede">Otvorite Revolut ili banku, skenirajte EPC QR kod i potvrdite plaćanje. Stranica prati svaki korak uplate — od vaše banke do primatelja.</p>
   <div class="card">
-    <div class="qr-wrap">
+    <div class="qr-wrap" id="qrWrap">
       <div id="qrBox">${renderQrSvg(epcText)}</div>
       <p class="qr-hint">EPC SEPA Credit Transfer (Revolut iOS, Erste, PBZ, OTP, RBA — sve podržavaju ovaj format)</p>
     </div>
@@ -207,10 +248,8 @@ footer a { color: var(--navy); text-decoration: none; font-weight: 600; }
       <div class="amount" id="amount">— EUR</div>
       <div class="amount-label" id="amountLabel">Iznos za plaćanje</div>
     </div>
-    <div class="status-bar pending" id="statusBar">
-      <span class="pulse-dot"></span>
-      <span id="statusText">Čekamo uplatu — istječe za <span class="countdown" id="countdown">—</span></span>
-    </div>
+    <div id="statusArea"></div>
+    <div class="timeline" id="timeline"></div>
     <div class="detail-rows">
       <div class="row"><span class="label">Primatelj wallet</span><span class="value" id="targetVal">—</span></div>
       <div class="row"><span class="label">SEPA reference</span><span class="value" id="memoVal">—</span></div>
@@ -240,9 +279,28 @@ footer a { color: var(--navy); text-decoration: none; font-weight: 600; }
 <script>
 const INITIAL = ${JSON.stringify(initialState)};
 const SID = INITIAL.sid;
+// Elapsed clock: server-authoritative offset + local ticking between polls.
+const LOADED_AT = Math.floor(Date.now() / 1000);
+let serverElapsed = (INITIAL.status && INITIAL.status.elapsed_seconds) || 0;
+let latest = INITIAL;
 let audioCtx;
 
 function $(id) { return document.getElementById(id); }
+
+// Stage→copy table. Same wording as the Flutter table
+// (lib/models/payment_status.dart) — change both together.
+//
+// Honesty rules baked into this copy (docs/plans/payment-status-timeline.md):
+// no fake progress in the blind window, no "AML hold" claims (Monerium
+// 'pending' is opaque), no "seconds" promise for a first-ever payment,
+// custodian named on every step.
+const STEP_COPY = {
+  payment:    { title: 'Uplata iz tvoje banke',        custodian: 'Skrbnik: tvoja banka' },
+  processing: { title: 'Zaprimljeno — obrada i provjera', custodian: 'Skrbnik: Monerium (regulirani izdavatelj e-novca)' },
+  minted:     { title: 'EURe iskovan',                 custodian: 'Na blockchainu (Gnosis)' },
+  forwarding: { title: 'Prosljeđivanje primatelju',    custodian: 'MPT relay' },
+  settled:    { title: 'Kod primatelja',               custodian: 'Skrbnik: primatelj' },
+};
 
 function ensureAudio() {
   try { audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)(); }
@@ -267,7 +325,7 @@ function playChime() {
   } catch {}
 }
 
-function fmtCountdown(secs) {
+function fmtClock(secs) {
   if (secs <= 0) return '0:00';
   const m = Math.floor(secs / 60);
   const s = secs % 60;
@@ -275,6 +333,117 @@ function fmtCountdown(secs) {
 }
 
 function shortAddr(a) { return a ? a.slice(0, 8) + '…' + a.slice(-6) : '—'; }
+function shortHash(h) { return h ? h.slice(0, 10) + '…' + h.slice(-8) : ''; }
+function esc(s) {
+  return String(s).replace(/[&<>"']/g, ch => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+  })[ch]);
+}
+
+function currentElapsed() {
+  return serverElapsed + (Math.floor(Date.now() / 1000) - lastSyncAt);
+}
+let lastSyncAt = LOADED_AT;
+
+function markerHtml(status) {
+  if (status === 'proven') return '✓';
+  if (status === 'failed') return '!';
+  return ''; // in_progress gets the pulsing dot via ::after; waiting stays hollow
+}
+
+/// Progressive disclosure inside the blind window (no Monerium order yet):
+/// the only truthful signal is elapsed time, so the copy escalates exactly
+/// when the payer starts worrying — never an animated fake progress bar.
+function blindWindowNote(elapsed) {
+  if (elapsed < 8) {
+    return '<span class="soft">Čeka se uplata… <span class="elapsed">' + fmtClock(elapsed) + '</span></span>';
+  }
+  if (elapsed < 25) {
+    return 'Tvoja banka obrađuje uplatu… <span class="elapsed">' + fmtClock(elapsed) + '</span>';
+  }
+  return 'Čekamo tvoju banku. <span class="elapsed">' + fmtClock(elapsed) + '</span>' +
+    '<span class="reassure">Prva uplata s novog računa zna potrajati (do 30 min). ' +
+    'Novac je siguran. Ne moraš ništa raditi. ' +
+    '<a href="revolut://" rel="noopener">Provjeri u Revolutu</a> je li uplata poslana.</span>';
+}
+
+function stepNote(step, status) {
+  const stage = status.stage;
+  if (step.key === 'payment' && stage === 'awaiting_payment') {
+    return blindWindowNote(currentElapsed());
+  }
+  if (step.key === 'processing' && stage === 'received_processing') {
+    return 'Stiglo je — novac je siguran kod Moneriuma. Radi se provjera. Ne moraš ništa.';
+  }
+  if (step.key === 'processing' && stage === 'rejected') {
+    const why = status.rejected_reason ? 'Razlog: ' + esc(status.rejected_reason) + '. ' : '';
+    return why + 'Novac se vraća na tvoj račun.';
+  }
+  if (step.key === 'forwarding' && step.status === 'in_progress') {
+    return 'Transakcija poslana na blockchain, čeka se potvrda…';
+  }
+  if (step.key === 'forwarding' && step.status === 'failed') {
+    return 'Prosljeđivanje nije uspjelo — novac je siguran u MPT Safeu, rješavamo ručno.';
+  }
+  if (step.key === 'settled' && step.status === 'proven') {
+    return 'Potvrđeno on-chain. Gotovo!';
+  }
+  return '';
+}
+
+function txLinksHtml(step, status) {
+  const links = [];
+  if (step.key === 'minted' && status.mint_tx_hashes && status.mint_tx_hashes.length) {
+    status.mint_tx_hashes.forEach(h => {
+      links.push('<a href="https://gnosisscan.io/tx/' + esc(h) + '" target="_blank" rel="noopener">mint ' + esc(shortHash(h)) + '</a>');
+    });
+  }
+  if ((step.key === 'forwarding' || step.key === 'settled') && step.tx_hash) {
+    links.push('<a href="https://gnosisscan.io/tx/' + esc(step.tx_hash) + '" target="_blank" rel="noopener">tx ' + esc(shortHash(step.tx_hash)) + '</a>');
+  }
+  return links.length ? '<div class="tl-tx">' + links.join(' · ') + '</div>' : '';
+}
+
+function renderTimeline(status) {
+  const html = status.steps.map(step => {
+    const copy = STEP_COPY[step.key] || { title: step.key, custodian: '' };
+    const note = stepNote(step, status);
+    return '<div class="tl-step ' + step.status + '">' +
+      '<div class="tl-rail"><div class="tl-marker">' + markerHtml(step.status) + '</div><div class="tl-line"></div></div>' +
+      '<div class="tl-body">' +
+        '<div class="tl-title">' + esc(copy.title) + '</div>' +
+        '<div class="tl-custodian">' + esc(copy.custodian) + '</div>' +
+        (note ? '<div class="tl-note">' + note + '</div>' : '') +
+        txLinksHtml(step, status) +
+      '</div>' +
+    '</div>';
+  }).join('');
+  $('timeline').innerHTML = html;
+}
+
+function renderStatusBar(s) {
+  const status = s.status;
+  const stage = status ? status.stage : (s.state === 'paid' ? 'settled' : s.state === 'expired' ? 'expired' : 'awaiting_payment');
+  let cls, inner;
+  if (stage === 'expired') {
+    cls = 'expired';
+    inner = '<span style="font-size:1.1em">⌛</span> Sesija je istekla. Ako ste već platili, novac će svejedno stići — ova stranica će to prikazati.';
+  } else if (stage === 'rejected') {
+    cls = 'expired';
+    inner = '<span style="font-size:1.1em">⚠</span> Uplata je odbijena — novac se vraća na tvoj račun.';
+  } else if (stage === 'settled') {
+    cls = 'paid';
+    inner = '<span style="font-size:1.1em">✓</span> Uplata potvrđena — EURe kod primatelja';
+  } else if (stage === 'awaiting_payment') {
+    const remaining = Math.max(0, s.expires_at_unix - Math.floor(Date.now() / 1000));
+    cls = 'pending';
+    inner = '<span class="pulse-dot"></span> Čekamo uplatu — istječe za <span class="countdown" id="countdown">' + fmtClock(remaining) + '</span>';
+  } else {
+    cls = 'pending';
+    inner = '<span class="pulse-dot"></span> Uplata je stigla — u obradi';
+  }
+  $('statusArea').innerHTML = '<div class="status-bar ' + cls + '" id="statusBar">' + inner + '</div>';
+}
 
 function applyState(s) {
   $('amount').textContent = s.amount_eur + ' EUR';
@@ -282,29 +451,23 @@ function applyState(s) {
   $('targetVal').setAttribute('title', s.target_address);
   $('memoVal').textContent = s.memo;
   $('sidVal').textContent = s.sid;
-
-  if (s.state === 'pending') {
-    const bar = $('statusBar');
-    bar.className = 'status-bar pending';
-    const remaining = Math.max(0, s.expires_at_unix - Math.floor(Date.now() / 1000));
-    $('statusText').innerHTML = 'Čekamo uplatu — istječe za <span class="countdown" id="countdown">' + fmtCountdown(remaining) + '</span>';
-  } else if (s.state === 'paid') {
-    const bar = $('statusBar');
-    bar.className = 'status-bar paid';
-    $('statusText').innerHTML = '<span style="font-size:1.1em">✓</span> Uplata potvrđena — EURe na on-chain destinaciji';
-    showSuccess(s);
-  } else if (s.state === 'expired') {
-    const bar = $('statusBar');
-    bar.className = 'status-bar expired';
-    $('statusText').innerHTML = '<span style="font-size:1.1em">⌛</span> Sesija je istekla. Ako ste već platili, javite primatelju — EURe će svejedno stići.';
+  renderStatusBar(s);
+  if (s.status) renderTimeline(s.status);
+  const stage = s.status ? s.status.stage : null;
+  if (stage === 'settled') showSuccess(s);
+  // Once money verifiably left the bank leg, the QR is done its job —
+  // collapse it so the timeline is the hero.
+  if (stage && stage !== 'awaiting_payment' && stage !== 'expired') {
+    $('qrWrap').style.display = 'none';
   }
 }
 
 function showSuccess(s) {
   if ($('successOverlay').style.display !== 'none') return;
   $('successAmount').textContent = ((s.amount_received_cents != null ? s.amount_received_cents : (parseFloat(s.amount_eur) * 100)) / 100).toFixed(2);
-  if (s.forward_tx_hash) {
-    $('txLink').href = 'https://gnosisscan.io/tx/' + s.forward_tx_hash;
+  const tx = (s.status && s.status.forward_tx_hash) || s.forward_tx_hash;
+  if (tx) {
+    $('txLink').href = 'https://gnosisscan.io/tx/' + tx;
   } else {
     $('txLink').style.display = 'none';
   }
@@ -314,29 +477,29 @@ function showSuccess(s) {
   if (navigator.vibrate) { try { navigator.vibrate([60, 40, 120]); } catch {} }
 }
 
-// Countdown ticker
-let countdownInterval = setInterval(() => {
-  if (INITIAL.state !== 'pending') return;
+// 1 s ticker: countdown while waiting + live elapsed copy in the blind window.
+setInterval(() => {
+  const stage = latest.status ? latest.status.stage : null;
+  if (stage !== 'awaiting_payment') return;
   const el = $('countdown');
-  if (!el) return;
-  const remaining = Math.max(0, INITIAL.expires_at_unix - Math.floor(Date.now() / 1000));
-  el.textContent = fmtCountdown(remaining);
-  if (remaining === 0) {
-    // local UX flip; server cron will catch up authoritatively
-    INITIAL.state = 'expired';
-    applyState(INITIAL);
-    clearInterval(countdownInterval);
+  if (el) {
+    const remaining = Math.max(0, latest.expires_at_unix - Math.floor(Date.now() / 1000));
+    el.textContent = fmtClock(remaining);
   }
+  renderTimeline(latest.status);
 }, 1000);
 
 // Polling. Phase 2 will swap to EventSource('/api/intents/<sid>/stream')
-// and fall back to this on 404.
+// and fall back to this on 404. Note: polling continues on 'expired' —
+// a late SEPA arrival after expiry still forwards, and the page should
+// honestly show it.
 async function poll() {
   try {
     const r = await fetch('/api/intents/' + SID, { cache: 'no-store' });
     if (!r.ok) return;
     const d = await r.json();
-    // Mirror the snapshot fields into the same shape applyState expects.
+    serverElapsed = (d.status && d.status.elapsed_seconds) || serverElapsed;
+    lastSyncAt = Math.floor(Date.now() / 1000);
     const flat = {
       sid: d.sid,
       state: d.state,
@@ -346,20 +509,19 @@ async function poll() {
       expires_at_unix: Math.floor(new Date(d.expires_at).getTime() / 1000),
       forward_tx_hash: d.forward_tx_hash,
       amount_received_cents: d.amount_received_cents,
+      status: d.status,
     };
-    if (d.state !== INITIAL.state) {
-      INITIAL.state = d.state;
-      INITIAL.forward_tx_hash = d.forward_tx_hash;
-      INITIAL.amount_received_cents = d.amount_received_cents;
-      applyState(flat);
-    }
-    if (d.state === 'paid' || d.state === 'expired') {
+    latest = flat;
+    applyState(flat);
+    const stage = d.status ? d.status.stage : null;
+    if (stage === 'settled' || stage === 'rejected') {
       clearInterval(pollInterval);
     }
   } catch {}
 }
 
-let pollInterval = INITIAL.state === 'pending' ? setInterval(poll, 2000) : null;
+const terminal = INITIAL.status && (INITIAL.status.stage === 'settled' || INITIAL.status.stage === 'rejected');
+let pollInterval = terminal ? null : setInterval(poll, 2000);
 
 // User gesture handler to unlock audio on first interaction.
 document.addEventListener('click', ensureAudio, { once: true });
@@ -370,4 +532,3 @@ applyState(INITIAL);
 </body>
 </html>`;
 }
-

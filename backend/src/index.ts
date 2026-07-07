@@ -34,7 +34,7 @@ import {
 import { extractRoutingFromOrder, extractSessionId, extractSenderFromOrder } from './monerium/sid';
 import { forwardViaSafe } from './router/safe';
 import { mountAdminUi } from './admin/app';
-import { buildIntentApi } from './intents/api';
+import { buildIntentApi, buildIntentStatus } from './intents/api';
 import { buildWalletApi } from './wallets/api';
 import { buildGnosisPayApi } from './gnosispay/api';
 import { buildGnosisPayProxy } from './gnosispay/proxy';
@@ -409,7 +409,8 @@ app.get('/checkout/:sid', async (c) => {
   const sid = c.req.param('sid');
   const intent = await getIntent(c.env, sid);
   if (!intent) return c.text('intent not found', 404);
-  return c.html(renderCheckoutPage(intent));
+  const status = await buildIntentStatus(c.env, intent, c.executionCtx);
+  return c.html(renderCheckoutPage(intent, status));
 });
 
 // Branded HTML dashboard at /admin (Basic Auth gated).
