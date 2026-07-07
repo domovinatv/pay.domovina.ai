@@ -14,6 +14,21 @@ function renderQrSvg(text: string): string {
   return qr.createSvgTag({ scalable: true, margin: 2 });
 }
 
+/// Serialize a value for safe embedding inside an inline <script>. Plain
+/// JSON.stringify does NOT escape `<`, so any attacker-controlled string in
+/// the payload (e.g. `label`, settable via the UNAUTHENTICATED POST
+/// /api/intents) containing `</script>` would break out of the tag → stored
+/// XSS on the payments origin. Escaping `<`, `>`, `&` and the JS-only line
+/// terminators U+2028/U+2029 makes the output inert while staying valid JSON.
+function jsonForScript(value: unknown): string {
+  return JSON.stringify(value)
+    .replace(/</g, '\\u003c')
+    .replace(/>/g, '\\u003e')
+    .replace(/&/g, '\\u0026')
+    .replace(/\u2028/g, '\\u2028')
+    .replace(/\u2029/g, '\\u2029');
+}
+
 /// Buyer-facing checkout page. Server-renders once with the snapshot, then
 /// client polls /api/intents/<sid> every 2s and re-renders the timeline.
 ///
@@ -277,7 +292,7 @@ footer a { color: var(--navy); text-decoration: none; font-weight: 600; }
 <div class="tricolor"><span class="red"></span><span class="white"></span><span class="navy"></span></div>
 
 <script>
-const INITIAL = ${JSON.stringify(initialState)};
+const INITIAL = ${jsonForScript(initialState)};
 const SID = INITIAL.sid;
 // Elapsed clock: server-authoritative offset + local ticking between polls.
 const LOADED_AT = Math.floor(Date.now() / 1000);
