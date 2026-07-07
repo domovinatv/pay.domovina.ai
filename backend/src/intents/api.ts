@@ -217,8 +217,11 @@ async function insertWithRetry(
   ttlSeconds: number,
   body: CreateIntentBody,
 ): Promise<string | 'conflict' | null> {
-  // Client-supplied sid: single attempt, collision is the caller's error
-  // (409) rather than something we can retry around.
+  // Client-supplied sid: single attempt. A real duplicate-sid collision is
+  // the caller's error (409); ANY OTHER failure (transient D1 error, etc.)
+  // must NOT masquerade as a conflict — the client swallows 409 as success
+  // and would then poll a never-created intent forever. Rethrow non-conflict
+  // errors so they surface as a 500 the client will retry.
   if (body.sid !== undefined) {
     try {
       await createIntent(env, {
@@ -230,8 +233,11 @@ async function insertWithRetry(
         ttlSeconds,
       });
       return body.sid;
-    } catch {
-      return 'conflict';
+    } catch (e) {
+      if (/UNIQUE constraint failed/i.test((e as Error)?.message ?? '')) {
+        return 'conflict';
+      }
+      throw e;
     }
   }
   for (let i = 0; i < 3; i++) {

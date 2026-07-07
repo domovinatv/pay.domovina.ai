@@ -97,6 +97,19 @@ class _PaymentStatusPageState extends State<PaymentStatusPage> {
       if (stage != null && stage.isTerminal) {
         _pollTimer?.cancel();
       }
+    } on IntentNotFoundException {
+      // The intent was never persisted (transient failure during bootstrap).
+      // Self-heal: re-register once, next tick will find it. Idempotent — a
+      // 409 for an already-existing sid is swallowed by the service.
+      try {
+        await _service.createIntent(
+          sid: widget.sid,
+          targetAddress: widget.targetAddress,
+          amountEur: widget.amountEur,
+        );
+      } catch (_) {
+        // still unreachable — the next poll retries
+      }
     } catch (e) {
       if (mounted && _snapshot == null) setState(() => _error = '$e');
     }

@@ -54,6 +54,11 @@ class IntentService {
   /// cadence as the checkout page.
   Future<IntentStatusSnapshot> fetchStatus(String sid) async {
     final res = await _client.get(Uri.parse('$baseUrl/api/intents/$sid'));
+    if (res.statusCode == 404) {
+      // Intent not persisted (e.g. a transient failure ate the createIntent
+      // call). The caller re-registers instead of polling a ghost forever.
+      throw const IntentNotFoundException();
+    }
     if (res.statusCode < 200 || res.statusCode >= 300) {
       throw Exception('Backend ${res.statusCode}: ${res.body}');
     }
@@ -77,6 +82,14 @@ class IntentService {
     final dt = DateTime.tryParse(iso);
     return dt == null ? null : dt.millisecondsSinceEpoch ~/ 1000;
   }
+}
+
+/// Thrown by [IntentService.fetchStatus] when the backend has no record of
+/// the sid (404) — signals the caller to re-register the intent.
+class IntentNotFoundException implements Exception {
+  const IntentNotFoundException();
+  @override
+  String toString() => 'IntentNotFoundException';
 }
 
 class IntentStatusSnapshot {
