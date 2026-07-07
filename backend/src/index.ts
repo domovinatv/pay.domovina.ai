@@ -40,10 +40,14 @@ import { buildGnosisPayApi } from './gnosispay/api';
 import { buildGnosisPayProxy } from './gnosispay/proxy';
 import {
   getIntent,
-  markIntentPaid,
   sweepExpiredIntents,
 } from './intents/db';
-import { emitIntentPaidWebhook, emitCampaignContributionWebhook } from './intents/outbound';
+import {
+  makeConfirmDeps,
+  pollForwardConfirmation,
+  reconcileSubmittedForwards,
+  settleNonRoutedPaid,
+} from './intents/confirm';
 import { scanOnchainDonations } from './intents/onchainIndexer';
 import { fetchOgPreview } from './og/preview';
 import { renderCheckoutPage } from './checkout/page';
@@ -487,7 +491,7 @@ async function handleForward(
   // Skip self-forward — if memo target IS the Safe itself, leave funds in
   // place. Common for "fund the Safe" deposits.
   if (env.SAFE_ADDRESS && routing.target.toLowerCase() === env.SAFE_ADDRESS.toLowerCase()) {
-    await insertForward(env, {
+    const forwardId = await insertForward(env, {
       orderId: order.id,
       targetAddress: routing.target,
       amountWei: '0',
@@ -497,6 +501,18 @@ async function handleForward(
       status: 'confirmed',
       error: 'self_target_noop',
     });
+    // Non-routed rail: no forward TX to await — the mint behind
+    // `state=processed` is already on-chain confirmed, so 'paid' keys off
+    // that. Single-fire via markIntentPaid's pending→paid guard.
+    if (routing.sid) {
+      await settleNonRoutedPaid(makeConfirmDeps(env), {
+        sid: routing.sid,
+        orderId: order.id,
+        forwardId,
+        amountCents,
+        sender,
+      });
+    }
     return;
   }
   const amountWei = eurToWei(order.amount ?? '0');
@@ -526,38 +542,26 @@ async function handleForward(
       attempts: 1,
     });
     console.log(`forward ${order.id} → ${routing.target} tx=${result.txHash}`);
-    // Link to the corresponding payment intent (if any) so the checkout
-    // page can flip to 'paid'. Idempotent: only flips pending → paid,
-    // ignores already-paid or expired intents.
-    if (routing.sid) {
-      const flipped = await markIntentPaid(env, routing.sid, {
-        moneriumOrderId: order.id,
-        forwardId,
-        forwardTxHash: result.txHash!,
-        amountReceivedCents: amountCents,
-      });
-      // Notify the merchant (e.g. pinka.finance) exactly once, on the real
-      // pending → paid flip. Monerium retries / duplicate order.updated events
-      // return flipped=false here, so no duplicate outbound webhook fires.
-      if (flipped) {
-        const paidIntent = await getIntent(env, routing.sid);
-        if (paidIntent) await emitIntentPaidWebhook(env, paidIntent, sender);
-      }
-    }
-    // Permanent campaign QR (`cmp:` protocol): no per-intent sid — every order
-    // is a distinct contribution. Idempotent because maybeForward only reaches
-    // here once per order (prior submitted/confirmed forwards are skipped).
-    if (routing.prefix === 'cmp' && routing.campaignId) {
-      await emitCampaignContributionWebhook(env, {
-        campaignId: routing.campaignId,
-        orderId: order.id,
-        amountCents,
-        currency: order.currency ?? 'eur',
-        targetAddress: routing.target,
-        forwardTxHash: result.txHash!,
-        senderIban: sender.iban,
-        senderName: sender.name,
-      });
+    // 'paid' + the merchant/campaign webhooks fire on ON-CHAIN CONFIRMATION,
+    // not on broadcast — a forward that later reverts must never have told
+    // the merchant "plaćeno". Poll the receipt here, in this same waitUntil;
+    // if the Worker is evicted first or the TX is slow, the cron reconcile
+    // (scheduled handler) and the status read path (confirmForwardIfMined)
+    // are the backstops. All paths settle through settleConfirmedForward's
+    // atomic submitted → confirmed flip, so the effects stay single-fire.
+    const outcome = await pollForwardConfirmation(makeConfirmDeps(env), {
+      id: forwardId,
+      order_id: order.id,
+      sid: routing.sid,
+      tx_hash: result.txHash!,
+      amount_cents: amountCents,
+      memo_prefix: routing.prefix,
+      target_address: routing.target,
+    });
+    if (outcome === 'timeout') {
+      console.log(`forward ${order.id} unconfirmed after poll window — cron reconcile will settle`);
+    } else if (outcome === 'failed') {
+      console.error(`forward ${order.id} REVERTED on-chain tx=${result.txHash} — intent NOT paid, no webhook`);
     }
   } else {
     await updateForward(env, forwardId, {
@@ -638,6 +642,21 @@ export default {
       scanOnchainDonations(env).then(
         (r) => console.log(`cron: onchain scan ${r.scanned} found=${r.found} created=${r.created ?? 0}`),
         (e) => console.error(`cron: onchain scan failed: ${e}`),
+      ),
+    );
+
+    // Backstop for paid-on-confirmed: reconcile broadcast-but-unconfirmed
+    // forwards whose primary waitUntil poll never finished (Worker eviction,
+    // slow chain). Same settle path as the primary — atomic flip keeps the
+    // paid+webhook effects single-fire. Cheap when the submitted set is empty.
+    ctx.waitUntil(
+      reconcileSubmittedForwards(makeConfirmDeps(env), Math.floor(Date.now() / 1000)).then(
+        (r) => {
+          if (r.checked > 0) {
+            console.log(`cron: forward reconcile checked=${r.checked} confirmed=${r.confirmed} failed=${r.failed}`);
+          }
+        },
+        (e) => console.error(`cron: forward reconcile failed: ${e}`),
       ),
     );
 

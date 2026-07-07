@@ -1,8 +1,8 @@
 import type { Env } from '../types';
 import type { PaymentIntentRow } from './db';
 import type { MoneriumOrderRow, MoneriumForwardRow } from '../monerium/db';
-import { getMoneriumOrder, getForwardByOrder, updateForward } from '../monerium/db';
-import { getForwardStatus } from '../router/safe';
+import { getMoneriumOrder, getForwardByOrder } from '../monerium/db';
+import { makeConfirmDeps, settleConfirmedForward } from './confirm';
 import type { Hex } from 'viem';
 
 /// Canonical per-stage payment status — "gdje su moji novci".
@@ -282,19 +282,22 @@ export async function loadStageContext(
 /// Best-effort on-chain confirmation of a broadcast forward. Runs in
 /// `waitUntil` on the status read path so polling clients (2 s loop) pick
 /// up `settled` one tick after the receipt is mined — without ever blocking
-/// the response. Idempotent: updateForward is a plain UPDATE and repeat
-/// receipts return the same status.
+/// the response. Tertiary confirmation source: the paid flip + merchant
+/// webhooks ride along via settleConfirmedForward, whose atomic
+/// `submitted → confirmed` transition keeps them single-fire no matter which
+/// path (post-broadcast poll / cron reconcile / this read path) wins.
 export async function confirmForwardIfMined(
   env: Env,
   forward: MoneriumForwardRow,
 ): Promise<void> {
   if (forward.status !== 'submitted' || !forward.tx_hash) return;
   try {
-    const status = await getForwardStatus(env, forward.tx_hash as Hex);
+    const deps = makeConfirmDeps(env);
+    const status = await deps.getForwardStatus(forward.tx_hash as Hex);
     if (status === 'confirmed') {
-      await updateForward(env, forward.id, { status: 'confirmed' });
+      await settleConfirmedForward(deps, forward);
     } else if (status === 'failed') {
-      await updateForward(env, forward.id, { status: 'failed', error: 'onchain_revert' });
+      await deps.markForwardFailed(forward.id, 'onchain_revert');
     }
     // 'pending' / 'unknown' → leave as submitted, next poll retries.
   } catch (e) {

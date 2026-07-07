@@ -278,6 +278,41 @@ export async function updateForward(
   ).bind(...args).run();
 }
 
+/// Atomic `submitted → confirmed` transition. Returns true ONLY for the one
+/// caller that performed the flip — the paid-flip + merchant/campaign webhook
+/// settlement effects key off this, so the post-broadcast waitUntil poll, the
+/// cron reconcile, and the status read path can all race safely.
+export async function confirmForwardOnce(
+  env: Env,
+  id: number,
+): Promise<boolean> {
+  const res = await env.DB.prepare(
+    `UPDATE monerium_forwards
+        SET status = 'confirmed', updated_at = ?
+      WHERE id = ? AND status = 'submitted'`,
+  )
+    .bind(Math.floor(Date.now() / 1000), id)
+    .run();
+  return (res.meta?.changes ?? 0) > 0;
+}
+
+/// Broadcast-but-unconfirmed forwards older than the cutoff — the cron
+/// reconcile set. `tx_hash IS NOT NULL` is belt-and-braces: a `submitted`
+/// row always gets its hash in the same update.
+export async function listSubmittedForwardsOlderThan(
+  env: Env,
+  olderThanUnix: number,
+): Promise<MoneriumForwardRow[]> {
+  const res = await env.DB.prepare(
+    `SELECT * FROM monerium_forwards
+      WHERE status = 'submitted' AND tx_hash IS NOT NULL AND updated_at < ?
+      ORDER BY id ASC LIMIT 50`,
+  )
+    .bind(olderThanUnix)
+    .all<MoneriumForwardRow>();
+  return res.results;
+}
+
 export async function getForwardByOrder(
   env: Env,
   orderId: string,
