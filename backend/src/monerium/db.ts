@@ -215,7 +215,10 @@ export interface MoneriumForwardRow {
   sid: string | null;
   memo_prefix: string | null;
   tx_hash: string | null;
-  status: 'pending' | 'submitted' | 'confirmed' | 'failed';
+  /// 'blocked' = the tenant payout whitelist refused this destination, so no
+  /// TX was ever built. Distinct from 'failed' (broadcast/RPC/chain error) so
+  /// an operator can tell a policy refusal from an infrastructure problem.
+  status: 'pending' | 'submitted' | 'confirmed' | 'failed' | 'blocked';
   error: string | null;
   attempts: number;
   created_at: number;

@@ -23,16 +23,13 @@ import {
 } from './monerium/webhook';
 import {
   alreadyProcessedEvent,
-  getForwardByOrder,
   getMoneriumOrder,
-  insertForward,
   listMoneriumOrders,
   recordMoneriumWebhookEvent,
-  updateForward,
   upsertMoneriumOrder,
 } from './monerium/db';
-import { extractRoutingFromOrder, extractSessionId, extractSenderFromOrder } from './monerium/sid';
-import { forwardViaSafe } from './router/safe';
+import { extractSessionId } from './monerium/sid';
+import { makeForwardDeps, maybeForward, parseAmountCents } from './monerium/forward';
 import { mountAdminUi } from './admin/app';
 import { buildIntentApi, buildIntentStatus } from './intents/api';
 import { buildWalletApi } from './wallets/api';
@@ -44,14 +41,11 @@ import {
 } from './intents/db';
 import {
   makeConfirmDeps,
-  pollForwardConfirmation,
   reconcileSubmittedForwards,
-  settleNonRoutedPaid,
 } from './intents/confirm';
 import { scanOnchainDonations } from './intents/onchainIndexer';
 import { fetchOgPreview } from './og/preview';
 import { renderCheckoutPage } from './checkout/page';
-import type { Address } from 'viem';
 import type { MoneriumWebhookEvent } from './monerium/types';
 
 const app = new Hono<{ Bindings: Env }>();
@@ -229,7 +223,7 @@ app.post('/api/monerium/webhook', async (c) => {
       && order.state === 'processed'
       && c.env.ROUTER_PRIVATE_KEY
     ) {
-      c.executionCtx.waitUntil(maybeForward(c.env, order));
+      c.executionCtx.waitUntil(maybeForward(makeForwardDeps(c.env), order));
     }
   }
   return c.json({ ok: true });
@@ -429,149 +423,6 @@ app.onError((err, c) => {
   console.error('error', err);
   return c.json({ error: err.message }, 500);
 });
-
-/// Convert Monerium's decimal-string amount ("12.34", "0.5", "1000") to
-/// integer minor units for sortable indexing. Returns null on parse failure
-/// — we still want the event row to land in the audit log either way.
-function parseAmountCents(amount: string | undefined | null): number | null {
-  if (!amount) return null;
-  const n = Number(amount);
-  if (!Number.isFinite(n)) return null;
-  return Math.round(n * 100);
-}
-
-/// EURe has 18 decimals (per Monerium standard). Convert a decimal-string
-/// amount to wei. Avoids floating-point by splitting on the decimal point
-/// and padding the fractional half to 18 chars before BigInt parse.
-function eurToWei(amount: string): bigint {
-  const [whole, frac = ''] = amount.split('.');
-  const fracPadded = (frac + '0'.repeat(18)).slice(0, 18);
-  return BigInt(whole) * 10n ** 18n + BigInt(fracPadded || '0');
-}
-
-/// Wrapper that enforces forward-level idempotency before invoking the
-/// actual forward. Called from `executionCtx.waitUntil` so the webhook
-/// response is never blocked.
-async function maybeForward(
-  env: import('./types').Env,
-  order: import('./monerium/types').MoneriumOrder,
-): Promise<void> {
-  const existing = await getForwardByOrder(env, order.id);
-  if (existing && (existing.status === 'submitted' || existing.status === 'confirmed')) {
-    console.log(`forward ${order.id} already ${existing.status}, skipping`);
-    return;
-  }
-  await handleForward(env, order);
-}
-
-/// Fire-and-forget forward of a single issue order's EURe from the Safe to
-/// the wallet encoded in the memo. Called inside `executionCtx.waitUntil`
-/// so the webhook response returns immediately to Monerium.
-async function handleForward(
-  env: import('./types').Env,
-  order: import('./monerium/types').MoneriumOrder,
-): Promise<void> {
-  const routing = extractRoutingFromOrder(order);
-  const sender = extractSenderFromOrder(order);
-  const amountCents = parseAmountCents(order.amount);
-  if (!routing.target) {
-    await insertForward(env, {
-      orderId: order.id,
-      targetAddress: '',
-      amountWei: '0',
-      amountCents,
-      sid: routing.sid,
-      memoPrefix: routing.prefix,
-      status: 'failed',
-      error: 'no_routing_target',
-    });
-    console.warn(`forward ${order.id}: no target in memo "${order.memo ?? ''}"`);
-    return;
-  }
-  // Skip self-forward — if memo target IS the Safe itself, leave funds in
-  // place. Common for "fund the Safe" deposits.
-  if (env.SAFE_ADDRESS && routing.target.toLowerCase() === env.SAFE_ADDRESS.toLowerCase()) {
-    const forwardId = await insertForward(env, {
-      orderId: order.id,
-      targetAddress: routing.target,
-      amountWei: '0',
-      amountCents,
-      sid: routing.sid,
-      memoPrefix: routing.prefix,
-      status: 'confirmed',
-      error: 'self_target_noop',
-    });
-    // Non-routed rail: no forward TX to await — the mint behind
-    // `state=processed` is already on-chain confirmed, so 'paid' keys off
-    // that. Single-fire via markIntentPaid's pending→paid guard.
-    if (routing.sid) {
-      await settleNonRoutedPaid(makeConfirmDeps(env), {
-        sid: routing.sid,
-        orderId: order.id,
-        forwardId,
-        amountCents,
-        sender,
-      });
-    }
-    return;
-  }
-  const amountWei = eurToWei(order.amount ?? '0');
-  const forwardId = await insertForward(env, {
-    orderId: order.id,
-    targetAddress: routing.target,
-    amountWei: amountWei.toString(),
-    amountCents,
-    sid: routing.sid,
-    memoPrefix: routing.prefix,
-    status: 'pending',
-  });
-  const result = await forwardViaSafe(env, {
-    target: routing.target as Address,
-    amountWei,
-    // When PAYMENT_REGISTRY_ADDRESS + MULTISEND_ADDRESS are set, the rail
-    // batches `registry.record(...)` alongside the transfer so each forward
-    // emits an onchain `Payment` event. `sessionId` is the join-key the feed
-    // indexer uses to look up the offchain metadata (URL, label, …). When
-    // null, we fall through to the legacy single-transfer path.
-    sessionId: routing.sid,
-  });
-  if (result.ok) {
-    await updateForward(env, forwardId, {
-      status: 'submitted',
-      tx_hash: result.txHash!,
-      attempts: 1,
-    });
-    console.log(`forward ${order.id} → ${routing.target} tx=${result.txHash}`);
-    // 'paid' + the merchant/campaign webhooks fire on ON-CHAIN CONFIRMATION,
-    // not on broadcast — a forward that later reverts must never have told
-    // the merchant "plaćeno". Poll the receipt here, in this same waitUntil;
-    // if the Worker is evicted first or the TX is slow, the cron reconcile
-    // (scheduled handler) and the status read path (confirmForwardIfMined)
-    // are the backstops. All paths settle through settleConfirmedForward's
-    // atomic submitted → confirmed flip, so the effects stay single-fire.
-    const outcome = await pollForwardConfirmation(makeConfirmDeps(env), {
-      id: forwardId,
-      order_id: order.id,
-      sid: routing.sid,
-      tx_hash: result.txHash!,
-      amount_cents: amountCents,
-      memo_prefix: routing.prefix,
-      target_address: routing.target,
-    });
-    if (outcome === 'timeout') {
-      console.log(`forward ${order.id} unconfirmed after poll window — cron reconcile will settle`);
-    } else if (outcome === 'failed') {
-      console.error(`forward ${order.id} REVERTED on-chain tx=${result.txHash} — intent NOT paid, no webhook`);
-    }
-  } else {
-    await updateForward(env, forwardId, {
-      status: 'failed',
-      error: result.error ?? 'unknown',
-      attempts: 1,
-    });
-    console.error(`forward ${order.id} FAILED: ${result.error}`);
-  }
-}
 
 async function refreshAccountsForAuthorization(
   env: Env,

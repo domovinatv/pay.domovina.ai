@@ -175,7 +175,7 @@ footer {
 
 interface ShellOptions {
   title: string;
-  tab: 'events' | 'orders' | 'forwards' | 'intents' | 'wallets' | 'sybil';
+  tab: 'events' | 'orders' | 'forwards' | 'intents' | 'wallets' | 'sybil' | 'whitelist';
   body: string;
 }
 
@@ -288,6 +288,7 @@ function renderShell({ title, tab, body }: ShellOptions): string {
     : tab === 'forwards' ? 'Safe forwards'
     : tab === 'wallets' ? 'Self-custody wallets'
     : tab === 'sybil' ? 'Sybil dashboard'
+    : tab === 'whitelist' ? 'Payout whitelist'
     : 'Payment intents';
   return `<!doctype html>
 <html lang="hr">
@@ -317,6 +318,7 @@ ${TOAST_JS}
   ${t('intents', 'Payment intents', '/admin/intents')}
   ${t('wallets', 'Wallets', '/admin/wallets')}
   ${t('sybil', 'Sybil', '/admin/sybil')}
+  ${t('whitelist', 'Whitelist', '/admin/whitelist')}
 </nav>
 <main>${body}</main>
 <footer>
@@ -664,6 +666,7 @@ export function renderForwardsPage(): string {
     <option value="submitted">submitted</option>
     <option value="confirmed">confirmed</option>
     <option value="failed">failed</option>
+    <option value="blocked">blocked (whitelist)</option>
   </select>
   <button type="button" id="refresh">↻ Osvježi</button>
   <button type="button" id="auto">Auto: OFF</button>
@@ -717,7 +720,8 @@ async function load() {
   }
   let html = "";
   for (const f of data.items) {
-    const pill = f.status === "confirmed" ? "ok" : f.status === "failed" ? "bad" : "warn";
+    const pill = f.status === "confirmed" ? "ok"
+      : (f.status === "failed" || f.status === "blocked") ? "bad" : "warn";
     const txCell = f.tx_hash
       ? '<a class="mono" href="https://gnosisscan.io/tx/'+esc(f.tx_hash)+'" target="_blank" rel="noopener">'+esc(short(f.tx_hash,10))+'</a>'
       : '<span class="dim">—</span>';
@@ -1069,7 +1073,9 @@ function wireForm() {
     } catch (err) {
       const errDiv = document.createElement('div');
       errDiv.className = 'form-error';
-      errDiv.textContent = 'Greška: ' + esc(err.message);
+      errDiv.textContent = err.message === 'target_not_whitelisted'
+        ? 'Adresa nije na payout whitelisti tenanta — dodaj je na kartici Whitelist pa pokušaj ponovno.'
+        : 'Greška: ' + esc(err.message);
       form.insertBefore(errDiv, form.firstChild);
       submitBtn.disabled = false;
       submitBtn.textContent = 'Kreiraj intent';
@@ -1364,3 +1370,204 @@ function escapeHtml(s: string): string {
     ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]!),
   );
 }
+
+/// Payout-whitelist console (ADR 0016). Everything the operator needs to keep
+/// the fail-closed forward gate correct: which addresses a tenant may be paid
+/// on, which campaigns exist, and an append-only record of who changed what.
+export function renderWhitelistPage(): string {
+  const body = `
+<h1>Payout whitelist</h1>
+<p class="dim" style="margin-top:-.5rem;margin-bottom:1rem;font-size:.9rem">
+  EURe napušta MPT Safe <strong>samo</strong> ako adresa (a) odgovara
+  odredištu unaprijed kreiranog intenta / registrirane kampanje i (b) stoji na
+  ovoj listi. Sve ostalo ostaje parkirano u Safe-u sa statusom
+  <span class="mono">blocked</span>. Uklanjanje adrese djeluje odmah — i na
+  intente koji su već izdani.
+</p>
+<div class="controls">
+  <label for="tenant">Tenant:</label>
+  <select id="tenant"></select>
+  <button type="button" id="refresh">↻ Osvježi</button>
+  <label for="showRevoked" style="margin-left:1rem">
+    <input type="checkbox" id="showRevoked" /> prikaži i opozvane
+  </label>
+</div>
+
+<h2 style="margin-top:1.5rem">Provjeri adresu</h2>
+<div class="controls">
+  <input type="text" id="checkAddr" placeholder="0x…" size="46" class="mono" />
+  <button type="button" id="checkBtn">Provjeri</button>
+  <span id="checkResult" class="mono"></span>
+</div>
+
+<h2 style="margin-top:1.5rem">Dopuštene payout adrese</h2>
+<div class="controls">
+  <input type="text" id="newAddr" placeholder="0x…" size="46" class="mono" />
+  <input type="text" id="newLabel" placeholder="oznaka (npr. kampanjski Safe)" size="30" />
+  <button type="button" id="addBtn">+ Dodaj</button>
+</div>
+<div class="table-wrap">
+  <table>
+    <thead><tr>
+      <th>Adresa</th><th>Oznaka</th><th>Izvor</th><th>Dodano</th><th>Tko</th><th></th>
+    </tr></thead>
+    <tbody id="addrRows"><tr><td colspan="6" class="empty">Učitavam…</td></tr></tbody>
+  </table>
+</div>
+
+<h2 style="margin-top:1.5rem">Kampanje (<span class="mono">cmp:</span> QR)</h2>
+<div class="controls">
+  <input type="text" id="newCampId" placeholder="campaign_id" size="24" class="mono" />
+  <input type="text" id="newCampSafe" placeholder="0x… Safe kampanje" size="46" class="mono" />
+  <input type="text" id="newCampLabel" placeholder="oznaka" size="24" />
+  <button type="button" id="addCampBtn">+ Registriraj</button>
+</div>
+<div class="table-wrap">
+  <table>
+    <thead><tr>
+      <th>Campaign id</th><th>Safe</th><th>Oznaka</th><th>Registrirano</th><th>Status</th><th></th>
+    </tr></thead>
+    <tbody id="campRows"><tr><td colspan="6" class="empty">Učitavam…</td></tr></tbody>
+  </table>
+</div>
+
+<h2 style="margin-top:1.5rem">Audit log</h2>
+<div class="table-wrap">
+  <table>
+    <thead><tr>
+      <th>Kad</th><th>Akcija</th><th>Adresa</th><th>Tko</th><th>Detalj</th>
+    </tr></thead>
+    <tbody id="auditRows"><tr><td colspan="5" class="empty">Učitavam…</td></tr></tbody>
+  </table>
+</div>
+${WHITELIST_SCRIPT}`;
+  return renderShell({ title: 'Payout whitelist', tab: 'whitelist', body });
+}
+
+const WHITELIST_SCRIPT = `<script>
+const fmtU = (u) => u ? new Date(u*1000).toLocaleString('hr-HR',{dateStyle:'short',timeStyle:'medium'}) : '—';
+const escW = (s) => String(s==null?'':s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const tenantSel = document.getElementById('tenant');
+
+async function loadTenants() {
+  const r = await fetch('/admin/api/tenants');
+  const d = await r.json();
+  tenantSel.innerHTML = d.tenants.map(t =>
+    '<option value="' + escW(t.id) + '">' + escW(t.id) + ' — ' + escW(t.name) +
+    ' (' + t.address_count + ' adr, ' + t.campaign_count + ' kmp)' +
+    (t.status !== 'active' ? ' ⚠ ' + escW(t.status) : '') + '</option>').join('');
+  await loadAll();
+}
+
+function tenant() { return tenantSel.value; }
+
+async function loadAddresses() {
+  const all = document.getElementById('showRevoked').checked ? '?all=1' : '';
+  const r = await fetch('/admin/api/tenants/' + encodeURIComponent(tenant()) + '/addresses' + all);
+  const d = await r.json();
+  const tb = document.getElementById('addrRows');
+  if (!d.addresses.length) { tb.innerHTML = '<tr><td colspan="6" class="empty">Nema adresa</td></tr>'; return; }
+  tb.innerHTML = d.addresses.map(a =>
+    '<tr' + (a.revoked_at ? ' style="opacity:.45"' : '') + '>' +
+    '<td class="mono">' + escW(a.address) + '</td>' +
+    '<td>' + escW(a.label) + '</td>' +
+    '<td>' + escW(a.source) + '</td>' +
+    '<td>' + fmtU(a.created_at) + '</td>' +
+    '<td>' + escW(a.created_by) + '</td>' +
+    '<td>' + (a.revoked_at
+      ? 'opozvano ' + fmtU(a.revoked_at)
+      : '<button type="button" data-addr="' + escW(a.address) + '" class="revoke">Ukloni</button>') +
+    '</td></tr>').join('');
+  tb.querySelectorAll('button.revoke').forEach(b => b.onclick = () => revoke(b.dataset.addr));
+}
+
+async function loadCampaigns() {
+  const r = await fetch('/admin/api/tenants/' + encodeURIComponent(tenant()) + '/campaigns');
+  const d = await r.json();
+  const tb = document.getElementById('campRows');
+  if (!d.campaigns.length) { tb.innerHTML = '<tr><td colspan="6" class="empty">Nema kampanja</td></tr>'; return; }
+  tb.innerHTML = d.campaigns.map(k =>
+    '<tr' + (k.revoked_at ? ' style="opacity:.45"' : '') + '>' +
+    '<td class="mono">' + escW(k.campaign_id) + '</td>' +
+    '<td class="mono">' + escW(k.safe_address) + '</td>' +
+    '<td>' + escW(k.label) + '</td>' +
+    '<td>' + fmtU(k.created_at) + '</td>' +
+    '<td>' + (k.revoked_at ? 'opozvana' : 'aktivna') + '</td>' +
+    '<td>' + (k.revoked_at ? '' :
+      '<button type="button" data-cid="' + escW(k.campaign_id) + '" class="revokeCamp">Ukloni</button>') +
+    '</td></tr>').join('');
+  tb.querySelectorAll('button.revokeCamp').forEach(b => b.onclick = () => revokeCamp(b.dataset.cid));
+}
+
+async function loadAudit() {
+  const r = await fetch('/admin/api/tenants/audit?tenant=' + encodeURIComponent(tenant()) + '&limit=100');
+  const d = await r.json();
+  const tb = document.getElementById('auditRows');
+  if (!d.entries.length) { tb.innerHTML = '<tr><td colspan="5" class="empty">Prazno</td></tr>'; return; }
+  tb.innerHTML = d.entries.map(e =>
+    '<tr><td>' + fmtU(e.at) + '</td>' +
+    '<td class="mono">' + escW(e.action) + '</td>' +
+    '<td class="mono">' + escW(e.address) + '</td>' +
+    '<td>' + escW(e.actor) + '</td>' +
+    '<td class="mono" style="font-size:.75rem">' + escW(e.detail) + '</td></tr>').join('');
+}
+
+function loadAll() { return Promise.all([loadAddresses(), loadCampaigns(), loadAudit()]); }
+
+async function revoke(addr) {
+  if (!confirm('Ukloniti ' + addr + ' s whiteliste? Buduće uplate na tu adresu bit će blokirane.')) return;
+  const r = await fetch('/admin/api/tenants/' + encodeURIComponent(tenant()) + '/addresses/' + addr, { method: 'DELETE' });
+  if (!r.ok) { alert('Greška: ' + await r.text()); return; }
+  await loadAll();
+}
+
+async function revokeCamp(cid) {
+  if (!confirm('Ukloniti kampanju ' + cid + '?')) return;
+  const r = await fetch('/admin/api/tenants/' + encodeURIComponent(tenant()) + '/campaigns/' + encodeURIComponent(cid), { method: 'DELETE' });
+  if (!r.ok) { alert('Greška: ' + await r.text()); return; }
+  await loadAll();
+}
+
+document.getElementById('addBtn').onclick = async () => {
+  const address = document.getElementById('newAddr').value.trim();
+  const label = document.getElementById('newLabel').value.trim();
+  const r = await fetch('/admin/api/tenants/' + encodeURIComponent(tenant()) + '/addresses', {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ address: address, label: label }),
+  });
+  if (!r.ok) { alert('Greška: ' + await r.text()); return; }
+  document.getElementById('newAddr').value = '';
+  document.getElementById('newLabel').value = '';
+  await loadAll();
+};
+
+document.getElementById('addCampBtn').onclick = async () => {
+  const r = await fetch('/admin/api/tenants/' + encodeURIComponent(tenant()) + '/campaigns', {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      campaign_id: document.getElementById('newCampId').value.trim(),
+      safe_address: document.getElementById('newCampSafe').value.trim(),
+      label: document.getElementById('newCampLabel').value.trim(),
+    }),
+  });
+  if (!r.ok) { alert('Greška: ' + await r.text()); return; }
+  document.getElementById('newCampId').value = '';
+  document.getElementById('newCampSafe').value = '';
+  document.getElementById('newCampLabel').value = '';
+  await loadAll();
+};
+
+document.getElementById('checkBtn').onclick = async () => {
+  const a = document.getElementById('checkAddr').value.trim();
+  const out = document.getElementById('checkResult');
+  const r = await fetch('/admin/api/tenants/' + encodeURIComponent(tenant()) + '/check/' + a);
+  if (!r.ok) { out.textContent = '⚠ ' + (await r.json()).error; return; }
+  const d = await r.json();
+  out.textContent = d.allowed ? '✓ dopuštena (izvor: ' + d.source + ')' : '✗ NIJE na whitelisti';
+};
+
+document.getElementById('refresh').onclick = loadAll;
+document.getElementById('showRevoked').onchange = loadAddresses;
+tenantSel.onchange = loadAll;
+loadTenants();
+</script>`;

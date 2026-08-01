@@ -64,6 +64,10 @@ export interface StageResult {
   mint_tx_hashes: string[];
   forward_status: MoneriumForwardRow['status'] | null;
   forward_tx_hash: string | null;
+  /// Why the forward did not happen. `not_whitelisted:<reason>` when the
+  /// tenant payout whitelist refused the destination (forward_status =
+  /// 'blocked'); an RPC/chain error string when it failed for other reasons.
+  forward_error: string | null;
   rejected_reason: string | null;
 }
 
@@ -134,6 +138,7 @@ export function computeStage(input: StageInput): StageResult {
     mint_tx_hashes: mintTxHashes,
     forward_status: forward?.status ?? null,
     forward_tx_hash: forward?.tx_hash ?? null,
+    forward_error: forward?.error ?? null,
     rejected_reason: rejectedReason,
   };
 }
@@ -157,7 +162,12 @@ function resolveStage(
         case 'confirmed': return 'settled';
         case 'submitted':
         case 'pending': return 'forwarding';
-        case 'failed': return 'minted'; // minted but stuck — step carries `failed`
+        // Minted but stuck — the step carries `failed` and `forward_error`
+        // says whether the chain refused it ('failed') or our own payout
+        // whitelist did ('blocked'). Money is provably in the MPT Safe either
+        // way, so the honest stage is the same.
+        case 'failed':
+        case 'blocked': return 'minted';
       }
     }
     return forwardExpected ? 'minted' : 'settled';
@@ -210,10 +220,14 @@ function buildSteps(args: {
     steps.push({
       key: 'forwarding', custodian: 'relay',
       status: !forward ? 'waiting'
-        : forward.status === 'failed' ? 'failed'
+        : forward.status === 'failed' || forward.status === 'blocked' ? 'failed'
         : forward.status === 'confirmed' ? 'proven'
         : 'in_progress',
-      at: forward && (forward.status === 'confirmed' || forward.status === 'failed')
+      at: forward && (
+        forward.status === 'confirmed'
+        || forward.status === 'failed'
+        || forward.status === 'blocked'
+      )
         ? forward.updated_at
         : null,
       tx_hash: forward?.tx_hash ?? null,

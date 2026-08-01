@@ -2,7 +2,11 @@ import type { MoneriumOrder } from './types';
 
 /// Hex regex for an EVM address (40 hex chars, case-insensitive). We don't
 /// enforce EIP-55 checksum because banks may upper/lowercase memo en route.
-const ADDR_RE = /0x[0-9a-fA-F]{40}/;
+///
+/// The trailing negative lookahead is load-bearing: without it a longer hex
+/// run (e.g. a 64-hex tx hash pasted into the memo) matched its first 40
+/// characters and produced a plausible-looking but WRONG address.
+const ADDR_RE = /0x[0-9a-fA-F]{40}(?![0-9a-fA-F])/;
 
 /// Pull the browser session id out of fields that survive a SEPA round-trip.
 ///
@@ -44,11 +48,16 @@ export function extractSessionId(order: MoneriumOrder | null): string | null {
 /// `referenceNumber` if memo had no usable address. Used by the webhook
 /// handler.
 export function extractRoutingFromOrder(order: MoneriumOrder | null): RoutingTarget {
-  if (!order) return { target: null, sid: null, campaignId: null, prefix: null };
+  if (!order) {
+    return { target: null, diagnosticTarget: null, sid: null, campaignId: null, prefix: null };
+  }
   const fromMemo = extractRoutingTarget(order.memo ?? null);
   if (fromMemo.target) return fromMemo;
   const fromRef = extractRoutingTarget(order.referenceNumber ?? null);
-  return fromRef.target ? fromRef : fromMemo;
+  if (fromRef.target) return fromRef;
+  // Neither field is routable. Keep whichever one at least saw an address, so
+  // the parked forward records what the payer actually typed.
+  return fromMemo.diagnosticTarget ? fromMemo : fromRef.diagnosticTarget ? fromRef : fromMemo;
 }
 
 /// Sender (counterpart) of an inbound SEPA "issue" order, as exposed by
@@ -68,9 +77,17 @@ export function extractSenderFromOrder(order: MoneriumOrder | null): SenderInfo 
 }
 
 export interface RoutingTarget {
-  /// Lowercased 0x-prefixed EVM address parsed from the memo. Null if memo
-  /// has no recognizable routing prefix or no valid address found.
+  /// Lowercased 0x-prefixed EVM address the rail is WILLING to route on.
+  /// Only filled for the `mpt:` and `cmp:` prefixes — a bare `0x…` or a
+  /// legacy `gnosis:` memo yields null here (see `diagnosticTarget`).
+  ///
+  /// A non-null value is NOT an authorisation: it still has to pass
+  /// `authorizeForward` (binding + tenant whitelist) before value moves.
   target: string | null;
+  /// Any address found in the memo, regardless of prefix — diagnostics only.
+  /// Logged and stored so an operator can see what a rejected payer typed,
+  /// but never fed to `forwardViaSafe`.
+  diagnosticTarget: string | null;
   /// Session id extracted from `?sid=…` / `?sid.…` / `sid:…` token; null if absent.
   sid: string | null;
   /// Campaign id extracted from `?id=…` (the `cmp:` permanent-QR protocol); null
@@ -80,32 +97,43 @@ export interface RoutingTarget {
   prefix: 'mpt' | 'gnosis' | 'cmp' | null;
 }
 
+/// Prefixes that may produce a routing target at all. `gnosis:` was the
+/// original user-facing QR scheme and bare `0x…` was a last-resort fallback;
+/// both are now diagnostics-only, because either one let any SEPA payer name
+/// an arbitrary destination in free-text remittance (ADR 0016).
+const ROUTABLE_PREFIXES = new Set(['mpt', 'cmp']);
+
 /// Parses an MPT routing instruction out of the Monerium webhook memo. Memo
 /// shape options accepted (all SEPA-safe character set after = → . mapping):
 ///
-///   mpt:0x<addr>?sid=<id>     (preferred — branded, per-intent)
-///   mpt:0x<addr>?sid.<id>     (post-SEPA-mapping form)
-///   gnosis:0x<addr>?sid=<id>  (legacy; user-facing QR still emits this)
-///   gnosis:0x<addr>           (bare wallet, no session marker)
-///   cmp:0x<safe>?id=<campaign>(PERMANENT campaign QR — many payments, one QR;
-///                              0x = campaign Safe forward target, id = campaign)
-///   0x<addr>                  (last-resort fallback — accept bare address)
+///   mpt:0x<addr>?sid=<id>     (routable — branded, per-intent)
+///   mpt:0x<addr>?sid.<id>     (routable — post-SEPA-mapping form)
+///   cmp:0x<safe>?id=<campaign>(routable — PERMANENT campaign QR: many
+///                              payments, one QR; 0x = campaign Safe forward
+///                              target, id = campaign)
+///   gnosis:0x<addr>[?sid=<id>](DIAGNOSTIC ONLY since ADR 0016 — legacy scheme)
+///   0x<addr>                  (DIAGNOSTIC ONLY since ADR 0016 — bare fallback)
 ///
-/// Returns `{target: null, ...}` when no usable address was found — webhook
-/// handler then leaves EURe parked in the Safe and logs `no_routing_target`
-/// so it can be reconciled manually via Safe UI.
+/// `target` is filled only for the routable prefixes. Everything else lands in
+/// `diagnosticTarget`, so the webhook handler leaves EURe parked in the Safe
+/// (`unroutable_prefix`) while an operator can still see what was typed and
+/// reconcile manually via the Safe UI.
 export function extractRoutingTarget(
   memo: string | null | undefined,
 ): RoutingTarget {
-  if (!memo) return { target: null, sid: null, campaignId: null, prefix: null };
+  if (!memo) {
+    return { target: null, diagnosticTarget: null, sid: null, campaignId: null, prefix: null };
+  }
   let prefix: 'mpt' | 'gnosis' | 'cmp' | null = null;
   if (/^mpt:/i.test(memo)) prefix = 'mpt';
   else if (/^gnosis:/i.test(memo)) prefix = 'gnosis';
   else if (/^cmp:/i.test(memo)) prefix = 'cmp';
   const addrMatch = memo.match(ADDR_RE);
-  const target = addrMatch ? addrMatch[0].toLowerCase() : null;
+  const diagnosticTarget = addrMatch ? addrMatch[0].toLowerCase() : null;
+  const routable = prefix !== null && ROUTABLE_PREFIXES.has(prefix);
   return {
-    target,
+    target: routable ? diagnosticTarget : null,
+    diagnosticTarget,
     sid: parseSidFromText(memo),
     campaignId: parseCampaignIdFromText(memo),
     prefix,

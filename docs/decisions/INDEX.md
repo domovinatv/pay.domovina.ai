@@ -52,6 +52,7 @@ history.
 | [0013](0013-passkey-as-identity-safe-as-account.md) | Passkey = identity, Safe = account (one daily passkey, many accounts) | 2026-06-07 | ✅ Accepted (direction) | 🟢 First slice coded (single-identity creation + simplified homepage); multi-account next. Supersedes 0011 name=address as default |
 | [0014](0014-mobile-wallet-baseline-and-stack.md) | Native mobile wallet: baseline (fork safe-wallet-monorepo) & stack (RN/Expo) | 2026-06-08 | 🔬 Proposed (leaning) | ⏳ Local toolchain proven (web+iOS+Android build/run on M4 Pro); Safe-monorepo fork + passkey-owner port not started |
 | [0015](0015-runtime-brand-resolution-and-external-brand-repos.md) | Runtime brand resolution (hostname) + external repo for flagship brands | 2026-06-15 | ✅ Accepted (partial) | 🟢 Resolver shipped (`45b49d5`); `ship:multi` to prod paused; first external repo live (`edemokracija/novcanik-prototip`) |
+| [0016](0016-tenant-payout-whitelist.md) | Tenant payout whitelist: fail-closed forward rail (binding + whitelist, no more arbitrary SEPA-reference destinations) | 2026-08-01 | ✅ Accepted | 🟢 Backend shipped (migrations 0013/0014, `authorizeForward`, admin console, 62 new tests); on-chain Zodiac scoping (`safe-tx/006`) prepared but NOT executed |
 
 ---
 

@@ -6,6 +6,8 @@ import { generateSid } from './sid';
 import { buildEpcText } from './epc';
 import { computeStage, confirmForwardIfMined, loadStageContext } from './stage';
 import type { StageResult } from './stage';
+import { resolveRequestTenant } from '../tenants/auth';
+import { getCampaign, isAddressWhitelisted } from '../tenants/db';
 
 /// Public, unauthenticated intent API. Mountable into the root Hono app
 /// via `app.route('/api/intents', intentApi)`. Phase 1 is polling-only;
@@ -51,6 +53,21 @@ export function buildIntentApi(): Hono<{ Bindings: Env }> {
     if (!ADDR_RE.test(target)) {
       return c.json({ error: 'invalid_target_address' }, 400);
     }
+    // Which tenant is asking. Soft by default (no key → default tenant); flip
+    // INTENT_REQUIRE_TENANT_KEY=1 once every client ships a key.
+    const tenant = await resolveRequestTenant(c.env, c.req.raw.headers);
+    if (!tenant.ok) {
+      return c.json({ error: tenant.error }, tenant.error === 'tenant_suspended' ? 403 : 401);
+    }
+    // Fail fast on a destination the forward gate would refuse anyway. This is
+    // UX, not the security boundary — `authorizeForward` re-checks at forward
+    // time, because an address can be revoked between intent and payment.
+    if (!(await isAddressWhitelisted(c.env, tenant.tenantId, target))) {
+      return c.json(
+        { error: 'target_not_whitelisted', tenant_id: tenant.tenantId, target_address: target.toLowerCase() },
+        403,
+      );
+    }
     const amountEur = parseAmount(body.amount_eur);
     if (amountEur === null) {
       return c.json({ error: 'invalid_amount_eur' }, 400);
@@ -66,7 +83,7 @@ export function buildIntentApi(): Hono<{ Bindings: Env }> {
     if (body.sid !== undefined && !SID_RE.test(body.sid)) {
       return c.json({ error: 'invalid_sid' }, 400);
     }
-    const sid = await insertWithRetry(c.env, target, amountCents, ttl, body);
+    const sid = await insertWithRetry(c.env, target, amountCents, ttl, body, tenant.tenantId);
     if (sid === 'conflict') return c.json({ error: 'sid_already_exists' }, 409);
     if (!sid) return c.json({ error: 'sid_collision_after_retries' }, 500);
     const intent = await getIntent(c.env, sid);
@@ -85,13 +102,28 @@ export function buildIntentApi(): Hono<{ Bindings: Env }> {
   // `cmp:0x<campaignSafe>?id=<campaignId>`. Many payments can use the same QR;
   // each inbound Monerium order is forwarded to the Safe and reported to the
   // merchant as a DISTINCT contribution (see emitCampaignContributionWebhook).
-  // No DB row is created here — it's a pure, idempotent QR generator.
-  api.get('/campaign-qr', (c) => {
+  // No DB row is created here — it's a pure, idempotent QR generator over the
+  // tenant_campaigns registry. The campaign MUST be registered first (admin:
+  // POST /admin/api/tenants/:id/campaigns), otherwise the QR would print a
+  // reference that the forward gate refuses on every single payment.
+  api.get('/campaign-qr', async (c) => {
     const target = (c.req.query('target') ?? '').trim();
     const id = (c.req.query('id') ?? '').trim();
     const label = (c.req.query('label') ?? '').trim();
     if (!ADDR_RE.test(target)) return c.json({ error: 'invalid_target_address' }, 400);
     if (!/^[A-Za-z0-9_-]{6,64}$/.test(id)) return c.json({ error: 'invalid_campaign_id' }, 400);
+    const campaign = await getCampaign(c.env, id);
+    if (!campaign) return c.json({ error: 'campaign_not_registered', campaign_id: id }, 404);
+    if (campaign.safe_address.toLowerCase() !== target.toLowerCase()) {
+      return c.json(
+        {
+          error: 'campaign_target_mismatch',
+          campaign_id: id,
+          registered_address: campaign.safe_address,
+        },
+        409,
+      );
+    }
     // Optional prefilled amount. Absent/blank → reusable, payer-entered amount.
     // When present it's only a PREFILL — the payer can override, and the actual
     // settled amount is what gets recorded (record_sepa_contribution uses the
@@ -216,6 +248,7 @@ async function insertWithRetry(
   amountCents: number,
   ttlSeconds: number,
   body: CreateIntentBody,
+  tenantId: string,
 ): Promise<string | 'conflict' | null> {
   // Client-supplied sid: single attempt. A real duplicate-sid collision is
   // the caller's error (409); ANY OTHER failure (transient D1 error, etc.)
@@ -231,6 +264,7 @@ async function insertWithRetry(
         label: body.label ?? null,
         metadata: body.metadata ?? null,
         ttlSeconds,
+        tenantId,
       });
       return body.sid;
     } catch (e) {
@@ -250,6 +284,7 @@ async function insertWithRetry(
         label: body.label ?? null,
         metadata: body.metadata ?? null,
         ttlSeconds,
+        tenantId,
       });
       return sid;
     } catch (e) {
