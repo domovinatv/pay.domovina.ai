@@ -23,11 +23,22 @@
 --                       wallet_accounts.safe_address). Keeps DOMOVINA Wallet
 --                       self-serve onboarding working without an admin step.
 -- Unknown source names are ignored (fail-closed: they never widen the set).
+-- A tenant is the legal entity that (a) holds the Monerium relationship the
+-- SEPA leg lands on and (b) authorises payout destinations. Those two are the
+-- same fact: money arrives on THAT entity's KYB'd IBAN, so only that entity may
+-- say where it goes on. A second tenant therefore requires its own Monerium
+-- KYC/KYB and its own IBAN — it is not just a row.
 CREATE TABLE tenants (
-  id            TEXT PRIMARY KEY,             -- slug, e.g. 'domovina'
+  id            TEXT PRIMARY KEY,             -- slug, e.g. 'italk'
   name          TEXT NOT NULL,
   status        TEXT NOT NULL DEFAULT 'active', -- 'active' | 'suspended'
   allow_sources TEXT NOT NULL DEFAULT '[]',   -- JSON array of dynamic sources
+  -- SEPA collection leg baked into every QR / EPC payload this tenant issues.
+  -- Stored per tenant rather than hardcoded because tenant #2 collects on a
+  -- DIFFERENT IBAN — its own, after its own Monerium onboarding.
+  beneficiary_name TEXT NOT NULL,             -- e.g. 'ITalk d.o.o.'
+  iban             TEXT NOT NULL,             -- canonical, NO spaces
+  bic              TEXT,                      -- e.g. 'LHVBEE22'
   created_at    INTEGER NOT NULL,
   updated_at    INTEGER NOT NULL
 );

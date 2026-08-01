@@ -41,7 +41,7 @@ Rezultat 2026-08-01:
 | Mjera | Vrijednost |
 |---|---|
 | Monerium ordera / forwarda / intenata | 43 / 41 / 70 |
-| Distinct adresa (unija 4 izvora) | **52** → seeda se 51 (MPT Safe se izostavlja) |
+| Distinct adresa (unija 4 izvora) | **52** → seeda se 51 (MPT Safe se izostavlja) + 2 izričito odobrene = **53** |
 | `wallet_registry` / `wallet_accounts` | 44 zapisa (40 distinct Safeova) / 7 |
 | **Pending intenata** | **0** ← nijedno plaćanje u letu |
 | Oblici referenci | **100 % `mpt:` + `sid`** — 0 × `cmp:`, 0 × goli `0x`, 0 × `gnosis:` |
@@ -67,8 +67,9 @@ npm run db:migrate:prod        # 0013 shema + 0014 seed
 npx wrangler d1 execute pay_domovina --remote --command "
   SELECT (SELECT COUNT(*) FROM tenants) t,
          (SELECT COUNT(*) FROM tenant_payout_addresses) addrs,
-         (SELECT COUNT(*) FROM payment_intents WHERE tenant_id IS NULL) orphans"
-# očekivano: t=1, addrs=51, orphans=0
+         (SELECT COUNT(*) FROM payment_intents WHERE tenant_id IS NULL) orphans,
+         (SELECT iban FROM tenants WHERE id='italk') iban"
+# očekivano: t=1, addrs=53, orphans=0
 
 # 3) tek onda Worker
 npm run deploy
@@ -104,14 +105,14 @@ curl -s -o /dev/null -w '%{http_code}\n' -X POST https://mpt.domovina.ai/api/int
 
 # c) admin provjera adrese
 curl -s -u "$ADMIN_USER:$ADMIN_PASS" \
-  https://mpt.domovina.ai/admin/api/tenants/domovina/check/0x6693a7d19486dc45e9f90fd2d515d972bba2d65e
+  https://mpt.domovina.ai/admin/api/tenants/italk/check/0x6693a7d19486dc45e9f90fd2d515d972bba2d65e
 # očekivano: {"allowed":true,"source":"static"}
 ```
 
 Korak (a) je jedini koji stvarno dokazuje da rail nije zaključan — bez njega
 deploy nije verificiran.
 
-Zatim: `/admin/whitelist` (Basic Auth) mora listati 51 adresu, a
+Zatim: `/admin/whitelist` (Basic Auth) mora listati 53 adrese, a
 `/admin/forwards` dobiva novi filter `blocked`.
 
 **Prvi stvarni end-to-end test:** pošalji 1 € SEPA s referencom iz koraka (a) i
@@ -129,7 +130,7 @@ Ako je problem uži od "sve je krivo":
 | Simptom | Zahvat |
 |---|---|
 | Legitimna adresa blokirana | dodaj je na `/admin/whitelist` — djeluje odmah, bez deploya |
-| Cijela klasa adresa blokirana | provjeri je li tenant `domovina` još `active` i ima li `allow_sources = ["wallet_registry"]` |
+| Cijela klasa adresa blokirana | provjeri je li tenant `italk` još `active` i ima li `allow_sources = ["wallet_registry"]` |
 | Klijent dobiva 401 | `INTENT_REQUIRE_TENANT_KEY` je slučajno `1` — vrati na `0` i redeployaj |
 
 ## 5. Odluke donesene u ovom krugu (i zašto ne drukčije)

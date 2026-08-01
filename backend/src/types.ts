@@ -65,7 +65,7 @@ export interface Env {
   // Tenant payout whitelist (ADR 0016). The forward rail is fail-closed: EURe
   // only leaves the MPT Safe for an address bound to a pre-created intent /
   // registered campaign AND present on that tenant's whitelist.
-  DEFAULT_TENANT_ID: string;          // tenant assumed when a caller sends no API key; default 'domovina'
+  DEFAULT_TENANT_ID: string;          // tenant assumed when a caller sends no API key; default 'italk'
   INTENT_REQUIRE_TENANT_KEY: string;  // "1" → POST /api/intents demands a tenant key; anything else → soft mode
 
   // Operator alerting (src/alerts.ts). Both unset → alerts degrade to console

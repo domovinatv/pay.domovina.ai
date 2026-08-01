@@ -96,7 +96,7 @@ poslane transakcije. Novi forward nastaje isključivo kroz `maybeForward`.
 
 | Tablica | Uloga |
 |---|---|
-| `tenants` | id, naziv, status, `allow_sources` (JSON) |
+| `tenants` | id, naziv, status, `allow_sources` (JSON), **SEPA noga: `beneficiary_name` / `iban` / `bic`** |
 | `tenant_payout_addresses` | statična whitelista; opoziv je mek (`revoked_at`) |
 | `tenant_campaigns` | registar `cmp:` kampanja (id → Safe) |
 | `tenant_api_keys` | sha256 ključa; `pk_` javni, `sk_` tajni |
@@ -110,6 +110,20 @@ Statična lista sama bi blokirala **svakog novog korisnika DOMOVINA Walleta** �
 Safeovi nastaju self-serve i njih je danas 40+, uz rast. Zato tenant može
 uključiti izvor `wallet_registry`: Safe koji je korisnik sam registrirao kroz
 `/api/wallets` (`wallet_registry` ili `wallet_accounts`) je dopušteno odredište.
+
+### Tenant = entitet s Monerium odnosom, ne brand
+
+Tenant nije marketinška oznaka nego **pravna osoba na čiji KYB-ani IBAN sleti
+SEPA noga**. To dvoje je ista činjenica: novac stiže na IBAN tog entiteta, pa
+samo taj entitet smije reći kamo ide dalje. Zato tenant nosi i svoju SEPA nogu
+(`beneficiary_name` / `iban` / `bic`) umjesto dosadašnjih hardkodiranih
+konstanti u `intents/api.ts` i `checkout/page.ts` — drugi tenant naplaćuje na
+**svoj** IBAN, nakon **svog** Monerium KYC/KYB-a, i to je preduvjet a ne redak
+u tablici.
+
+Prvi tenant je `italk` = **ITalk d.o.o.**, IBAN `EE707777000162921128`
+(EE70 7777 0001 6292 1128), BIC `LHVBEE22` — Monerium default račun koji je
+prošao KYB.
 
 Nepoznato ime izvora u `allow_sources` se **ignorira** — nikad ne proširuje
 dopušteni skup (`parseAllowSources`).
@@ -140,12 +154,15 @@ Postrožavanje ne lomi nijedan tok koji je ikad prošao railom.
 
 ## Migracija
 
-`0013_tenants.sql` (shema) + `0014_seed_tenant_domovina.sql` (seed). Seed je
+`0013_tenants.sql` (shema) + `0014_seed_tenant_italk.sql` (seed). Seed je
 **snimka stvarnog stanja iz produkcijskog D1-a**, ne izmišljen popis: unija
 `payment_intents.target_address`, `monerium_forwards.target_address`,
 `wallet_registry.safe_address` i `wallet_accounts.safe_address` = 52 adrese, od
 kojih se seeda 51 (sam MPT Safe se ne seeda — memo prema njemu je `self_noop`
-koji ne miče vrijednost).
+koji ne miče vrijednost), plus **2 izričito odobrene ITalk payout adrese**
+(Matija, 2026-08-01) = **53**. Sve tri odobrene adrese
+(`0x6693a7D1…`, `0xb2AF1Dc5…`, `0x7582f6f5…`) imaju valjan EIP-55 checksum —
+provjereno prije upisa.
 
 U trenutku pisanja migracije: **0 pending intenata**, pa nijedno plaćanje u
 letu ne može biti osirotjeno prijelazom.
@@ -168,12 +185,12 @@ ili JSON API:
 
 ```bash
 curl -u "$ADMIN_USER:$ADMIN_PASS" -X POST \
-  https://mpt.domovina.ai/admin/api/tenants/domovina/addresses \
+  https://mpt.domovina.ai/admin/api/tenants/italk/addresses \
   -H 'content-type: application/json' \
   -d '{"address":"0x…","label":"kampanjski Safe X"}'
 
 # "bi li ova adresa danas prošla i zašto"
-curl -u … https://mpt.domovina.ai/admin/api/tenants/domovina/check/0x…
+curl -u … https://mpt.domovina.ai/admin/api/tenants/italk/check/0x…
 ```
 
 Svaka izmjena piše red u `tenant_audit_log` (akter = Basic Auth korisnik).

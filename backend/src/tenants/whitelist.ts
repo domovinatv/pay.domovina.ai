@@ -77,7 +77,7 @@ export function makeAuthorizeDeps(env: Env): AuthorizeDeps {
 }
 
 export function defaultTenantId(env: Env): string {
-  return (env.DEFAULT_TENANT_ID || '').trim() || 'domovina';
+  return (env.DEFAULT_TENANT_ID || '').trim() || 'italk';
 }
 
 function eq(a: string | null | undefined, b: string | null | undefined): boolean {

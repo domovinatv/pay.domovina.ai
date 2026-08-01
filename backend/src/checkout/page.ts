@@ -2,6 +2,16 @@ import qrcode from 'qrcode-generator';
 
 import type { PaymentIntentRow } from '../intents/db';
 import type { StageResult } from '../intents/stage';
+import { buildEpcText } from '../intents/epc';
+import { formatIban, type SepaDetails } from '../tenants/db';
+
+/// Minimal HTML escape for the tenant-supplied beneficiary block. These values
+/// come from the tenants table (admin-controlled), but they are still data —
+/// never interpolate them raw.
+function escapeAttr(s: string): string {
+  return s.replace(/[&<>"']/g, (c) =>
+    ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c] as string));
+}
 
 /// Server-side render of the EPC text as an inline SVG. Keeps the HTML
 /// fully self-contained (no client-side library, no CDN dependency, no
@@ -44,22 +54,23 @@ function jsonForScript(value: unknown): string {
 export function renderCheckoutPage(
   intent: PaymentIntentRow,
   status: StageResult,
+  sepa: SepaDetails,
 ): string {
   const sid = intent.sid;
   const amount = (intent.amount_cents / 100).toFixed(2);
   const target = intent.target_address;
   const memo = `mpt:${target}?sid=${sid}`;
   // EPC text computed inline since the buyer's QR scan needs the text.
-  // Kept short here; intentResponseJson in api.ts shares the same builder.
-  const epcLines = [
-    'BCD', '002', '1', 'SCT', 'LHVBEE22',
-    'ITalk d.o.o.',
-    'EE7077770001629211 28'.replace(/\s+/g, ''),
-    `EUR${amount}`,
-    'OTHR',
-    memo,
-  ];
-  const epcText = epcLines.join('\n');
+  // Beneficiary block comes from the intent's TENANT (migration 0013/0014),
+  // never hardcoded — tenant #2 collects on its own Monerium IBAN.
+  const epcText = buildEpcText({
+    beneficiaryName: sepa.beneficiaryName,
+    iban: sepa.iban,
+    amountEur: intent.amount_cents / 100,
+    purposeCode: 'OTHR',
+    remittanceInfo: memo,
+    bic: sepa.bic,
+  });
   // Embed initial snapshot into the page so JS doesn't need to fetch on load.
   const initialState = {
     sid,
@@ -268,8 +279,8 @@ footer a { color: var(--navy); text-decoration: none; font-weight: 600; }
     <div class="detail-rows">
       <div class="row"><span class="label">Primatelj wallet</span><span class="value" id="targetVal">—</span></div>
       <div class="row"><span class="label">SEPA reference</span><span class="value" id="memoVal">—</span></div>
-      <div class="row"><span class="label">IBAN</span><span class="value">EE70 7777 0001 6292 1128</span></div>
-      <div class="row"><span class="label">Primatelj</span><span class="value">ITalk d.o.o.</span></div>
+      <div class="row"><span class="label">IBAN</span><span class="value">${escapeAttr(formatIban(sepa.iban))}</span></div>
+      <div class="row"><span class="label">Primatelj</span><span class="value">${escapeAttr(sepa.beneficiaryName)}</span></div>
       <div class="row"><span class="label">Sesija</span><span class="value" id="sidVal">—</span></div>
     </div>
   </div>

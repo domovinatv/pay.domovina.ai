@@ -26,12 +26,12 @@ function harness(over: Partial<ForwardDeps> = {}): { deps: ForwardDeps; rec: Rec
   const deps: ForwardDeps = {
     authorize: {
       getIntentBySid: async (sid) =>
-        sid === 'abc123def456' ? { target_address: PAYEE, tenant_id: 'domovina' } : null,
+        sid === 'abc123def456' ? { target_address: PAYEE, tenant_id: 'italk' } : null,
       getCampaignById: async () => null,
       getTenantStatus: async () => 'active',
       isWhitelisted: async (_t, addr) => addr.toLowerCase() === PAYEE,
       safeAddress: SAFE,
-      defaultTenantId: 'domovina',
+      defaultTenantId: 'italk',
     },
     getForwardByOrder: async () => null,
     insertForward: async (args) => {
@@ -101,7 +101,7 @@ describe('handleForward — authorised', () => {
     const { deps, rec } = harness({
       authorize: {
         ...harness().deps.authorize,
-        getIntentBySid: async () => ({ target_address: SAFE, tenant_id: 'domovina' }),
+        getIntentBySid: async () => ({ target_address: SAFE, tenant_id: 'italk' }),
       },
     });
     await handleForward(deps, order(`mpt:${SAFE}?sid=abc123def456`));
@@ -195,7 +195,7 @@ describe('handleForward — fail-closed: no value ever leaves the Safe', () => {
     expect(rec.alerts).toHaveLength(1);
     expect(rec.alerts[0]).toContain('target_mismatch');
     expect(rec.audits).toEqual([
-      { action: 'forward.blocked', address: ATTACKER, tenantId: 'domovina' },
+      { action: 'forward.blocked', address: ATTACKER, tenantId: 'italk' },
     ]);
     expect(rec.blocked).toEqual([{ reason: 'target_mismatch', orderId: 'ord-1' }]);
   });

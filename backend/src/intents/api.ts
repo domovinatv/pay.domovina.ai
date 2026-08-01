@@ -7,7 +7,8 @@ import { buildEpcText } from './epc';
 import { computeStage, confirmForwardIfMined, loadStageContext } from './stage';
 import type { StageResult } from './stage';
 import { resolveRequestTenant } from '../tenants/auth';
-import { getCampaign, isAddressWhitelisted } from '../tenants/db';
+import { defaultTenantId } from '../tenants/whitelist';
+import { getCampaign, getSepaDetails, isAddressWhitelisted, type SepaDetails } from '../tenants/db';
 
 /// Public, unauthenticated intent API. Mountable into the root Hono app
 /// via `app.route('/api/intents', intentApi)`. Phase 1 is polling-only;
@@ -29,12 +30,6 @@ interface CreateIntentBody {
 const ADDR_RE = /^0x[0-9a-fA-F]{40}$/;
 const SID_RE = /^[A-Za-z0-9_-]{6,64}$/;
 
-/// MPT main-rail LHV IBAN + beneficiary name baked into the EPC payload.
-/// Hardcoded here because changing it requires changing the Monerium
-/// dashboard webhook target too — it's an entire-stack reconfiguration.
-const MPT_BENEFICIARY_NAME = 'ITalk d.o.o.';
-const MPT_IBAN = 'EE7077770001629211 28';
-const MPT_BIC = 'LHVBEE22';
 const DEFAULT_TTL_SECONDS = 900; // 15 min — matches PayCek's window
 const MAX_TTL_SECONDS = 86_400;  // 24 h hard cap
 const MAX_AMOUNT_CENTS = 1_000_000; // €10,000 — bigger needs Phase 2 multisig propose
@@ -90,11 +85,12 @@ export function buildIntentApi(): Hono<{ Bindings: Env }> {
     if (!intent) return c.json({ error: 'intent_not_persisted' }, 500);
 
     const origin = new URL(c.req.url).origin;
+    const sepa = await getSepaDetails(c.env, tenant.tenantId);
     const status = computeStage({
       intent, order: null, forward: null,
       now: Math.floor(Date.now() / 1000),
     });
-    return c.json({ ...intentResponseJson(intent, origin), status });
+    return c.json({ ...intentResponseJson(intent, origin, sepa), status });
   });
 
   // Permanent campaign QR (`cmp:` protocol). Stateless: returns a REUSABLE
@@ -138,14 +134,17 @@ export function buildIntentApi(): Hono<{ Bindings: Env }> {
       }
       amountEur = n;
     }
+    // The collection IBAN comes from the campaign's OWN tenant — a second
+    // tenant collects on its own Monerium account, never on ITalk's.
+    const sepa = await getSepaDetails(c.env, campaign.tenant_id);
     const memo = `cmp:${target.toLowerCase()}?id=${id}`;
     const epcText = buildEpcText({
-      beneficiaryName: MPT_BENEFICIARY_NAME,
-      iban: MPT_IBAN,
+      beneficiaryName: sepa.beneficiaryName,
+      iban: sepa.iban,
       amountEur, // null → blank (free), positive → prefilled (still overridable)
       purposeCode: 'OTHR',
       remittanceInfo: memo,
-      bic: MPT_BIC,
+      bic: sepa.bic,
     });
     return c.json({
       campaign_id: id,
@@ -153,9 +152,9 @@ export function buildIntentApi(): Hono<{ Bindings: Env }> {
       label: label || null,
       amount_eur: amountEur !== null ? amountEur.toFixed(2) : null,
       memo,
-      iban: MPT_IBAN,
-      beneficiary_name: MPT_BENEFICIARY_NAME,
-      bic: MPT_BIC,
+      iban: sepa.iban,
+      beneficiary_name: sepa.beneficiaryName,
+      bic: sepa.bic,
       epc_qr_data: epcText,
     });
   });
@@ -165,8 +164,9 @@ export function buildIntentApi(): Hono<{ Bindings: Env }> {
     const intent = await getIntent(c.env, sid);
     if (!intent) return c.json({ error: 'intent_not_found' }, 404);
     const origin = new URL(c.req.url).origin;
+    const sepa = await getSepaDetails(c.env, intent.tenant_id ?? defaultTenantId(c.env));
     const status = await buildIntentStatus(c.env, intent, c.executionCtx);
-    return c.json({ ...intentResponseJson(intent, origin), status });
+    return c.json({ ...intentResponseJson(intent, origin, sepa), status });
   });
 
   // Phase 2 SSE endpoint — currently absent. EventSource will receive a 404
@@ -184,16 +184,17 @@ export function buildIntentApi(): Hono<{ Bindings: Env }> {
 export function intentResponseJson(
   intent: import('./db').PaymentIntentRow,
   origin: string,
+  sepa: SepaDetails,
 ): Record<string, unknown> {
   const memo = `mpt:${intent.target_address}?sid=${intent.sid}`;
   const amountEur = (intent.amount_cents / 100).toFixed(2);
   const epcText = buildEpcText({
-    beneficiaryName: MPT_BENEFICIARY_NAME,
-    iban: MPT_IBAN,
+    beneficiaryName: sepa.beneficiaryName,
+    iban: sepa.iban,
     amountEur: intent.amount_cents / 100,
     purposeCode: 'OTHR',
     remittanceInfo: memo,
-    bic: MPT_BIC,
+    bic: sepa.bic,
   });
   return {
     sid: intent.sid,
@@ -205,10 +206,11 @@ export function intentResponseJson(
     label: intent.label,
     metadata: intent.metadata_json ? JSON.parse(intent.metadata_json) : null,
     memo,
-    iban: MPT_IBAN,
-    beneficiary_name: MPT_BENEFICIARY_NAME,
-    bic: MPT_BIC,
+    iban: sepa.iban,
+    beneficiary_name: sepa.beneficiaryName,
+    bic: sepa.bic,
     epc_qr_data: epcText,
+    tenant_id: intent.tenant_id,
     checkout_url: `${origin}/checkout/${intent.sid}`,
     status_url: `${origin}/api/intents/${intent.sid}`,
     status_stream_url: `${origin}/api/intents/${intent.sid}/stream`,

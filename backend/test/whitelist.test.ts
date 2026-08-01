@@ -27,13 +27,13 @@ function routing(over: Partial<RoutingTarget> = {}): RoutingTarget {
 function deps(over: Partial<AuthorizeDeps> = {}): AuthorizeDeps {
   return {
     getIntentBySid: async (sid) =>
-      sid === 'abc123def456' ? { target_address: PAYEE, tenant_id: 'domovina' } : null,
+      sid === 'abc123def456' ? { target_address: PAYEE, tenant_id: 'italk' } : null,
     getCampaignById: async (id) =>
-      id === 'kampanja-1' ? { tenant_id: 'domovina', safe_address: PAYEE } : null,
-    getTenantStatus: async (id) => (id === 'domovina' ? 'active' : null),
+      id === 'kampanja-1' ? { tenant_id: 'italk', safe_address: PAYEE } : null,
+    getTenantStatus: async (id) => (id === 'italk' ? 'active' : null),
     isWhitelisted: async (_t, addr) => addr.toLowerCase() === PAYEE,
     safeAddress: SAFE,
-    defaultTenantId: 'domovina',
+    defaultTenantId: 'italk',
     ...over,
   };
 }
@@ -47,18 +47,18 @@ async function decide(
 
 describe('authorizeForward — the happy path', () => {
   it('forwards when the sid binds to the intent AND the address is whitelisted', async () => {
-    expect(await decide()).toEqual({ action: 'forward', tenantId: 'domovina' });
+    expect(await decide()).toEqual({ action: 'forward', tenantId: 'italk' });
   });
 
   it('forwards a registered campaign to its registered Safe', async () => {
     const d = await decide({ prefix: 'cmp', sid: null, campaignId: 'kampanja-1' });
-    expect(d).toEqual({ action: 'forward', tenantId: 'domovina' });
+    expect(d).toEqual({ action: 'forward', tenantId: 'italk' });
   });
 
   it('compares addresses case-insensitively on both sides', async () => {
     const d = await decide(
       { target: PAYEE.toUpperCase().replace('0X', '0x') },
-      { getIntentBySid: async () => ({ target_address: PAYEE.toUpperCase(), tenant_id: 'domovina' }) },
+      { getIntentBySid: async () => ({ target_address: PAYEE.toUpperCase(), tenant_id: 'italk' }) },
     );
     expect(d.action).toBe('forward');
   });
@@ -67,7 +67,7 @@ describe('authorizeForward — the happy path', () => {
     const d = await decide({}, {
       getIntentBySid: async () => ({ target_address: PAYEE, tenant_id: null }),
     });
-    expect(d).toEqual({ action: 'forward', tenantId: 'domovina' });
+    expect(d).toEqual({ action: 'forward', tenantId: 'italk' });
   });
 });
 
@@ -114,9 +114,9 @@ describe('authorizeForward — fail-closed refusals', () => {
   it('parks a correctly bound intent whose address is NOT whitelisted', async () => {
     const d = await decide(
       { target: OTHER },
-      { getIntentBySid: async () => ({ target_address: OTHER, tenant_id: 'domovina' }) },
+      { getIntentBySid: async () => ({ target_address: OTHER, tenant_id: 'italk' }) },
     );
-    expect(d).toMatchObject({ action: 'park', reason: 'not_whitelisted', tenantId: 'domovina' });
+    expect(d).toMatchObject({ action: 'park', reason: 'not_whitelisted', tenantId: 'italk' });
   });
 
   it('parks when the tenant is suspended', async () => {
@@ -141,12 +141,12 @@ describe('authorizeForward — self-target no-op', () => {
     const d = await decide(
       { target: SAFE },
       {
-        getIntentBySid: async () => ({ target_address: SAFE, tenant_id: 'domovina' }),
+        getIntentBySid: async () => ({ target_address: SAFE, tenant_id: 'italk' }),
         // Safe is deliberately NOT on the whitelist — no value leaves.
         isWhitelisted: async () => false,
       },
     );
-    expect(d).toEqual({ action: 'self_noop', tenantId: 'domovina' });
+    expect(d).toEqual({ action: 'self_noop', tenantId: 'italk' });
   });
 
   it('still requires the binding — an unbound Safe memo parks', async () => {
@@ -195,72 +195,72 @@ function fakeEnv(rows: FakeRows): Env {
   return { DB: { prepare } } as unknown as Env;
 }
 
-const activeTenant = { id: 'domovina', status: 'active', allow_sources: '["wallet_registry"]' };
+const activeTenant = { id: 'italk', status: 'active', allow_sources: '["wallet_registry"]' };
 
 describe('isAddressWhitelisted', () => {
   it('allows an address on the static list', async () => {
     const env = fakeEnv({
-      staticAddresses: [{ tenant: 'domovina', address: PAYEE, revoked: false }],
+      staticAddresses: [{ tenant: 'italk', address: PAYEE, revoked: false }],
       tenant: activeTenant,
       walletSafes: [],
     });
-    expect(await isAddressWhitelisted(env, 'domovina', PAYEE)).toBe(true);
+    expect(await isAddressWhitelisted(env, 'italk', PAYEE)).toBe(true);
   });
 
   it('is case-insensitive on the input', async () => {
     const env = fakeEnv({
-      staticAddresses: [{ tenant: 'domovina', address: PAYEE, revoked: false }],
+      staticAddresses: [{ tenant: 'italk', address: PAYEE, revoked: false }],
       tenant: activeTenant,
       walletSafes: [],
     });
-    expect(await isAddressWhitelisted(env, 'domovina', PAYEE.toUpperCase().replace('0X', '0x'))).toBe(true);
+    expect(await isAddressWhitelisted(env, 'italk', PAYEE.toUpperCase().replace('0X', '0x'))).toBe(true);
   });
 
   it('refuses a revoked address', async () => {
     const env = fakeEnv({
-      staticAddresses: [{ tenant: 'domovina', address: PAYEE, revoked: true }],
+      staticAddresses: [{ tenant: 'italk', address: PAYEE, revoked: true }],
       tenant: activeTenant,
       walletSafes: [],
     });
-    expect(await isAddressWhitelisted(env, 'domovina', PAYEE)).toBe(false);
+    expect(await isAddressWhitelisted(env, 'italk', PAYEE)).toBe(false);
   });
 
   it('does not leak one tenant’s address to another tenant', async () => {
     const env = fakeEnv({
       staticAddresses: [{ tenant: 'drugi', address: PAYEE, revoked: false }],
-      tenant: { id: 'domovina', status: 'active', allow_sources: '[]' },
+      tenant: { id: 'italk', status: 'active', allow_sources: '[]' },
       walletSafes: [],
     });
-    expect(await isAddressWhitelisted(env, 'domovina', PAYEE)).toBe(false);
+    expect(await isAddressWhitelisted(env, 'italk', PAYEE)).toBe(false);
   });
 
   it('allows a self-registered wallet Safe when the dynamic source is enabled', async () => {
     const env = fakeEnv({ staticAddresses: [], tenant: activeTenant, walletSafes: [PAYEE] });
-    expect(await isAddressWhitelisted(env, 'domovina', PAYEE)).toBe(true);
+    expect(await isAddressWhitelisted(env, 'italk', PAYEE)).toBe(true);
   });
 
   it('refuses the same Safe when the dynamic source is NOT enabled', async () => {
     const env = fakeEnv({
       staticAddresses: [],
-      tenant: { id: 'domovina', status: 'active', allow_sources: '[]' },
+      tenant: { id: 'italk', status: 'active', allow_sources: '[]' },
       walletSafes: [PAYEE],
     });
-    expect(await isAddressWhitelisted(env, 'domovina', PAYEE)).toBe(false);
+    expect(await isAddressWhitelisted(env, 'italk', PAYEE)).toBe(false);
   });
 
   it('refuses everything dynamic for a suspended tenant', async () => {
     const env = fakeEnv({
       staticAddresses: [],
-      tenant: { id: 'domovina', status: 'suspended', allow_sources: '["wallet_registry"]' },
+      tenant: { id: 'italk', status: 'suspended', allow_sources: '["wallet_registry"]' },
       walletSafes: [PAYEE],
     });
-    expect(await isAddressWhitelisted(env, 'domovina', PAYEE)).toBe(false);
+    expect(await isAddressWhitelisted(env, 'italk', PAYEE)).toBe(false);
   });
 
   it('refuses a malformed address without touching the DB', async () => {
     const env = fakeEnv({ staticAddresses: [], tenant: activeTenant, walletSafes: [] });
-    expect(await isAddressWhitelisted(env, 'domovina', 'not-an-address')).toBe(false);
-    expect(await isAddressWhitelisted(env, 'domovina', '0x1234')).toBe(false);
+    expect(await isAddressWhitelisted(env, 'italk', 'not-an-address')).toBe(false);
+    expect(await isAddressWhitelisted(env, 'italk', '0x1234')).toBe(false);
   });
 });
 

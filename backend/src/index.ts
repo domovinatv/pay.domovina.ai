@@ -46,6 +46,8 @@ import {
 import { scanOnchainDonations } from './intents/onchainIndexer';
 import { fetchOgPreview } from './og/preview';
 import { renderCheckoutPage } from './checkout/page';
+import { getSepaDetails } from './tenants/db';
+import { defaultTenantId } from './tenants/whitelist';
 import type { MoneriumWebhookEvent } from './monerium/types';
 
 const app = new Hono<{ Bindings: Env }>();
@@ -408,7 +410,8 @@ app.get('/checkout/:sid', async (c) => {
   const intent = await getIntent(c.env, sid);
   if (!intent) return c.text('intent not found', 404);
   const status = await buildIntentStatus(c.env, intent, c.executionCtx);
-  return c.html(renderCheckoutPage(intent, status));
+  const sepa = await getSepaDetails(c.env, intent.tenant_id ?? defaultTenantId(c.env));
+  return c.html(renderCheckoutPage(intent, status, sepa));
 });
 
 // Branded HTML dashboard at /admin (Basic Auth gated).

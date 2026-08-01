@@ -84,7 +84,7 @@ INTENT_WEBHOOK_URL = "https://api.domovina.ai/functions/v1/pinka-webhook"
 #                                Keep "0" until the Flutter app, wallet PWA and
 #                                e-demokracija all ship a pk_ key, otherwise
 #                                those clients start getting 401.
-DEFAULT_TENANT_ID = "domovina"
+DEFAULT_TENANT_ID = "italk"
 INTENT_REQUIRE_TENANT_KEY = "0"
 
 # MPT routing — Safe + Zodiac Roles Modifier on Gnosis chain (100).

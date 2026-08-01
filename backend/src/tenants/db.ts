@@ -10,8 +10,49 @@ export interface TenantRow {
   status: 'active' | 'suspended';
   /// JSON array of dynamic whitelist sources, e.g. ["wallet_registry"].
   allow_sources: string;
+  /// SEPA collection leg — the Monerium-onboarded account this tenant's QRs
+  /// collect on. Per tenant, not global: tenant #2 collects on ITS OWN IBAN
+  /// after its own Monerium KYC/KYB.
+  beneficiary_name: string;
+  iban: string;   // canonical, no spaces
+  bic: string | null;
   created_at: number;
   updated_at: number;
+}
+
+/// The beneficiary block baked into a tenant's EPC/QR payload.
+export interface SepaDetails {
+  beneficiaryName: string;
+  iban: string;
+  bic: string;
+}
+
+/// ITalk d.o.o. — the first tenant, holder of the Monerium KYB relationship.
+/// Duplicated from migration 0014 ONLY as a last-resort fallback for read
+/// paths (checkout page, status endpoint) so a missing tenant row can never
+/// 500 a page. It is never used to decide where money goes.
+export const FALLBACK_SEPA: SepaDetails = {
+  beneficiaryName: 'ITalk d.o.o.',
+  iban: 'EE707777000162921128',
+  bic: 'LHVBEE22',
+};
+
+export async function getSepaDetails(env: Env, tenantId: string): Promise<SepaDetails> {
+  const t = await getTenant(env, tenantId);
+  if (!t) {
+    console.error(`tenant ${tenantId} has no row — falling back to hardcoded SEPA details`);
+    return FALLBACK_SEPA;
+  }
+  return {
+    beneficiaryName: t.beneficiary_name,
+    iban: t.iban,
+    bic: t.bic ?? '',
+  };
+}
+
+/// IBAN in human 4-char groups for display. Storage stays canonical.
+export function formatIban(iban: string): string {
+  return iban.replace(/\s+/g, '').replace(/(.{4})/g, '$1 ').trim();
 }
 
 export interface PayoutAddressRow {
