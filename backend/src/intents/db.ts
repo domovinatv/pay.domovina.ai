@@ -15,6 +15,10 @@ export interface PaymentIntentRow {
   forward_id: number | null;
   forward_tx_hash: string | null;
   amount_received_cents: number | null;
+  /// Tenant that authorised this intent (migration 0013). NULL only for rows
+  /// created before tenants existed; the forward gate falls back to
+  /// DEFAULT_TENANT_ID for those.
+  tenant_id: string | null;
 }
 
 export interface CreateIntentArgs {
@@ -25,6 +29,7 @@ export interface CreateIntentArgs {
   label?: string | null;
   metadata?: Record<string, unknown> | null;
   ttlSeconds: number;
+  tenantId: string;
 }
 
 export async function createIntent(
@@ -35,8 +40,8 @@ export async function createIntent(
   await env.DB.prepare(
     `INSERT INTO payment_intents
        (sid, target_address, amount_cents, currency, label, metadata_json,
-        state, created_at, expires_at)
-     VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?)`,
+        state, created_at, expires_at, tenant_id)
+     VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?)`,
   )
     .bind(
       args.sid,
@@ -47,6 +52,7 @@ export async function createIntent(
       args.metadata ? JSON.stringify(args.metadata) : null,
       now,
       now + args.ttlSeconds,
+      args.tenantId,
     )
     .run();
 }

@@ -136,6 +136,70 @@ export async function emitCampaignContributionWebhook(
   }
 }
 
+/// Outbound "forward.blocked" webhook. Fires when the tenant payout whitelist
+/// refused a destination, so the merchant learns that money arrived but was
+/// NOT forwarded — instead of the payment silently hanging in `minted`.
+///
+/// The EURe stays in the MPT Safe; this event is informational and carries no
+/// payer PII. Idempotent: webhook-id is stable per Monerium order
+/// (`blk_<orderId>`), same signing scheme as the other two emitters.
+export async function emitForwardBlockedWebhook(
+  env: Env,
+  args: {
+    reason: string;
+    orderId: string;
+    sid: string | null;
+    campaignId: string | null;
+    targetAddress: string | null;
+    amountCents: number | null;
+    tenantId: string | null;
+  },
+): Promise<void> {
+  const url = env.INTENT_WEBHOOK_URL?.trim();
+  const secret = env.INTENT_WEBHOOK_SECRET?.trim();
+  if (!url || !secret) return; // not configured — silent no-op
+
+  const payload = {
+    type: 'forward.blocked',
+    reason: args.reason,
+    monerium_order_id: args.orderId,
+    sid: args.sid,
+    campaign_id: args.campaignId,
+    target_address: args.targetAddress,
+    amount_cents: args.amountCents,
+    tenant_id: args.tenantId,
+    // The funds are safe, just not forwarded — say so explicitly so the
+    // receiver never renders this as a loss.
+    funds_location: 'mpt_safe',
+  };
+  const body = JSON.stringify(payload);
+  const id = `blk_${args.orderId}`;
+  const timestamp = Math.floor(Date.now() / 1000).toString();
+  const keyBytes = decodeWebhookSecret(secret);
+  if (!keyBytes) {
+    console.error('blocked webhook: invalid INTENT_WEBHOOK_SECRET format');
+    return;
+  }
+  const signature = await hmacSha256Base64(keyBytes, `${id}.${timestamp}.${body}`);
+  try {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'webhook-id': id,
+        'webhook-timestamp': timestamp,
+        'webhook-signature': `v1,${signature}`,
+      },
+      body,
+    });
+    if (!res.ok) {
+      console.error(`blocked webhook ${id} → ${url} returned ${res.status}`);
+    }
+  } catch (e) {
+    console.error(`blocked webhook ${id} → ${url} failed: ${e}`);
+  }
+}
+
 function safeParse(s: string): unknown {
   try {
     return JSON.parse(s);

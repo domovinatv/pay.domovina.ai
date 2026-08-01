@@ -61,6 +61,17 @@ export interface Env {
   // domovina-api `pinka-webhook` edge function. See src/intents/outbound.ts.
   INTENT_WEBHOOK_URL: string;       // e.g. "https://api.domovina.ai/functions/v1/pinka-webhook"
   INTENT_WEBHOOK_SECRET: string;    // SECRET — HMAC key (svix-style, optional whsec_ prefix)
+
+  // Tenant payout whitelist (ADR 0016). The forward rail is fail-closed: EURe
+  // only leaves the MPT Safe for an address bound to a pre-created intent /
+  // registered campaign AND present on that tenant's whitelist.
+  DEFAULT_TENANT_ID: string;          // tenant assumed when a caller sends no API key; default 'italk'
+  INTENT_REQUIRE_TENANT_KEY: string;  // "1" → POST /api/intents demands a tenant key; anything else → soft mode
+
+  // Operator alerting (src/alerts.ts). Both unset → alerts degrade to console
+  // warnings; never fatal, never on a money path's critical section.
+  TELEGRAM_BOT_TOKEN: string;       // SECRET — @BotFather token
+  TELEGRAM_CHAT_ID: string;         // SECRET — ops chat id
 }
 
 export interface AccountRow {

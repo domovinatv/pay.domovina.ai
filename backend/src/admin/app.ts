@@ -18,6 +18,7 @@ import {
   listWalletsSharingPhone,
 } from '../wallets/db';
 import { publicWalletView } from '../wallets/api';
+import { mountTenantAdmin } from '../tenants/admin';
 import {
   renderEventDetailPage,
   renderEventsPage,
@@ -172,6 +173,10 @@ export function mountAdminUi(app: Hono<{ Bindings: Env }>): void {
     const clusters = await listSybilClusters(c.env, { limit, offset });
     return c.json({ limit, offset, clusters });
   });
+  // Tenant payout whitelist console + JSON API (ADR 0016). Inherits the same
+  // Basic Auth gate as the rest of /admin/*.
+  mountTenantAdmin(app);
+
   app.get('/admin/api/sybil/phone/:phoneHash', async (c) => {
     const phoneHash = c.req.param('phoneHash');
     if (!/^[0-9a-fA-F]{64}$/.test(phoneHash)) return c.json({ error: 'bad_phone_hash' }, 400);

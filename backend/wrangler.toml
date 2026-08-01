@@ -74,6 +74,19 @@ OTP_API_BASE = "https://otp.domovina.ai"
 # Leave URL empty to disable. See backend/src/intents/outbound.ts.
 INTENT_WEBHOOK_URL = "https://api.domovina.ai/functions/v1/pinka-webhook"
 
+# Tenant payout whitelist (ADR 0016 — docs/decisions/0016-tenant-payout-whitelist.md).
+# The forward rail is FAIL-CLOSED: EURe only leaves the Safe for an address that
+# (a) matches the destination of a pre-created intent / registered campaign and
+# (b) is on that tenant's whitelist. Everything else parks with status `blocked`.
+#
+#   DEFAULT_TENANT_ID          — tenant assumed when a caller sends no API key.
+#   INTENT_REQUIRE_TENANT_KEY  — "1" makes POST /api/intents demand a tenant key.
+#                                Keep "0" until the Flutter app, wallet PWA and
+#                                e-demokracija all ship a pk_ key, otherwise
+#                                those clients start getting 401.
+DEFAULT_TENANT_ID = "italk"
+INTENT_REQUIRE_TENANT_KEY = "0"
+
 # MPT routing — Safe + Zodiac Roles Modifier on Gnosis chain (100).
 # All public; private signer key lives in ROUTER_PRIVATE_KEY secret below.
 GNOSIS_RPC_URL = "https://rpc.gnosischain.com"
@@ -111,3 +124,5 @@ MULTISEND_ADDRESS = "0x9641d764fc13c8B624c04430C7356C1C7C8102e2"
 #   MONERIUM_WEBHOOK_SECRET         # HMAC secret you set in Monerium webhook config
 #   ROUTER_PRIVATE_KEY              # 0x-prefixed 32-byte hex — backend EOA member of EUReForwarder role
 #   PHONE_PEPPER                    # opaque secret string — HMAC key for hashing E.164 phones in wallet_registry
+#   TELEGRAM_BOT_TOKEN              # optional — @BotFather token for blocked-forward alerts
+#   TELEGRAM_CHAT_ID                # optional — ops chat id; both unset = alerts degrade to console warnings

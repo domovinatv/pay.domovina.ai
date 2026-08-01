@@ -6,6 +6,9 @@ import { generateSid } from './sid';
 import { buildEpcText } from './epc';
 import { computeStage, confirmForwardIfMined, loadStageContext } from './stage';
 import type { StageResult } from './stage';
+import { resolveRequestTenant } from '../tenants/auth';
+import { defaultTenantId } from '../tenants/whitelist';
+import { getCampaign, getSepaDetails, isAddressWhitelisted, type SepaDetails } from '../tenants/db';
 
 /// Public, unauthenticated intent API. Mountable into the root Hono app
 /// via `app.route('/api/intents', intentApi)`. Phase 1 is polling-only;
@@ -27,12 +30,6 @@ interface CreateIntentBody {
 const ADDR_RE = /^0x[0-9a-fA-F]{40}$/;
 const SID_RE = /^[A-Za-z0-9_-]{6,64}$/;
 
-/// MPT main-rail LHV IBAN + beneficiary name baked into the EPC payload.
-/// Hardcoded here because changing it requires changing the Monerium
-/// dashboard webhook target too — it's an entire-stack reconfiguration.
-const MPT_BENEFICIARY_NAME = 'ITalk d.o.o.';
-const MPT_IBAN = 'EE7077770001629211 28';
-const MPT_BIC = 'LHVBEE22';
 const DEFAULT_TTL_SECONDS = 900; // 15 min — matches PayCek's window
 const MAX_TTL_SECONDS = 86_400;  // 24 h hard cap
 const MAX_AMOUNT_CENTS = 1_000_000; // €10,000 — bigger needs Phase 2 multisig propose
@@ -51,6 +48,21 @@ export function buildIntentApi(): Hono<{ Bindings: Env }> {
     if (!ADDR_RE.test(target)) {
       return c.json({ error: 'invalid_target_address' }, 400);
     }
+    // Which tenant is asking. Soft by default (no key → default tenant); flip
+    // INTENT_REQUIRE_TENANT_KEY=1 once every client ships a key.
+    const tenant = await resolveRequestTenant(c.env, c.req.raw.headers);
+    if (!tenant.ok) {
+      return c.json({ error: tenant.error }, tenant.error === 'tenant_suspended' ? 403 : 401);
+    }
+    // Fail fast on a destination the forward gate would refuse anyway. This is
+    // UX, not the security boundary — `authorizeForward` re-checks at forward
+    // time, because an address can be revoked between intent and payment.
+    if (!(await isAddressWhitelisted(c.env, tenant.tenantId, target))) {
+      return c.json(
+        { error: 'target_not_whitelisted', tenant_id: tenant.tenantId, target_address: target.toLowerCase() },
+        403,
+      );
+    }
     const amountEur = parseAmount(body.amount_eur);
     if (amountEur === null) {
       return c.json({ error: 'invalid_amount_eur' }, 400);
@@ -66,18 +78,19 @@ export function buildIntentApi(): Hono<{ Bindings: Env }> {
     if (body.sid !== undefined && !SID_RE.test(body.sid)) {
       return c.json({ error: 'invalid_sid' }, 400);
     }
-    const sid = await insertWithRetry(c.env, target, amountCents, ttl, body);
+    const sid = await insertWithRetry(c.env, target, amountCents, ttl, body, tenant.tenantId);
     if (sid === 'conflict') return c.json({ error: 'sid_already_exists' }, 409);
     if (!sid) return c.json({ error: 'sid_collision_after_retries' }, 500);
     const intent = await getIntent(c.env, sid);
     if (!intent) return c.json({ error: 'intent_not_persisted' }, 500);
 
     const origin = new URL(c.req.url).origin;
+    const sepa = await getSepaDetails(c.env, tenant.tenantId);
     const status = computeStage({
       intent, order: null, forward: null,
       now: Math.floor(Date.now() / 1000),
     });
-    return c.json({ ...intentResponseJson(intent, origin), status });
+    return c.json({ ...intentResponseJson(intent, origin, sepa), status });
   });
 
   // Permanent campaign QR (`cmp:` protocol). Stateless: returns a REUSABLE
@@ -85,13 +98,28 @@ export function buildIntentApi(): Hono<{ Bindings: Env }> {
   // `cmp:0x<campaignSafe>?id=<campaignId>`. Many payments can use the same QR;
   // each inbound Monerium order is forwarded to the Safe and reported to the
   // merchant as a DISTINCT contribution (see emitCampaignContributionWebhook).
-  // No DB row is created here — it's a pure, idempotent QR generator.
-  api.get('/campaign-qr', (c) => {
+  // No DB row is created here — it's a pure, idempotent QR generator over the
+  // tenant_campaigns registry. The campaign MUST be registered first (admin:
+  // POST /admin/api/tenants/:id/campaigns), otherwise the QR would print a
+  // reference that the forward gate refuses on every single payment.
+  api.get('/campaign-qr', async (c) => {
     const target = (c.req.query('target') ?? '').trim();
     const id = (c.req.query('id') ?? '').trim();
     const label = (c.req.query('label') ?? '').trim();
     if (!ADDR_RE.test(target)) return c.json({ error: 'invalid_target_address' }, 400);
     if (!/^[A-Za-z0-9_-]{6,64}$/.test(id)) return c.json({ error: 'invalid_campaign_id' }, 400);
+    const campaign = await getCampaign(c.env, id);
+    if (!campaign) return c.json({ error: 'campaign_not_registered', campaign_id: id }, 404);
+    if (campaign.safe_address.toLowerCase() !== target.toLowerCase()) {
+      return c.json(
+        {
+          error: 'campaign_target_mismatch',
+          campaign_id: id,
+          registered_address: campaign.safe_address,
+        },
+        409,
+      );
+    }
     // Optional prefilled amount. Absent/blank → reusable, payer-entered amount.
     // When present it's only a PREFILL — the payer can override, and the actual
     // settled amount is what gets recorded (record_sepa_contribution uses the
@@ -106,14 +134,17 @@ export function buildIntentApi(): Hono<{ Bindings: Env }> {
       }
       amountEur = n;
     }
+    // The collection IBAN comes from the campaign's OWN tenant — a second
+    // tenant collects on its own Monerium account, never on ITalk's.
+    const sepa = await getSepaDetails(c.env, campaign.tenant_id);
     const memo = `cmp:${target.toLowerCase()}?id=${id}`;
     const epcText = buildEpcText({
-      beneficiaryName: MPT_BENEFICIARY_NAME,
-      iban: MPT_IBAN,
+      beneficiaryName: sepa.beneficiaryName,
+      iban: sepa.iban,
       amountEur, // null → blank (free), positive → prefilled (still overridable)
       purposeCode: 'OTHR',
       remittanceInfo: memo,
-      bic: MPT_BIC,
+      bic: sepa.bic,
     });
     return c.json({
       campaign_id: id,
@@ -121,9 +152,9 @@ export function buildIntentApi(): Hono<{ Bindings: Env }> {
       label: label || null,
       amount_eur: amountEur !== null ? amountEur.toFixed(2) : null,
       memo,
-      iban: MPT_IBAN,
-      beneficiary_name: MPT_BENEFICIARY_NAME,
-      bic: MPT_BIC,
+      iban: sepa.iban,
+      beneficiary_name: sepa.beneficiaryName,
+      bic: sepa.bic,
       epc_qr_data: epcText,
     });
   });
@@ -133,8 +164,9 @@ export function buildIntentApi(): Hono<{ Bindings: Env }> {
     const intent = await getIntent(c.env, sid);
     if (!intent) return c.json({ error: 'intent_not_found' }, 404);
     const origin = new URL(c.req.url).origin;
+    const sepa = await getSepaDetails(c.env, intent.tenant_id ?? defaultTenantId(c.env));
     const status = await buildIntentStatus(c.env, intent, c.executionCtx);
-    return c.json({ ...intentResponseJson(intent, origin), status });
+    return c.json({ ...intentResponseJson(intent, origin, sepa), status });
   });
 
   // Phase 2 SSE endpoint — currently absent. EventSource will receive a 404
@@ -152,16 +184,17 @@ export function buildIntentApi(): Hono<{ Bindings: Env }> {
 export function intentResponseJson(
   intent: import('./db').PaymentIntentRow,
   origin: string,
+  sepa: SepaDetails,
 ): Record<string, unknown> {
   const memo = `mpt:${intent.target_address}?sid=${intent.sid}`;
   const amountEur = (intent.amount_cents / 100).toFixed(2);
   const epcText = buildEpcText({
-    beneficiaryName: MPT_BENEFICIARY_NAME,
-    iban: MPT_IBAN,
+    beneficiaryName: sepa.beneficiaryName,
+    iban: sepa.iban,
     amountEur: intent.amount_cents / 100,
     purposeCode: 'OTHR',
     remittanceInfo: memo,
-    bic: MPT_BIC,
+    bic: sepa.bic,
   });
   return {
     sid: intent.sid,
@@ -173,10 +206,11 @@ export function intentResponseJson(
     label: intent.label,
     metadata: intent.metadata_json ? JSON.parse(intent.metadata_json) : null,
     memo,
-    iban: MPT_IBAN,
-    beneficiary_name: MPT_BENEFICIARY_NAME,
-    bic: MPT_BIC,
+    iban: sepa.iban,
+    beneficiary_name: sepa.beneficiaryName,
+    bic: sepa.bic,
     epc_qr_data: epcText,
+    tenant_id: intent.tenant_id,
     checkout_url: `${origin}/checkout/${intent.sid}`,
     status_url: `${origin}/api/intents/${intent.sid}`,
     status_stream_url: `${origin}/api/intents/${intent.sid}/stream`,
@@ -216,6 +250,7 @@ async function insertWithRetry(
   amountCents: number,
   ttlSeconds: number,
   body: CreateIntentBody,
+  tenantId: string,
 ): Promise<string | 'conflict' | null> {
   // Client-supplied sid: single attempt. A real duplicate-sid collision is
   // the caller's error (409); ANY OTHER failure (transient D1 error, etc.)
@@ -231,6 +266,7 @@ async function insertWithRetry(
         label: body.label ?? null,
         metadata: body.metadata ?? null,
         ttlSeconds,
+        tenantId,
       });
       return body.sid;
     } catch (e) {
@@ -250,6 +286,7 @@ async function insertWithRetry(
         label: body.label ?? null,
         metadata: body.metadata ?? null,
         ttlSeconds,
+        tenantId,
       });
       return sid;
     } catch (e) {
