@@ -1,15 +1,35 @@
 # Rollout runbook — tenant payout whitelist (ADR 0016)
 
-> Stanje na 2026-08-01: kod je commitan i pushan na granu
-> `feat/tenant-payout-whitelist` (`3ace591`). **Nije merge-an u `main`, nije
-> deployan, migracije nisu primijenjene na produkcijski D1** — provjereno:
-> tablica `tenants` u produkciji ne postoji. `mpt.domovina.ai` vrti stari kod.
+> **Stanje: DEPLOYANO 2026-08-01.** Merge-ano u `main` (`6ab9078`), migracije
+> 0013+0014 primijenjene na produkcijski D1, Worker deployan
+> (version `3c559eb2-4367-4000-bd44-021ccfece974`). Verificirano na živom
+> sustavu — v. §3.
 >
 > Ovaj dokument je ono što bi inače ostalo samo u chatu: forenzika stvarnog
 > stanja prije promjene, redoslijed deploya, kako provjeriti da je prošlo,
 > kako se vratiti, i što je ostalo otvoreno.
 >
 > Zašto = `docs/decisions/0016-tenant-payout-whitelist.md`. Ovdje je samo kako.
+
+## 0. Što je u produkciji
+
+| | |
+|---|---|
+| Tenant | `italk` — **ITalk d.o.o.**, `status=active`, `allow_sources=["wallet_registry"]` |
+| SEPA noga | IBAN `EE707777000162921128` (EE70 7777 0001 6292 1128), BIC `LHVBEE22`, primatelj `ITalk d.o.o.` |
+| Payout adrese | **53** aktivne (51 iz snimke + 2 izričito odobrene) |
+| Izričito odobreni ITalk Safeovi | `0x6693a7D19486Dc45e9F90Fd2D515d972bBA2d65e`<br/>`0xb2AF1Dc5A6290C3B9c69C486014203C823bD7A9c`<br/>`0x7582f6f5F876E294627934adE3e5b7d1d231b030` |
+| Intenata bez tenanta | 0 |
+| `INTENT_REQUIRE_TENANT_KEY` | `0` (meki režim) |
+
+Rezultat verifikacije nakon deploya (§3): sve tri odobrene adrese → 200;
+self-registered wallet Safe kroz dinamički izvor → 200; nepoznata adresa →
+403 `target_not_whitelisted`; checkout prikazuje IBAN iz tenanta; EPC linija 7
+nosi kanonski IBAN; `campaign-qr` za neregistriranu kampanju → 404.
+
+**Sljedeći tenant** nije redak u tablici: traži vlastiti Monerium KYC/KYB i
+vlastiti IBAN, pa tek onda `INSERT INTO tenants (…, beneficiary_name, iban, bic)`
++ vlastite payout adrese. Dok to ne prođe, njegove uplate nemaju gdje sletjeti.
 
 ## 1. Forenzika produkcije prije promjene (metoda, ne samo rezultat)
 
@@ -50,12 +70,12 @@ Rezultat 2026-08-01:
 Zadnja dva reda su razlog zašto je postrožavanje sigurno: nijedan tok koji je
 ikad prošao railom ne koristi oblik koji je ukinut.
 
-⚠️ **Prije deploya ponovi upit 1 i 2.** Ako je u međuvremenu nastao novi
+⚠️ **Prije SLJEDEĆEG deploya (ili dodavanja tenanta) ponovi upit 1 i 2.** Ako je u međuvremenu nastao novi
 wallet, pokriva ga dinamički izvor `wallet_registry` (ne treba ništa raditi).
 Ako je nastao pending intent na adresu izvan whiteliste — dodaj adresu ručno
 prije deploya, inače će ta uplata biti parkirana.
 
-## 2. Deploy — redoslijed je obavezan
+## 2. Deploy — redoslijed je obavezan (izvršeno 2026-08-01)
 
 ```bash
 cd backend
@@ -87,7 +107,7 @@ npx wrangler secret put TELEGRAM_BOT_TOKEN
 npx wrangler secret put TELEGRAM_CHAT_ID
 ```
 
-## 3. Provjera nakon deploya
+## 3. Provjera nakon deploya (prošla 2026-08-01)
 
 ```bash
 # a) legitiman tok i dalje radi — adresa iz seeda
@@ -153,7 +173,7 @@ detaljnije u ADR-u §Alternative:
 
 | # | Stavka | Blokira |
 |---|---|---|
-| 1 | Merge grane u `main` (PR nije otvoren) | — |
+| 1 | Novi tenanti — čekaju Monerium KYC/KYB, pa vlastiti IBAN u `tenants` (plan: kroz koji tjedan) | Monerium onboarding tog entiteta |
 | 2 | `INTENT_REQUIRE_TENANT_KEY=1` traži `pk_` ključ u Flutter appu, wallet PWA i e-demokracija repou | koordinirani deploy 3 repozitorija |
 | 3 | `safe-tx/006` — Zodiac Roles scoping, pripremljen ali **neizvršen**; enum vrijednosti Roles v2 nisu pročitane s deployanog ugovora | verifikacija + simulacija na forku prije 2/3 potpisa |
 | 4 | **MultiSend zaobilazi on-chain scoping** — uključivanje `PAYMENT_REGISTRY_ADDRESS` bez `setTransactionUnwrapper` poništava batch 006 | preduvjet za PaymentRegistry |
