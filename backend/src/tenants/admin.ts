@@ -19,6 +19,7 @@ import {
   writeAudit,
 } from './db';
 import { generateApiKey } from './auth';
+import { trySendAlert } from '../alerts';
 import { renderWhitelistPage } from '../admin/views';
 
 /// Admin surface for the tenant payout whitelist. Mounted under `/admin/*`,
@@ -230,6 +231,47 @@ export function mountTenantAdmin(app: Hono<{ Bindings: Env }>): void {
       detail: JSON.stringify({ key_hash_short: `${keyHash.slice(0, 12)}…` }),
     });
     return c.json({ ok: true });
+  });
+
+  /// Proves the WHOLE alert chain from inside the Worker: secrets present,
+  /// token valid, chat id reachable. A curl against api.telegram.org only
+  /// proves the credentials work somewhere — not that they landed correctly in
+  /// the Worker's secrets. Alerting is fail-open, so without this a broken
+  /// chat id (e.g. after a group → supergroup migration silently changes the
+  /// id) stays invisible until the first real blocked forward.
+  app.post('/admin/api/alert-test', async (c) => {
+    const actor = actorFrom(c.req.header('Authorization'));
+    const result = await trySendAlert(
+      c.env,
+      '🔔 <b>MPT alert test</b>\n' +
+        'Ovo je ručna provjera alert kanala — nije incident.\n' +
+        `pokrenuo: <code>${actor}</code>`,
+    );
+    await writeAudit(c.env, {
+      tenantId: null,
+      action: 'alert.test',
+      actor,
+      detail: JSON.stringify(result),
+    });
+    if (!result.configured) {
+      return c.json(
+        {
+          ...result,
+          hint: 'TELEGRAM_BOT_TOKEN i/ili TELEGRAM_CHAT_ID nisu postavljeni — alerti idu samo u console.',
+        },
+        503,
+      );
+    }
+    if (!result.ok) {
+      return c.json(
+        {
+          ...result,
+          hint: '"chat not found" najčešće znači da je grupa migrirala u supergrupu i promijenila id — ponovi getUpdates i prepiši TELEGRAM_CHAT_ID.',
+        },
+        502,
+      );
+    }
+    return c.json(result);
   });
 
   app.get('/admin/api/tenants/audit', async (c) => {

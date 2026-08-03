@@ -207,8 +207,28 @@ dva pa je redoslijed bitan:
 
 Provjereno: `getMe` OK, testna poruka kroz `sendMessage` stigla u grupu, a
 vrijednosti u secretima su **bajt-identične** onima kojima je test prošao (upisane
-programatski, bez ručnog prepisivanja). Neprovjeren ostaje jedino Workerov
-vlastiti `sendAlert()` poziv — za to nema okidača bez pravog blokiranog forwarda.
+programatski, bez ručnog prepisivanja).
+
+### Provjera cijelog lanca iz Workera
+
+Curl protiv `api.telegram.org` dokazuje samo da kredencijali rade *negdje* — ne
+i da su ispravno sletjeli u Workerove secrete. Za to postoji:
+
+```bash
+curl -s -u "$ADMIN_USER:$ADMIN_PASS" -X POST https://mpt.domovina.ai/admin/api/alert-test
+```
+
+ili gumb **🔔 Pošalji test alert** na `/admin/whitelist`. Odgovori:
+
+| HTTP | Znači |
+|---|---|
+| `200 {"configured":true,"ok":true}` | cijeli lanac radi |
+| `503 {"configured":false}` | secreti nisu postavljeni — alerti idu samo u console |
+| `502 … "chat not found"` | chat id je zastario (v. supergrupa-zamka dolje) |
+
+Svaki poziv piše `alert.test` red u `tenant_audit_log`. Pokreni ga nakon svake
+promjene postavki Telegram grupe i nakon svake rotacije tokena — jer alerting je
+fail-open, pa je ovo **jedini** način da pukli kanal otkriješ prije incidenta.
 
 ⚠️ **Chat id je `type=group`, ne `supergroup`.** Ako grupa ikad migrira u
 supergrupu — uključe se Topics, „chat history for new members" na Visible, ili

@@ -1393,6 +1393,16 @@ export function renderWhitelistPage(): string {
   </label>
 </div>
 
+<h2 style="margin-top:1.5rem">Alert kanal</h2>
+<div class="controls">
+  <button type="button" id="alertTestBtn">🔔 Pošalji test alert</button>
+  <span id="alertTestResult" class="mono"></span>
+</div>
+<p class="dim" style="margin-top:-.4rem;font-size:.85rem">
+  Alerti su fail-open — ako kanal pukne, forwardi i dalje rade, ali obavijest
+  tiho izostane. Pokreni ovo nakon svake promjene postavki Telegram grupe.
+</p>
+
 <h2 style="margin-top:1.5rem">Provjeri adresu</h2>
 <div class="controls">
   <input type="text" id="checkAddr" placeholder="0x…" size="46" class="mono" />
@@ -1564,6 +1574,21 @@ document.getElementById('checkBtn').onclick = async () => {
   if (!r.ok) { out.textContent = '⚠ ' + (await r.json()).error; return; }
   const d = await r.json();
   out.textContent = d.allowed ? '✓ dopuštena (izvor: ' + d.source + ')' : '✗ NIJE na whitelisti';
+};
+
+document.getElementById('alertTestBtn').onclick = async () => {
+  const out = document.getElementById('alertTestResult');
+  out.textContent = 'šaljem…';
+  try {
+    const r = await fetch('/admin/api/alert-test', { method: 'POST' });
+    const d = await r.json();
+    out.textContent = d.ok
+      ? '✓ poruka je stigla u Telegram'
+      : (d.configured ? '✗ ' + (d.error || 'HTTP ' + d.status) : '✗ secreti nisu postavljeni')
+        + (d.hint ? ' — ' + d.hint : '');
+  } catch (e) {
+    out.textContent = '✗ ' + e.message;
+  }
 };
 
 document.getElementById('refresh').onclick = loadAll;
