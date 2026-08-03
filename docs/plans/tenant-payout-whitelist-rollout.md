@@ -177,7 +177,7 @@ detaljnije u ADR-u §Alternative:
 | 2 | `INTENT_REQUIRE_TENANT_KEY=1` traži `pk_` ključ u Flutter appu, wallet PWA i e-demokracija repou | koordinirani deploy 3 repozitorija |
 | 3 | `safe-tx/006` — Zodiac Roles scoping, pripremljen ali **neizvršen**; enum vrijednosti Roles v2 nisu pročitane s deployanog ugovora | verifikacija + simulacija na forku prije 2/3 potpisa |
 | 4 | **MultiSend zaobilazi on-chain scoping** — uključivanje `PAYMENT_REGISTRY_ADDRESS` bez `setTransactionUnwrapper` poništava batch 006 | preduvjet za PaymentRegistry |
-| 5 | Telegram secreti nisu provisionirani | alerti trenutno idu samo u CF Observability |
+| 5 | ~~Telegram secreti~~ — **postavljeni 2026-08-03**, v. §7. Ostaje neprovjeren samo Workerov `sendAlert()` put (nema okidača bez pravog blokiranog forwarda) | — |
 | 6 | `cmp:` rail nikad nije prošao produkcijom (0 ordera); prva kampanja mora biti registrirana kroz `/admin/whitelist` prije objave QR-a | — |
 
 ### Interakcija s otvorenim Fable5 nalazima
@@ -196,7 +196,35 @@ dva pa je redoslijed bitan:
   s injektiranim ovisnostima) **olakšava** oba gornja fixa — sad postoji mjesto
   s testovima u koje se atomski zasun i usporedba iznosa mogu ugurati.
 
-## 7. Sitnice koje se lako zaborave
+## 7. Telegram alerting (postavljeno 2026-08-03)
+
+| | |
+|---|---|
+| Bot | `@mpt_domovina_alerts_bot` — „MPT Rail Alerts" |
+| Grupa | `MPT Alerts`, `chat_id = -5296807694`, **type `group`** |
+| Secreti | `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` — postavljeni kroz `wrangler secret put` |
+| Lokalna kopija | `backend/secrets/telegram.env`, mode 600, gitignorirano (`backend/.gitignore:6 secrets/`) |
+
+Provjereno: `getMe` OK, testna poruka kroz `sendMessage` stigla u grupu, a
+vrijednosti u secretima su **bajt-identične** onima kojima je test prošao (upisane
+programatski, bez ručnog prepisivanja). Neprovjeren ostaje jedino Workerov
+vlastiti `sendAlert()` poziv — za to nema okidača bez pravog blokiranog forwarda.
+
+⚠️ **Chat id je `type=group`, ne `supergroup`.** Ako grupa ikad migrira u
+supergrupu — uključe se Topics, „chat history for new members" na Visible, ili
+dobije javni link — **id se mijenja** u oblik `-100…` i alerti tiho prestaju
+stizati. Fail-open dizajn znači da to nećeš primijetiti dok ti alert ne zatreba.
+Nakon svake promjene postavki grupe: ponovi `getUpdates` i prepiši secret.
+
+Rotacija tokena (BotFather `/revoke` → novi token):
+
+```bash
+cd backend
+printf '%s' '<novi-token>' | npx wrangler secret put TELEGRAM_BOT_TOKEN
+# i osvježi backend/secrets/telegram.env
+```
+
+## 8. Sitnice koje se lako zaborave
 
 - **Admin forma za novi intent ide kroz javni `/api/intents`**, pa i ona dobiva
   403 za adresu izvan whiteliste. Poruka u formi upućuje na karticu Whitelist.
