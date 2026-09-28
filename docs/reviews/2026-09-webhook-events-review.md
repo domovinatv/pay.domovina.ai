@@ -86,3 +86,27 @@ ali se prikazuje kao čekanje. Polling svake 2 s je dovoljan.
 5. B3: cron usklađivanje s Monerium API-jem.
 6. A4: endpoint po tenantu (kad stigne drugi merchant).
 Samo za MPT rail: C1 (retry + alarm), C2.
+
+## Status implementacije (2026-09-28, deployano)
+
+Commitovi `0dc28bf` (backend) i `c3ff2a1` (checkout + Flutter), Worker verzija `56c1a9f6`,
+migracija `0015_webhook_outbox` primijenjena na produkciju, `pay.domovina.ai` redeployan.
+
+| Nalaz | Stanje |
+|---|---|
+| A1 outbox + retry | ✅ `webhook_outbox`, 9 pokušaja / ~47 h, 4xx = trajno + Telegram, admin `GET /admin/api/outbox`, `POST /admin/api/outbox/:id/resend` |
+| A2 eventi | ✅ `payment.received` (`rcv_<order>`), `payment.rejected` (`rej_<order>`), `payment.late` (`late_<sid>`) |
+| A3 id po tipu | ✅ novi eventi imaju vlastite prefikse; `int_`/`cmp_`/`blk_` nepromijenjeni radi kompatibilnosti |
+| A4 endpoint po tenantu | ⏳ nije rađeno — jedini tenant je `italk`; `outbox.ts endpoint()` je jedino mjesto za promjenu |
+| A5 `occurred_at` + razlog čekanja | ✅ `event_id`, `occurred_at`; `review_expected` (predviđanje iz vlastite povijesti IBAN-a, jer Monerium `evaluation` stiže tek na `processed`) |
+| B1 dedup prije obrade | ✅ claim se oslobađa ako obrada pukne |
+| B2 stanje unatrag | ✅ monoton upsert (`orderState.ts`), zastarjeli event se ignorira |
+| B3 propušteni webhook | ✅ cron svakih 10 min (`monerium/reconcile.ts`), samo dok nešto čeka; forward NE pokreće, zapeli order → alarm |
+| B4 timestamp tolerancija | ⏳ nije rađeno (nizak rizik, dedup po id-u) |
+| C1 forward retry | ⚠️ djelomično: Telegram alarm na neuspjeli/revertani forward; automatski retry i dalje ne postoji (rizik dvostrukog slanja, BW-02) |
+| C2 iznos (BW-01) | ⏳ nije rađeno |
+| C3 check-then-act (BW-02) | ⏳ nije rađeno |
+| D1 checkout | ✅ overlay na `received_processing`, napomena o namiri uživo; Flutter POS zelen na received |
+
+Primatelj `pinka-webhook` (domovina-api) nove tipove vraća kao `200 ignored`; ako zid treba „u obradi”
+odmah, tamo treba obraditi `payment.received`.
