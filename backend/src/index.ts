@@ -23,6 +23,7 @@ import {
 } from './monerium/webhook';
 import {
   alreadyProcessedEvent,
+  releaseProcessedEvent,
   getMoneriumOrder,
   listMoneriumOrders,
   recordMoneriumWebhookEvent,
@@ -44,6 +45,9 @@ import {
   reconcileSubmittedForwards,
 } from './intents/confirm';
 import { scanOnchainDonations } from './intents/onchainIndexer';
+import { deliverDue, makeOutboxDeps } from './intents/outbox';
+import { notifyOrderLifecycle } from './intents/lifecycle';
+import { RECONCILE_INTERVAL_S, reconcileMoneriumOrders } from './monerium/reconcile';
 import { fetchOgPreview } from './og/preview';
 import { renderCheckoutPage } from './checkout/page';
 import { getSepaDetails } from './tenants/db';
@@ -204,28 +208,50 @@ app.post('/api/monerium/webhook', async (c) => {
     return c.json({ ok: true });
   }
   if (order) {
-    await upsertMoneriumOrder(c.env, order);
-    console.log(`monerium ${eventType} order ${order.id} state=${order.state ?? '?'}`);
-    // Auto-forward via Safe + Roles Modifier on incoming issue orders.
-    //
-    // Critical race-condition fix (2026-05-21): only forward AFTER Monerium
-    // has actually executed the EURe mint TX on-chain. `order.created` fires
-    // when Monerium receives the SEPA payment but BEFORE the mint reaches
-    // chain — Safe has no EURe to forward, so `execTransactionWithRole`
-    // reverts with `ModuleTransactionFailed()` at the inner `EURe.transfer`
-    // call. `order.updated` with `state=processed` is the signal that the
-    // mint TX is in `meta.txHashes` and the Safe balance is live.
-    //
-    // Idempotency: order.updated may fire more than once. Skip if we already
-    // have a `submitted` or `confirmed` forward for this order_id. A prior
-    // `failed` forward is allowed to retry — covers transient RPC errors.
-    if (
-      order.kind === 'issue'
-      && eventType === 'order.updated'
-      && order.state === 'processed'
-      && c.env.ROUTER_PRIVATE_KEY
-    ) {
-      c.executionCtx.waitUntil(maybeForward(makeForwardDeps(c.env), order));
+    try {
+      const applied = await upsertMoneriumOrder(c.env, order);
+      if (!applied) {
+        // Out-of-order retry (e.g. order.created after order.updated
+        // processed): the stored order is already further along. Nothing to
+        // do — acting on it would replay stale side effects.
+        console.log(`monerium ${eventType} order ${order.id} state=${order.state ?? '?'} STALE — ignored`);
+        return c.json({ ok: true, stale: true });
+      }
+      console.log(`monerium ${eventType} order ${order.id} state=${order.state ?? '?'}`);
+      // Merchant sees `payment.received` the moment Monerium holds the funds
+      // (order.created, ~1 s) — the card-like "approved" moment — and
+      // `payment.rejected` if Monerium refuses. Settlement (`intent.paid`)
+      // still waits for the confirmed on-chain forward below.
+      c.executionCtx.waitUntil(notifyOrderLifecycle(c.env, order));
+      // Auto-forward via Safe + Roles Modifier on incoming issue orders.
+      //
+      // Critical race-condition fix (2026-05-21): only forward AFTER Monerium
+      // has actually executed the EURe mint TX on-chain. `order.created` fires
+      // when Monerium receives the SEPA payment but BEFORE the mint reaches
+      // chain — Safe has no EURe to forward, so `execTransactionWithRole`
+      // reverts with `ModuleTransactionFailed()` at the inner `EURe.transfer`
+      // call. `order.updated` with `state=processed` is the signal that the
+      // mint TX is in `meta.txHashes` and the Safe balance is live.
+      //
+      // Idempotency: order.updated may fire more than once. Skip if we already
+      // have a `submitted` or `confirmed` forward for this order_id. A prior
+      // `failed` forward is allowed to retry — covers transient RPC errors.
+      if (
+        order.kind === 'issue'
+        && eventType === 'order.updated'
+        && order.state === 'processed'
+        && c.env.ROUTER_PRIVATE_KEY
+      ) {
+        c.executionCtx.waitUntil(maybeForward(makeForwardDeps(c.env), order));
+      }
+    } catch (e) {
+      // Release the idempotency claim so Monerium's retry of this same
+      // webhook-id gets processed instead of dropped as a duplicate (BW-03).
+      if (verify.webhookId) {
+        await releaseProcessedEvent(c.env, verify.webhookId).catch(() => {});
+      }
+      console.error(`monerium webhook processing failed for order ${order.id}: ${(e as Error).message}`);
+      return c.json({ error: 'processing_failed' }, 500);
     }
   }
   return c.json({ ok: true });
@@ -513,6 +539,34 @@ export default {
         (e) => console.error(`cron: forward reconcile failed: ${e}`),
       ),
     );
+
+    // Durable merchant webhooks: retry every outbox row that is due.
+    ctx.waitUntil(
+      deliverDue(makeOutboxDeps(env), Math.floor(Date.now() / 1000)).then(
+        (r) => {
+          if (r.due > 0) {
+            console.log(`cron: webhook outbox due=${r.due} delivered=${r.delivered} failed=${r.failed}`);
+          }
+        },
+        (e) => console.error(`cron: webhook outbox failed: ${e}`),
+      ),
+    );
+
+    // Missed-webhook backstop: every RECONCILE_INTERVAL_S, pull recent orders
+    // from the Monerium API (only while something is in flight).
+    const nowUnix = Math.floor(event.scheduledTime / 1000);
+    if (event.cron !== '0 */6 * * *' && Math.floor(nowUnix / 120) % (RECONCILE_INTERVAL_S / 120) === 0) {
+      ctx.waitUntil(
+        reconcileMoneriumOrders(env, nowUnix).then(
+          (r) => {
+            if (!r.skipped && (r.advanced > 0 || r.unforwarded > 0)) {
+              console.log(`cron: monerium reconcile fetched=${r.fetched} advanced=${r.advanced} unforwarded=${r.unforwarded}`);
+            }
+          },
+          (e) => console.error(`cron: monerium reconcile failed: ${e}`),
+        ),
+      );
+    }
 
     // Heavier housekeeping only on the 6-hourly cron.
     if (event.cron === '0 */6 * * *') {

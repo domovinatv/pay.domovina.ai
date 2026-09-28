@@ -2,6 +2,7 @@ import { Hono } from 'hono';
 import { basicAuth } from 'hono/basic-auth';
 
 import type { Env } from '../types';
+import { resendWebhook } from '../intents/outbox';
 import {
   getMoneriumWebhookEvent,
   listForwards,
@@ -72,6 +73,22 @@ export function mountAdminUi(app: Hono<{ Bindings: Env }>): void {
     const status = c.req.query('status') || undefined;
     const { items, total } = await listForwards(c.env, { status, limit: 100 });
     return c.json({ items, total });
+  });
+  // Outbound merchant webhook outbox (migration 0015).
+  app.get('/admin/api/outbox', async (c) => {
+    const status = c.req.query('status');
+    const res = await c.env.DB.prepare(
+      `SELECT id, type, tenant_id, status, attempts, next_attempt_at, last_status,
+              last_error, created_at, delivered_at
+         FROM webhook_outbox
+        ${status ? 'WHERE status = ?' : ''}
+        ORDER BY created_at DESC LIMIT 200`,
+    ).bind(...(status ? [status] : [])).all();
+    return c.json({ items: res.results });
+  });
+  app.post('/admin/api/outbox/:id/resend', async (c) => {
+    const r = await resendWebhook(c.env, c.req.param('id'));
+    return c.json({ result: r }, r === 'not_found' ? 404 : 200);
   });
   app.get('/admin/intents', (c) => c.html(renderIntentsPage()));
   app.get('/admin/api/intents', async (c) => {

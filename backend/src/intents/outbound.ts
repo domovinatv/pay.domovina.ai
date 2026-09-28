@@ -1,34 +1,89 @@
 import type { Env } from '../types';
+import type { MoneriumOrder } from '../monerium/types';
+import { parseAmountCentsFromOrder } from '../monerium/orderState';
 import type { PaymentIntentRow } from './db';
+import { enqueueWebhook, type OutboxEvent } from './outbox';
 
-/// Outbound "intent paid" webhook. When INTENT_WEBHOOK_URL + INTENT_WEBHOOK_SECRET
-/// are configured, the rail POSTs a signed event to that URL the moment a payment
-/// intent flips pending → paid (i.e. EURe was forwarded on-chain to the target).
+/// Outbound merchant webhooks. pinka.finance consumes them through the
+/// domovina-api `pinka-webhook` edge function (unknown types → 200 ignored).
 ///
-/// This is the generic merchant-notification seam (per docs/product-vision/
-/// per-event-safe-rail.md). pinka.finance uses it: the domovina-api `pinka-webhook`
-/// edge function verifies the signature and calls
-/// `pinka_finance.mark_contribution_paid(sid, tx_hash, amount_received_cents)`.
+/// Delivery is durable: every event goes through `webhook_outbox`
+/// (./outbox.ts) — persisted, attempted once immediately, retried by the cron.
 ///
-/// Signing mirrors the INBOUND Monerium scheme (Standard Webhooks / svix) so the
-/// whole stack shares one mental model:
+/// Signing mirrors the INBOUND Monerium scheme (Standard Webhooks / svix):
 ///   headers: webhook-id, webhook-timestamp, webhook-signature: `v1,<base64>`
 ///   signed payload: `${id}.${timestamp}.${rawBody}`
-///   key: base64-decode(secret without optional `whsec_` prefix)
 ///
-/// Best-effort + idempotent: webhook-id is stable per intent (`int_<sid>`), and the
-/// receiver's mark-paid is itself idempotent, so duplicate deliveries are safe.
+/// Event lifecycle for one SEPA payment (card analogy in brackets):
+///
+///   payment.received   rcv_<orderId>  Monerium holds the SEPA funds, ~1 s
+///                                     after the payer's bank sent them
+///                                     [authorisation — safe to show "paid"]
+///   intent.paid        int_<sid>      EURe minted + forwarded, confirmed
+///                                     on-chain [settlement]
+///   payment.late       late_<sid>     same as intent.paid, but the intent had
+///                                     already expired
+///   payment.rejected   rej_<orderId>  Monerium refused the order; funds go
+///                                     back to the payer [decline/reversal]
+///   contribution.sepa  cmp_<orderId>  permanent campaign QR settlement
+///   forward.blocked    blk_<orderId>  our payout whitelist refused the target
+///
+/// Every `webhook-id` is unique per (event type, subject) — receivers dedup on
+/// it, so two different events must never share an id. The historical ids
+/// (int_/cmp_/blk_) are kept byte-identical for existing receivers.
+///
+/// Every payload carries `event_id` (= webhook-id) and `occurred_at` (ISO).
+
+function nowIso(): string {
+  return new Date().toISOString();
+}
+
 export async function emitIntentPaidWebhook(
   env: Env,
   intent: PaymentIntentRow,
   sender?: { iban: string | null; name: string | null },
 ): Promise<void> {
-  const url = env.INTENT_WEBHOOK_URL?.trim();
-  const secret = env.INTENT_WEBHOOK_SECRET?.trim();
-  if (!url || !secret) return; // not configured — silent no-op
-
-  const payload = {
+  const id = `int_${intent.sid}`;
+  await enqueueWebhook(env, {
+    id,
     type: 'intent.paid',
+    tenantId: intent.tenant_id,
+    payload: {
+      type: 'intent.paid',
+      event_id: id,
+      occurred_at: nowIso(),
+      ...settledIntentFields(intent, sender),
+    },
+  });
+}
+
+/// A payment that settled AFTER its intent expired. Separate type (and id) so
+/// receivers that treat expiry as final are not surprised, while receivers
+/// that want to credit late money can.
+export async function emitPaymentLateWebhook(
+  env: Env,
+  intent: PaymentIntentRow,
+  sender?: { iban: string | null; name: string | null },
+): Promise<void> {
+  const id = `late_${intent.sid}`;
+  await enqueueWebhook(env, {
+    id,
+    type: 'payment.late',
+    tenantId: intent.tenant_id,
+    payload: {
+      type: 'payment.late',
+      event_id: id,
+      occurred_at: nowIso(),
+      ...settledIntentFields(intent, sender),
+    },
+  });
+}
+
+function settledIntentFields(
+  intent: PaymentIntentRow,
+  sender?: { iban: string | null; name: string | null },
+): Record<string, unknown> {
+  return {
     sid: intent.sid,
     state: intent.state,
     amount_cents: intent.amount_cents,
@@ -44,33 +99,81 @@ export async function emitIntentPaidWebhook(
     sender_name: sender?.name ?? null,
     metadata: intent.metadata_json ? safeParse(intent.metadata_json) : null,
   };
-  const body = JSON.stringify(payload);
-  const id = `int_${intent.sid}`;
-  const timestamp = Math.floor(Date.now() / 1000).toString();
-  const keyBytes = decodeWebhookSecret(secret);
-  if (!keyBytes) {
-    console.error('intent webhook: invalid INTENT_WEBHOOK_SECRET format');
-    return;
-  }
-  const signature = await hmacSha256Base64(keyBytes, `${id}.${timestamp}.${body}`);
+}
 
-  try {
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: {
-        'content-type': 'application/json',
-        'webhook-id': id,
-        'webhook-timestamp': timestamp,
-        'webhook-signature': `v1,${signature}`,
+/// Correlation for a Monerium order: which intent / campaign it pays.
+export interface OrderCorrelation {
+  sid: string | null;
+  campaignId: string | null;
+  tenantId: string | null;
+  /// Has an order from this payer IBAN been processed before? Monerium only
+  /// reports its screening verdict (`meta.evaluation`) once the order is
+  /// processed, but in production 5/5 first payments from a new IBAN were held
+  /// for manual review ("counterpart is not screened", 1 min – 8 h) and 44/44
+  /// repeat payers minted in seconds. null = unknown (no IBAN on the order).
+  knownPayer: boolean | null;
+}
+
+/// Pure: the lifecycle event a Monerium issue order implies right now, or
+/// null when there is nothing to tell a merchant (redeem order, or no intent /
+/// campaign to correlate on).
+export function buildOrderLifecycleEvent(
+  order: MoneriumOrder,
+  corr: OrderCorrelation,
+): OutboxEvent | null {
+  if (order.kind !== 'issue') return null;
+  if (!corr.sid && !corr.campaignId) return null;
+  const state = order.state ?? order.meta?.state;
+  const base = {
+    sid: corr.sid,
+    campaign_id: corr.campaignId,
+    monerium_order_id: order.id,
+    amount_received_cents: parseAmountCentsFromOrder(order),
+    currency: order.currency ?? 'eur',
+  };
+  if (state === 'rejected') {
+    const id = `rej_${order.id}`;
+    const reason = order.meta?.rejectedReason;
+    return {
+      id,
+      type: 'payment.rejected',
+      tenantId: corr.tenantId,
+      payload: {
+        type: 'payment.rejected',
+        event_id: id,
+        occurred_at: order.meta?.processedAt ?? nowIso(),
+        ...base,
+        reason: typeof reason === 'string' ? reason : null,
+        // Monerium returns rejected SEPA funds to the payer.
+        funds_location: 'returned_to_payer',
       },
-      body,
-    });
-    if (!res.ok) {
-      console.error(`intent webhook ${id} → ${url} returned ${res.status}`);
-    }
-  } catch (e) {
-    console.error(`intent webhook ${id} → ${url} failed: ${e}`);
+    };
   }
+  const id = `rcv_${order.id}`;
+  return {
+    id,
+    type: 'payment.received',
+    tenantId: corr.tenantId,
+    payload: {
+      type: 'payment.received',
+      event_id: id,
+      occurred_at: order.meta?.placedAt ?? nowIso(),
+      ...base,
+      // Funds are held by Monerium (regulated EMI); EURe not minted yet.
+      funds_location: 'monerium',
+      settlement: 'pending',
+      review_expected: corr.knownPayer === null ? null : !corr.knownPayer,
+    },
+  };
+}
+
+export async function emitOrderLifecycleWebhook(
+  env: Env,
+  order: MoneriumOrder,
+  corr: OrderCorrelation,
+): Promise<void> {
+  const evt = buildOrderLifecycleEvent(order, corr);
+  if (evt) await enqueueWebhook(env, evt);
 }
 
 /// Outbound "contribution.sepa" webhook for the PERMANENT campaign QR (`cmp:`
@@ -78,7 +181,7 @@ export async function emitIntentPaidWebhook(
 /// inbound Monerium order to a campaign's permanent QR fires one event, so the
 /// receiver records a DISTINCT contribution per payment. Idempotent: webhook-id
 /// is stable per Monerium order (`cmp_<orderId>`), and the receiver dedups on
-/// `monerium_order_id`. Same signing scheme as emitIntentPaidWebhook.
+/// `monerium_order_id`.
 export async function emitCampaignContributionWebhook(
   env: Env,
   args: {
@@ -92,48 +195,25 @@ export async function emitCampaignContributionWebhook(
     senderName?: string | null;
   },
 ): Promise<void> {
-  const url = env.INTENT_WEBHOOK_URL?.trim();
-  const secret = env.INTENT_WEBHOOK_SECRET?.trim();
-  if (!url || !secret) return; // not configured — silent no-op
-
-  const payload = {
-    type: 'contribution.sepa',
-    campaign_id: args.campaignId,
-    monerium_order_id: args.orderId,
-    amount_received_cents: args.amountCents,
-    currency: args.currency,
-    target_address: args.targetAddress,
-    forward_tx_hash: args.forwardTxHash,
-    // SEPA sender (Monerium counterpart) → merchant derives bank-verified.
-    sender_iban: args.senderIban ?? null,
-    sender_name: args.senderName ?? null,
-  };
-  const body = JSON.stringify(payload);
   const id = `cmp_${args.orderId}`;
-  const timestamp = Math.floor(Date.now() / 1000).toString();
-  const keyBytes = decodeWebhookSecret(secret);
-  if (!keyBytes) {
-    console.error('campaign webhook: invalid INTENT_WEBHOOK_SECRET format');
-    return;
-  }
-  const signature = await hmacSha256Base64(keyBytes, `${id}.${timestamp}.${body}`);
-  try {
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: {
-        'content-type': 'application/json',
-        'webhook-id': id,
-        'webhook-timestamp': timestamp,
-        'webhook-signature': `v1,${signature}`,
-      },
-      body,
-    });
-    if (!res.ok) {
-      console.error(`campaign webhook ${id} → ${url} returned ${res.status}`);
-    }
-  } catch (e) {
-    console.error(`campaign webhook ${id} → ${url} failed: ${e}`);
-  }
+  await enqueueWebhook(env, {
+    id,
+    type: 'contribution.sepa',
+    payload: {
+      type: 'contribution.sepa',
+      event_id: id,
+      occurred_at: nowIso(),
+      campaign_id: args.campaignId,
+      monerium_order_id: args.orderId,
+      amount_received_cents: args.amountCents,
+      currency: args.currency,
+      target_address: args.targetAddress,
+      forward_tx_hash: args.forwardTxHash,
+      // SEPA sender (Monerium counterpart) → merchant derives bank-verified.
+      sender_iban: args.senderIban ?? null,
+      sender_name: args.senderName ?? null,
+    },
+  });
 }
 
 /// Outbound "forward.blocked" webhook. Fires when the tenant payout whitelist
@@ -141,8 +221,7 @@ export async function emitCampaignContributionWebhook(
 /// NOT forwarded — instead of the payment silently hanging in `minted`.
 ///
 /// The EURe stays in the MPT Safe; this event is informational and carries no
-/// payer PII. Idempotent: webhook-id is stable per Monerium order
-/// (`blk_<orderId>`), same signing scheme as the other two emitters.
+/// payer PII.
 export async function emitForwardBlockedWebhook(
   env: Env,
   args: {
@@ -155,49 +234,27 @@ export async function emitForwardBlockedWebhook(
     tenantId: string | null;
   },
 ): Promise<void> {
-  const url = env.INTENT_WEBHOOK_URL?.trim();
-  const secret = env.INTENT_WEBHOOK_SECRET?.trim();
-  if (!url || !secret) return; // not configured — silent no-op
-
-  const payload = {
-    type: 'forward.blocked',
-    reason: args.reason,
-    monerium_order_id: args.orderId,
-    sid: args.sid,
-    campaign_id: args.campaignId,
-    target_address: args.targetAddress,
-    amount_cents: args.amountCents,
-    tenant_id: args.tenantId,
-    // The funds are safe, just not forwarded — say so explicitly so the
-    // receiver never renders this as a loss.
-    funds_location: 'mpt_safe',
-  };
-  const body = JSON.stringify(payload);
   const id = `blk_${args.orderId}`;
-  const timestamp = Math.floor(Date.now() / 1000).toString();
-  const keyBytes = decodeWebhookSecret(secret);
-  if (!keyBytes) {
-    console.error('blocked webhook: invalid INTENT_WEBHOOK_SECRET format');
-    return;
-  }
-  const signature = await hmacSha256Base64(keyBytes, `${id}.${timestamp}.${body}`);
-  try {
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: {
-        'content-type': 'application/json',
-        'webhook-id': id,
-        'webhook-timestamp': timestamp,
-        'webhook-signature': `v1,${signature}`,
-      },
-      body,
-    });
-    if (!res.ok) {
-      console.error(`blocked webhook ${id} → ${url} returned ${res.status}`);
-    }
-  } catch (e) {
-    console.error(`blocked webhook ${id} → ${url} failed: ${e}`);
-  }
+  await enqueueWebhook(env, {
+    id,
+    type: 'forward.blocked',
+    tenantId: args.tenantId,
+    payload: {
+      type: 'forward.blocked',
+      event_id: id,
+      occurred_at: nowIso(),
+      reason: args.reason,
+      monerium_order_id: args.orderId,
+      sid: args.sid,
+      campaign_id: args.campaignId,
+      target_address: args.targetAddress,
+      amount_cents: args.amountCents,
+      tenant_id: args.tenantId,
+      // The funds are safe, just not forwarded — say so explicitly so the
+      // receiver never renders this as a loss.
+      funds_location: 'mpt_safe',
+    },
+  });
 }
 
 function safeParse(s: string): unknown {
@@ -206,35 +263,4 @@ function safeParse(s: string): unknown {
   } catch {
     return null;
   }
-}
-
-function decodeWebhookSecret(secret: string): Uint8Array | null {
-  const stripped = secret.startsWith('whsec_') ? secret.slice('whsec_'.length) : secret;
-  try {
-    const bin = atob(stripped);
-    const out = new Uint8Array(bin.length);
-    for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
-    return out;
-  } catch {
-    return null;
-  }
-}
-
-async function hmacSha256Base64(key: Uint8Array, data: string): Promise<string> {
-  const cryptoKey = await crypto.subtle.importKey(
-    'raw',
-    key as BufferSource,
-    { name: 'HMAC', hash: 'SHA-256' },
-    false,
-    ['sign'],
-  );
-  const sig = await crypto.subtle.sign(
-    'HMAC',
-    cryptoKey,
-    new TextEncoder().encode(data),
-  );
-  const bytes = new Uint8Array(sig);
-  let bin = '';
-  for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
-  return btoa(bin);
 }

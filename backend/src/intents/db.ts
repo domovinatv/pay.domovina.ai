@@ -107,6 +107,44 @@ export async function markIntentPaid(
   return (res.meta?.changes ?? 0) > 0;
 }
 
+/// Settlement landed on an intent that had already EXPIRED. The state stays
+/// 'expired' (expiry is final for the intent), but the settlement data is
+/// recorded so the status timeline and admin can show where the money went.
+/// Single-fire: only the first caller sees true (monerium_order_id IS NULL).
+export async function markIntentLate(
+  env: Env,
+  sid: string,
+  args: {
+    moneriumOrderId: string;
+    forwardId: number;
+    forwardTxHash: string | null;
+    amountReceivedCents: number | null;
+  },
+): Promise<boolean> {
+  const now = Math.floor(Date.now() / 1000);
+  const res = await env.DB.prepare(
+    `UPDATE payment_intents
+        SET paid_at = ?,
+            monerium_order_id = ?,
+            forward_id = ?,
+            forward_tx_hash = ?,
+            amount_received_cents = ?
+      WHERE sid = ?
+        AND state = 'expired'
+        AND monerium_order_id IS NULL`,
+  )
+    .bind(
+      now,
+      args.moneriumOrderId,
+      args.forwardId,
+      args.forwardTxHash,
+      args.amountReceivedCents,
+      sid,
+    )
+    .run();
+  return (res.meta?.changes ?? 0) > 0;
+}
+
 export interface ListIntentsFilter {
   limit?: number;
   offset?: number;

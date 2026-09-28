@@ -11,8 +11,12 @@ import {
 import { getForwardStatus } from '../router/safe';
 import { parseCampaignIdFromText, type SenderInfo } from '../monerium/sid';
 import type { PaymentIntentRow } from './db';
-import { getIntent, markIntentPaid } from './db';
-import { emitCampaignContributionWebhook, emitIntentPaidWebhook } from './outbound';
+import { getIntent, markIntentLate, markIntentPaid } from './db';
+import {
+  emitCampaignContributionWebhook,
+  emitIntentPaidWebhook,
+  emitPaymentLateWebhook,
+} from './outbound';
 
 /// Settlement of a forward = the moment "plaćeno" becomes TRUE: the forward
 /// TX is CONFIRMED on-chain, not merely broadcast. A broadcast can still
@@ -53,7 +57,20 @@ export interface ConfirmDeps {
       amountReceivedCents: number | null;
     },
   ): Promise<boolean>;
+  /// Record settlement on an intent that had already EXPIRED (no state
+  /// change). True only for the first caller — same single-fire contract as
+  /// markIntentPaid.
+  markIntentLate(
+    sid: string,
+    args: {
+      moneriumOrderId: string;
+      forwardId: number;
+      forwardTxHash: string | null;
+      amountReceivedCents: number | null;
+    },
+  ): Promise<boolean>;
   emitIntentPaid(intent: PaymentIntentRow, sender: SenderInfo): Promise<void>;
+  emitPaymentLate(intent: PaymentIntentRow, sender: SenderInfo): Promise<void>;
   emitCampaignContribution(args: {
     campaignId: string;
     orderId: string;
@@ -76,7 +93,9 @@ export function makeConfirmDeps(env: Env): ConfirmDeps {
     getOrder: (orderId) => getMoneriumOrder(env, orderId),
     getIntent: (sid) => getIntent(env, sid),
     markIntentPaid: (sid, args) => markIntentPaid(env, sid, args),
+    markIntentLate: (sid, args) => markIntentLate(env, sid, args),
     emitIntentPaid: (intent, sender) => emitIntentPaidWebhook(env, intent, sender),
+    emitPaymentLate: (intent, sender) => emitPaymentLateWebhook(env, intent, sender),
     emitCampaignContribution: (args) => emitCampaignContributionWebhook(env, args),
     listSubmittedForwards: (olderThan) => listSubmittedForwardsOlderThan(env, olderThan),
     sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
@@ -229,6 +248,21 @@ async function flipPaidAndNotify(
   if (flipped) {
     const intent = await deps.getIntent(args.sid);
     if (intent) await deps.emitIntentPaid(intent, args.sender);
+    return true;
   }
-  return flipped;
+  // Not flipped: already paid (a duplicate settle — nothing to do) or the
+  // intent had EXPIRED before the money settled. The latter used to be
+  // silent: the EURe was forwarded but the merchant never heard about it
+  // (intent 2abjke6unj5u, 2026-05-23). Record it and send `payment.late`.
+  const late = await deps.markIntentLate(args.sid, {
+    moneriumOrderId: args.orderId,
+    forwardId: args.forwardId,
+    forwardTxHash: args.forwardTxHash,
+    amountReceivedCents: args.amountCents,
+  });
+  if (late) {
+    const intent = await deps.getIntent(args.sid);
+    if (intent) await deps.emitPaymentLate(intent, args.sender);
+  }
+  return false;
 }

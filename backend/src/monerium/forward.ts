@@ -189,6 +189,14 @@ export async function handleForward(
       attempts: 1,
     });
     console.error(`forward ${order.id} FAILED: ${result.error}`);
+    // Money is minted but parked in the MPT Safe and nothing retries a
+    // failed broadcast automatically (Fable5 BW-04) — an operator must know.
+    await safely(deps.alert(
+      `❌ <b>MPT forward nije uspio (broadcast)</b>\n` +
+        `order: <code>${order.id}</code> · iznos: <b>${order.amount} EUR</b> (ostaje u Safe-u)\n` +
+        `cilj: <code>${target}</code> · sid: <code>${routing.sid ?? '-'}</code>\n` +
+        `greška: <code>${(result.error ?? 'unknown').slice(0, 300)}</code>`,
+    ));
     return;
   }
 
@@ -216,6 +224,11 @@ export async function handleForward(
     console.log(`forward ${order.id} unconfirmed after poll window — cron reconcile will settle`);
   } else if (outcome === 'failed') {
     console.error(`forward ${order.id} REVERTED on-chain tx=${result.txHash} — intent NOT paid, no webhook`);
+    await safely(deps.alert(
+      `❌ <b>MPT forward revertan on-chain</b>\n` +
+        `order: <code>${order.id}</code> · iznos: <b>${order.amount} EUR</b> (ostaje u Safe-u)\n` +
+        `tx: <code>${result.txHash}</code> · sid: <code>${routing.sid ?? '-'}</code>`,
+    ));
   }
 }
 

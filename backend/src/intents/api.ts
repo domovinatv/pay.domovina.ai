@@ -232,14 +232,14 @@ export async function buildIntentStatus(
   intent: import('./db').PaymentIntentRow,
   executionCtx?: { waitUntil(p: Promise<unknown>): void },
 ): Promise<StageResult> {
-  const { order, forward } = await loadStageContext(env, intent);
+  const { order, forward, knownPayer } = await loadStageContext(env, intent);
   if (forward && forward.status === 'submitted' && forward.tx_hash) {
     const check = confirmForwardIfMined(env, forward);
     if (executionCtx) executionCtx.waitUntil(check);
     else await check.catch(() => {});
   }
   return computeStage({
-    intent, order, forward,
+    intent, order, forward, knownPayer,
     now: Math.floor(Date.now() / 1000),
   });
 }

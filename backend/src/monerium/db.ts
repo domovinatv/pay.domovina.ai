@@ -1,5 +1,6 @@
 import type { Env } from '../types';
 import type { MoneriumOrder } from './types';
+import { normalizeIban, orderStateRankSql } from './orderState';
 
 export interface MoneriumOrderRow {
   id: string;
@@ -22,14 +23,18 @@ export interface MoneriumOrderRow {
   updated_at: number;
 }
 
+/// Upsert the latest snapshot of a Monerium order. Monotonic: a snapshot whose
+/// state ranks BELOW the stored one (e.g. a retried `order.created` arriving
+/// after `order.updated processed`) is ignored. Returns false in that case so
+/// the caller can skip side effects for the stale event.
 export async function upsertMoneriumOrder(
   env: Env,
   order: MoneriumOrder,
-): Promise<void> {
+): Promise<boolean> {
   const ident = order.counterpart?.identifier;
   const counterpartIban =
     ident && ident.standard === 'iban' ? ident.iban : null;
-  await env.DB.prepare(
+  const res = await env.DB.prepare(
     `INSERT INTO monerium_orders
        (id, profile_id, account_id, kind, state, amount, currency,
         address, chain, counterpart_iban, counterpart_name, memo,
@@ -50,7 +55,8 @@ export async function upsertMoneriumOrder(
        placed_at = excluded.placed_at,
        processed_at = excluded.processed_at,
        raw_json = excluded.raw_json,
-       updated_at = excluded.updated_at`,
+       updated_at = excluded.updated_at
+     WHERE ${orderStateRankSql('excluded.state')} >= ${orderStateRankSql('monerium_orders.state')}`,
   )
     .bind(
       order.id,
@@ -73,6 +79,28 @@ export async function upsertMoneriumOrder(
       Math.floor(Date.now() / 1000),
     )
     .run();
+  return (res.meta?.changes ?? 0) > 0;
+}
+
+/// Has a payment from this IBAN been processed before (any order but
+/// `excludeOrderId`)? Monerium's first-payment screening keys on the payer, so
+/// this predicts whether a freshly received order will be held for review.
+export async function isKnownPayer(
+  env: Env,
+  iban: string | null,
+  excludeOrderId: string,
+): Promise<boolean | null> {
+  const norm = normalizeIban(iban);
+  if (!norm) return null;
+  const row = await env.DB.prepare(
+    `SELECT 1 AS hit FROM monerium_orders
+      WHERE kind = 'issue' AND state = 'processed' AND id <> ?
+        AND REPLACE(UPPER(counterpart_iban), ' ', '') = ?
+      LIMIT 1`,
+  )
+    .bind(excludeOrderId, norm)
+    .first<{ hit: number }>();
+  return row !== null;
 }
 
 export async function listMoneriumOrders(
@@ -363,4 +391,19 @@ export async function alreadyProcessedEvent(
     .run();
   // D1 result: meta.changes === 0 means the row already existed.
   return (res.meta?.changes ?? 0) === 0;
+}
+
+/// Undo `alreadyProcessedEvent`'s claim when processing failed, so Monerium's
+/// retry of the SAME webhook-id is processed instead of dropped as a
+/// duplicate (Fable5 review BW-03). The claim itself stays an atomic latch:
+/// two concurrent deliveries still cannot both process.
+export async function releaseProcessedEvent(
+  env: Env,
+  webhookId: string,
+): Promise<void> {
+  await env.DB.prepare(
+    `DELETE FROM monerium_processed_event_ids WHERE webhook_id = ?`,
+  )
+    .bind(webhookId)
+    .run();
 }

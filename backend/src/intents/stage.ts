@@ -1,7 +1,7 @@
 import type { Env } from '../types';
 import type { PaymentIntentRow } from './db';
 import type { MoneriumOrderRow, MoneriumForwardRow } from '../monerium/db';
-import { getMoneriumOrder, getForwardByOrder } from '../monerium/db';
+import { getMoneriumOrder, getForwardByOrder, isKnownPayer } from '../monerium/db';
 import { makeConfirmDeps, settleConfirmedForward } from './confirm';
 import type { Hex } from 'viem';
 
@@ -69,6 +69,12 @@ export interface StageResult {
   /// 'blocked'); an RPC/chain error string when it failed for other reasons.
   forward_error: string | null;
   rejected_reason: string | null;
+  /// While Monerium holds the funds (`received_processing`): is this likely a
+  /// first payment from this IBAN, which Monerium holds for manual screening
+  /// (1 min – 8 h in production) instead of minting in seconds? null when not
+  /// applicable or unknown. A prediction from our own order history — Monerium
+  /// itself only reports its verdict (meta.evaluation) after processing.
+  review_expected: boolean | null;
 }
 
 /// Narrow row slices so the pure computation is unit-testable without D1.
@@ -92,6 +98,9 @@ export interface StageInput {
   forward: StageForward | null;
   /// Unix seconds "now" — injected for testability.
   now: number;
+  /// Has a payment from this order's IBAN been processed before? See
+  /// StageResult.review_expected. Omitted/null = unknown.
+  knownPayer?: boolean | null;
 }
 
 const ORDER_ROUTED_RE = /^(mpt|gnosis|cmp):/i;
@@ -140,6 +149,8 @@ export function computeStage(input: StageInput): StageResult {
     forward_tx_hash: forward?.tx_hash ?? null,
     forward_error: forward?.error ?? null,
     rejected_reason: rejectedReason,
+    review_expected:
+      stage === 'received_processing' && input.knownPayer != null ? !input.knownPayer : null,
   };
 }
 
@@ -272,7 +283,11 @@ function stageEnteredAt(args: {
 export async function loadStageContext(
   env: Env,
   intent: PaymentIntentRow,
-): Promise<{ order: MoneriumOrderRow | null; forward: MoneriumForwardRow | null }> {
+): Promise<{
+  order: MoneriumOrderRow | null;
+  forward: MoneriumForwardRow | null;
+  knownPayer: boolean | null;
+}> {
   let order: MoneriumOrderRow | null = null;
   if (intent.monerium_order_id) {
     order = await getMoneriumOrder(env, intent.monerium_order_id);
@@ -290,7 +305,11 @@ export async function loadStageContext(
     order = row ?? null;
   }
   const forward = order ? await getForwardByOrder(env, order.id) : null;
-  return { order, forward };
+  // Only worth a query while Monerium still holds the funds.
+  const knownPayer = order && order.state !== 'processed' && order.state !== 'rejected'
+    ? await isKnownPayer(env, order.counterpart_iban, order.id)
+    : null;
+  return { order, forward, knownPayer };
 }
 
 /// Best-effort on-chain confirmation of a broadcast forward. Runs in

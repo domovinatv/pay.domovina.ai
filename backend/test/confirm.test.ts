@@ -91,6 +91,7 @@ function makeDeps(opts: {
   const intents = new Map((opts.intents ?? []).map((i) => [i.sid, i]));
   const orders = new Map((opts.orders ?? []).map((o) => [o.id, o]));
   const paidWebhooks: Array<{ sid: string; sender: SenderInfo }> = [];
+  const lateWebhooks: Array<{ sid: string; orderId: string | null }> = [];
   const campaignWebhooks: Array<Record<string, unknown>> = [];
   const sleeps: number[] = [];
   let statusCalls = 0;
@@ -131,8 +132,21 @@ function makeDeps(opts: {
       i.amount_received_cents = args.amountReceivedCents;
       return true;
     },
+    async markIntentLate(sid, args) {
+      const i = intents.get(sid);
+      if (!i || i.state !== 'expired' || i.monerium_order_id !== null) return false;
+      i.paid_at = NOW;
+      i.monerium_order_id = args.moneriumOrderId;
+      i.forward_id = args.forwardId;
+      i.forward_tx_hash = args.forwardTxHash;
+      i.amount_received_cents = args.amountReceivedCents;
+      return true;
+    },
     async emitIntentPaid(intent, sender) {
       paidWebhooks.push({ sid: intent.sid, sender });
+    },
+    async emitPaymentLate(intent) {
+      lateWebhooks.push({ sid: intent.sid, orderId: intent.monerium_order_id });
     },
     async emitCampaignContribution(args) {
       campaignWebhooks.push(args);
@@ -147,7 +161,7 @@ function makeDeps(opts: {
     },
   };
   return {
-    deps, forwards, intents, paidWebhooks, campaignWebhooks, sleeps,
+    deps, forwards, intents, paidWebhooks, lateWebhooks, campaignWebhooks, sleeps,
     statusCalls: () => statusCalls,
   };
 }
@@ -227,7 +241,7 @@ describe('settleConfirmedForward (single-fire idempotency)', () => {
     expect(h.paidWebhooks).toHaveLength(0);
   });
 
-  it('late confirmation after intent expiry → forward confirmed but intent NOT resurrected, no webhook', async () => {
+  it('late confirmation after intent expiry → intent NOT resurrected, payment.late (not intent.paid) once', async () => {
     const h = makeDeps({
       forwards: [forwardRow()],
       intents: [intentRow({ state: 'expired' })],
@@ -235,8 +249,39 @@ describe('settleConfirmedForward (single-fire idempotency)', () => {
     });
     expect(await settleConfirmedForward(h.deps, forwardRow())).toBe(true);
     expect(h.forwards.get(1)!.status).toBe('confirmed'); // money still routed
-    expect(h.intents.get('sid123abc')!.state).toBe('expired');
+    const intent = h.intents.get('sid123abc')!;
+    expect(intent.state).toBe('expired');
+    expect(intent.monerium_order_id).toBe('ord-1'); // settlement recorded
     expect(h.paidWebhooks).toHaveLength(0);
+    expect(h.lateWebhooks).toEqual([{ sid: 'sid123abc', orderId: 'ord-1' }]);
+  });
+
+  it('late settlement is single-fire across settle paths', async () => {
+    const h = makeDeps({
+      forwards: [forwardRow()],
+      intents: [intentRow({ state: 'expired' })],
+      orders: [orderRow()],
+    });
+    await settleNonRoutedPaid(h.deps, {
+      sid: 'sid123abc', orderId: 'ord-1', forwardId: 1, amountCents: 500,
+      sender: { iban: null, name: null },
+    });
+    await settleNonRoutedPaid(h.deps, {
+      sid: 'sid123abc', orderId: 'ord-1', forwardId: 1, amountCents: 500,
+      sender: { iban: null, name: null },
+    });
+    expect(h.lateWebhooks).toHaveLength(1);
+  });
+
+  it('duplicate settle of an already-paid intent → no late event', async () => {
+    const h = makeDeps({
+      forwards: [forwardRow()],
+      intents: [intentRow({ state: 'paid', monerium_order_id: 'ord-1' })],
+      orders: [orderRow()],
+    });
+    await settleConfirmedForward(h.deps, forwardRow());
+    expect(h.paidWebhooks).toHaveLength(0);
+    expect(h.lateWebhooks).toHaveLength(0);
   });
 
   it('cmp: campaign forward → contribution webhook once, on confirmation only', async () => {
