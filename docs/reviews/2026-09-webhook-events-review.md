@@ -4,7 +4,7 @@ Povod: prelazak na model u kojem merchant ima vlastiti Monerium KYC/KYB račun, 
 u realnom vremenu javljamo stanje uplate (analogno Stripe webhookovima). U tom modelu
 obavijesti postaju proizvod, pa je pregled usmjeren na njih.
 
-Nastavlja se na `docs/reviews/2026-07-fable5/` — tamo već popisani nalazi (BW-xx) ovdje su
+Povezano: [Monerium screening prve uplate](../research/2026-09-monerium-first-iban-screening.md). Nastavlja se na `docs/reviews/2026-07-fable5/` — tamo već popisani nalazi (BW-xx) ovdje su
 samo potvrđeni kao još otvoreni.
 
 ## Stanje u produkciji (D1, 2026-09-28)

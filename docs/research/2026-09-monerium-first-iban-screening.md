@@ -42,3 +42,32 @@ te real-time odluka za male iznose po uzoru na kartične mreže.
 
 Na našoj strani je moguće: checkout može za novog uplatitelja najaviti „prva uplata može potrajati"
 jer order s `evaluation.success=false` to jasno označava.
+
+## Odluka o smjeru (2026-09-28)
+
+- **Merchant-direct model:** svaki merchant prolazi vlastiti Monerium KYC/KYB i prima novac izravno.
+  Mi smo samo tehnološki partner koji preko webhookova javlja stanje uplate, kao Stripe.
+  Time otpada MPT hold-and-forward i rizik iz Monerium BToS §16.
+- **UX kao kartica:** uspjeh se prikazuje na `order.created` (Monerium zaprimio SEPA, ~1 s),
+  a mint je namira koja stiže kasnije. Kartična analogija je autorizacija pa namira.
+  Pravilo „forward tek na `processed`” ostaje nepromijenjeno. Mijenja se samo prikaz i obavijesti.
+- **Otvoreno pitanje za Monerium:** pamti li se screening po profilu primatelja ili globalno.
+  Ako se pamti po profilu, svaki novi merchant kreće od nule.
+
+## Otvorene stavke
+
+- Mail Moneriumu je **draft u Gmailu, nije poslan** (support@ + cc partners@, 8 pitanja).
+- `domovina.ai` pinka panel: prompt za instant uspjeh je u
+  `docs/prompts/2026-09-28-pinka-instant-received-ux.md`. Sadrži i dva buga:
+  `waitForPaid` odustaje nakon 5 min i zamrzne panel, a `rejected_reason` se čita s krivog mjesta.
+- Checkout na `pay.domovina.ai` (`backend/src/checkout/page.ts` i `lib/models/payment_status.dart`)
+  još čeka `settled` za overlay „Plaćeno!”.
+- Webhook dorade (outbox/retry, `payment.received`, id po tipu eventa) su u
+  [2026-09-webhook-events-review.md](../reviews/2026-09-webhook-events-review.md).
+- 3,04 EUR iz testiranja 2026-05-21 nikad nisu proslijeđena (1 failed forward + 2 ordera bez forwarda).
+  Nije provjereno nalaze li se još u MPT Safeu.
+
+## Vezani dokumenti
+
+- [Pregled webhookova i eventa](../reviews/2026-09-webhook-events-review.md)
+- [Fable5 review, backend](../reviews/2026-07-fable5/backend-worker.md) (BW-01..04, BW-14)
