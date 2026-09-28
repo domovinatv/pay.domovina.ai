@@ -56,14 +56,12 @@ jer order s `evaluation.success=false` to jasno označava.
 
 ## Otvorene stavke
 
-- Mail Moneriumu je **draft u Gmailu, nije poslan** (support@ + cc partners@, 8 pitanja).
+- Mail Moneriumu je **poslan 2026-09-28** kao odgovor u threadu „Your Partnership Inquiry is in Review” (partners@, cc support@, 9 pitanja; Matija ga je ručno doradio prije slanja). Odgovor se čeka.
 - `domovina.ai` pinka panel: prompt za instant uspjeh je u
   `docs/prompts/2026-09-28-pinka-instant-received-ux.md`. Sadrži i dva buga:
   `waitForPaid` odustaje nakon 5 min i zamrzne panel, a `rejected_reason` se čita s krivog mjesta.
-- Checkout na `pay.domovina.ai` (`backend/src/checkout/page.ts` i `lib/models/payment_status.dart`)
-  još čeka `settled` za overlay „Plaćeno!”.
-- Webhook dorade (outbox/retry, `payment.received`, id po tipu eventa) su u
-  [2026-09-webhook-events-review.md](../reviews/2026-09-webhook-events-review.md).
+- ~~Checkout čeka `settled`~~ i ~~webhook dorade~~: **deployano 2026-09-28** (`0dc28bf`, `c3ff2a1`).
+  Status po nalazima je u [2026-09-webhook-events-review.md](../reviews/2026-09-webhook-events-review.md#status-implementacije-2026-09-28-deployano).
 - 3,04 EUR iz testiranja 2026-05-21 nikad nisu proslijeđena (1 failed forward + 2 ordera bez forwarda).
   Nije provjereno nalaze li se još u MPT Safeu.
 
@@ -71,3 +69,16 @@ jer order s `evaluation.success=false` to jasno označava.
 
 - [Pregled webhookova i eventa](../reviews/2026-09-webhook-events-review.md)
 - [Fable5 review, backend](../reviews/2026-07-fable5/backend-worker.md) (BW-01..04, BW-14)
+
+## Pitanja poslana Moneriumu (sažetak)
+
+Najvažnije je prvo: znači li `order.created` sa `state=pending` da su sredstva zaprimljena i što još može
+dovesti do odbijanja. O tome ovisi smije li checkout prikazivati uspjeh na `received`.
+Ostala pitanja: što provjera točno radi, vrijedi li po profilu ili globalno, SLA i vikendi, volume limiti,
+`evaluation` već na `order.created`, pre-screening API, odluka u realnom vremenu za male iznose,
+te webhookovi za partnerove merchante.
+
+Kad odgovor stigne, na temelju njega odlučiti:
+- ako `order.created` NIJE pouzdan signal, vratiti uspjeh na `minted`/`settled` (`isReceived` u page.ts i payment_status.dart);
+- ako screening vrijedi po profilu, merchant-direct model treba pre-screening prije plaćanja;
+- ako Monerium ponudi flag na `order.created`, zamijeniti vlastito predviđanje `review_expected` njihovim signalom.
