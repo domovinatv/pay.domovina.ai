@@ -24,6 +24,13 @@ enum PaymentStage {
 
   bool get isTerminal =>
       this == PaymentStage.settled || this == PaymentStage.rejected;
+
+  /// Monerium holds (or already minted) the funds — the card-like "approved"
+  /// moment. Show success from here on; settlement is only a detail.
+  bool get isReceived =>
+      this == PaymentStage.receivedProcessing ||
+      this == PaymentStage.minted ||
+      this == PaymentStage.forwarding;
 }
 
 /// Per-step marker: proof vs assumption.
@@ -80,6 +87,11 @@ class PaymentStatus {
   final String? forwardTxHash;
   final String? rejectedReason;
 
+  /// Backend prediction while Monerium holds the funds: true = likely a first
+  /// payment from this IBAN, which Monerium screens manually (minutes to
+  /// hours); false = known payer, mint in seconds; null = unknown / n.a.
+  final bool? reviewExpected;
+
   const PaymentStatus({
     required this.stage,
     required this.steps,
@@ -91,6 +103,7 @@ class PaymentStatus {
     this.mintTxHashes = const [],
     this.forwardTxHash,
     this.rejectedReason,
+    this.reviewExpected,
   });
 
   factory PaymentStatus.fromJson(Map<String, dynamic> j) => PaymentStatus(
@@ -108,6 +121,7 @@ class PaymentStatus {
         mintTxHashes: (j['mint_tx_hashes'] as List?)?.cast<String>() ?? const [],
         forwardTxHash: j['forward_tx_hash'] as String?,
         rejectedReason: j['rejected_reason'] as String?,
+        reviewExpected: j['review_expected'] as bool?,
       );
 }
 
@@ -147,11 +161,9 @@ String stageHeadline(PaymentStatus s) {
     case PaymentStage.awaitingPayment:
       return 'Čeka se uplata';
     case PaymentStage.receivedProcessing:
-      return 'Stiglo — novac je siguran, obrada u tijeku';
     case PaymentStage.minted:
-      return 'EURe iskovan — priprema isporuke';
     case PaymentStage.forwarding:
-      return 'Prosljeđivanje primatelju…';
+      return 'Uplata zaprimljena ✓';
     case PaymentStage.settled:
       return 'Primljeno ✓';
     case PaymentStage.rejected:
@@ -167,12 +179,20 @@ String? stageNote(PaymentStatus s) {
     case PaymentStage.awaitingPayment:
       return blindWindowCopy(s.elapsedSeconds);
     case PaymentStage.receivedProcessing:
-      return 'Stiglo je — novac je siguran kod Moneriuma. '
-          'Radi se provjera. Ne moraš ništa.';
+      // Same copy as the checkout page overlay (updateSuccess in page.ts).
+      final slow = s.reviewExpected == true || s.secondsInStage > 60;
+      if (slow) {
+        return 'Izdavanje EURe-a je u tijeku. Prva uplata s novog računa ide '
+            'na provjeru kod Moneriuma i može potrajati, ponekad i nekoliko '
+            'sati. Novac je siguran i ne moraš ništa raditi.';
+      }
+      return s.reviewExpected == false
+          ? 'Izdavanje EURe-a je u tijeku. Obično traje nekoliko sekundi.'
+          : 'Izdavanje EURe-a je u tijeku. Novac je siguran i ne moraš '
+              'ništa raditi.';
     case PaymentStage.minted:
-      return null;
     case PaymentStage.forwarding:
-      return 'Transakcija poslana na blockchain, čeka se potvrda…';
+      return 'EURe je izdan i prosljeđuje se primatelju…';
     case PaymentStage.settled:
       return 'Potvrđeno on-chain. Gotovo!';
     case PaymentStage.rejected:

@@ -216,6 +216,9 @@ class _PaymentStatusPageState extends State<PaymentStatusPage> {
   Color _stageColor(PaymentStage stage) {
     switch (stage) {
       case PaymentStage.settled:
+      case PaymentStage.receivedProcessing:
+      case PaymentStage.minted:
+      case PaymentStage.forwarding:
         return _success;
       case PaymentStage.rejected:
       case PaymentStage.expired:
@@ -429,7 +432,9 @@ class _PaymentStatusPageState extends State<PaymentStatusPage> {
     final snap = _snapshot;
     final status = snap?.status;
     final stage = status?.stage ?? PaymentStage.awaitingPayment;
-    final settled = stage == PaymentStage.settled;
+    // Kiosk goes green the moment Monerium holds the funds (card-like
+    // approval); the EURe settlement note below tracks the rest.
+    final settled = stage == PaymentStage.settled || stage.isReceived;
     final color = settled
         ? _success
         : (stage == PaymentStage.rejected || stage == PaymentStage.expired)
@@ -477,6 +482,18 @@ class _PaymentStatusPageState extends State<PaymentStatusPage> {
                       ),
                     ),
                   ),
+                  if (stage.isReceived && status != null) ...[
+                    const SizedBox(height: 16),
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 48),
+                      child: Text(
+                        stageNote(status) ?? '',
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(
+                            fontSize: 18, height: 1.4, color: Colors.white),
+                      ),
+                    ),
+                  ],
                   if (stage == PaymentStage.awaitingPayment) ...[
                     const SizedBox(height: 12),
                     Text(

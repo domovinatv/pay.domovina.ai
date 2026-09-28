@@ -242,6 +242,17 @@ h1 { font-size: 1.5rem; margin: 0 0 .4rem; }
   text-decoration: none;
 }
 .success-modal .tx-link:hover { background: #EDF0F4; }
+.success-modal .settle-note {
+  margin: -.6rem 0 1rem; padding: .6rem .75rem; border-radius: .45rem;
+  background: var(--surface); color: var(--navy); font-size: .85rem; line-height: 1.45; text-align: left;
+}
+.success-modal .settle-note.done { background: #E0F1E5; color: var(--success); text-align: center; }
+.success-modal .settle-note .pulse-dot { display: inline-block; vertical-align: middle; margin-right: .4rem; color: var(--success); }
+.success-modal .details-btn {
+  display: block; margin: .9rem auto 0; padding: .4rem .8rem;
+  background: none; border: 0; color: var(--muted); font-size: .85rem;
+  text-decoration: underline; cursor: pointer;
+}
 footer {
   padding: 1rem 1.25rem; border-top: 1px solid var(--border);
   color: var(--muted); font-size: .8rem; text-align: center;
@@ -292,9 +303,11 @@ footer a { color: var(--navy); text-decoration: none; font-weight: 600; }
         <path d="M9 18.5l6 6 12-12" stroke="#FFFFFF" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
       </svg>
     </div>
-    <h2 id="successTitle">Plaćeno!</h2>
-    <p class="sub"><strong id="successAmount">—</strong> EURe stiglo je na primateljev Gnosis wallet.</p>
-    <a id="txLink" class="tx-link" href="#" target="_blank" rel="noopener">Pogledaj transakciju na Gnosisscanu →</a>
+    <h2 id="successTitle">Uplata zaprimljena!</h2>
+    <p class="sub"><strong id="successAmount">—</strong> EUR je stiglo.</p>
+    <p class="settle-note" id="successNote"></p>
+    <a id="txLink" class="tx-link" href="#" target="_blank" rel="noopener" style="display:none">Pogledaj transakciju na Gnosisscanu →</a>
+    <button type="button" class="details-btn" id="successDetails">Prikaži detalje</button>
   </div>
 </div>
 <footer>
@@ -463,6 +476,11 @@ function renderStatusBar(s) {
   } else if (stage === 'settled') {
     cls = 'paid';
     inner = '<span style="font-size:1.1em">✓</span> Uplata potvrđena — EURe kod primatelja';
+  } else if (isReceived(stage)) {
+    // Card-like: Monerium holds the funds → the payment is done from the
+    // payer's point of view. Only the EURe settlement is still pending.
+    cls = 'paid';
+    inner = '<span style="font-size:1.1em">✓</span> Uplata zaprimljena — EURe se izdaje';
   } else if (stage === 'awaiting_payment') {
     const remaining = Math.max(0, s.expires_at_unix - Math.floor(Date.now() / 1000));
     cls = 'pending';
@@ -483,7 +501,11 @@ function applyState(s) {
   renderStatusBar(s);
   if (s.status) renderTimeline(s.status);
   const stage = s.status ? s.status.stage : null;
-  if (stage === 'settled') showSuccess(s);
+  // Success the moment Monerium holds the funds (~1 s after the bank sent
+  // them), not after the EURe mint — a first payment from a new IBAN can sit
+  // in Monerium screening for hours. The overlay then tracks settlement.
+  if (isReceived(stage) || stage === 'settled') showSuccess(s);
+  if (stage === 'rejected') hideSuccess();
   // Once money verifiably left the bank leg, the QR is done its job —
   // collapse it so the timeline is the hero.
   if (stage && stage !== 'awaiting_payment' && stage !== 'expired') {
@@ -491,20 +513,64 @@ function applyState(s) {
   }
 }
 
+function isReceived(stage) {
+  return stage === 'received_processing' || stage === 'minted' || stage === 'forwarding';
+}
+
+let successShown = false;
+let successDismissed = false;
+
 function showSuccess(s) {
-  if ($('successOverlay').style.display !== 'none') return;
+  updateSuccess(s);
+  if (successShown || successDismissed) return;
+  successShown = true;
   $('successAmount').textContent = ((s.amount_received_cents != null ? s.amount_received_cents : (parseFloat(s.amount_eur) * 100)) / 100).toFixed(2);
-  const tx = (s.status && s.status.forward_tx_hash) || s.forward_tx_hash;
-  if (tx) {
-    $('txLink').href = 'https://gnosisscan.io/tx/' + tx;
-  } else {
-    $('txLink').style.display = 'none';
-  }
   $('successOverlay').style.display = 'flex';
+  // Chime + haptics exactly once per page, on the first success signal.
   ensureAudio();
   playChime();
   if (navigator.vibrate) { try { navigator.vibrate([60, 40, 120]); } catch {} }
 }
+
+/// Live settlement line inside the overlay — re-rendered on every poll.
+function updateSuccess(s) {
+  const status = s.status;
+  const stage = status ? status.stage : null;
+  const note = $('successNote');
+  if (stage === 'settled') {
+    note.className = 'settle-note done';
+    note.innerHTML = '✓ EURe je stigao na primateljev Gnosis wallet.';
+    const tx = (status && status.forward_tx_hash) || s.forward_tx_hash;
+    if (tx) {
+      $('txLink').href = 'https://gnosisscan.io/tx/' + tx;
+      $('txLink').style.display = 'inline-block';
+    }
+    return;
+  }
+  note.className = 'settle-note';
+  if (stage === 'minted' || stage === 'forwarding') {
+    note.innerHTML = '<span class="pulse-dot"></span>EURe je izdan i prosljeđuje se primatelju…';
+    return;
+  }
+  // received_processing: Monerium holds the funds, EURe not minted yet.
+  const slow = (status && status.review_expected === true) ||
+    (status && status.seconds_in_stage > 60);
+  // Honesty: "seconds" only for a payer we have seen settle before.
+  const known = status && status.review_expected === false;
+  note.innerHTML = '<span class="pulse-dot"></span>Izdavanje EURe-a je u tijeku. ' + (slow
+    ? 'Prva uplata s novog računa ide na provjeru kod Moneriuma i može potrajati, ponekad i nekoliko sati. ' +
+      'Novac je siguran i ne moraš ništa raditi. Ova stranica će se sama osvježiti.'
+    : known ? 'Obično traje nekoliko sekundi.' : 'Novac je siguran i ne moraš ništa raditi.');
+}
+
+function hideSuccess() {
+  $('successOverlay').style.display = 'none';
+}
+
+$('successDetails').addEventListener('click', () => {
+  successDismissed = true;
+  hideSuccess();
+});
 
 // 1 s ticker: countdown while waiting + live elapsed copy in the blind window.
 setInterval(() => {
