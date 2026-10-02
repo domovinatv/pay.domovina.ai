@@ -344,6 +344,29 @@ No partner review needed. Steps:
 2. Create production app at `monerium.app` (separate from sandbox app)
 3. Once profile is approved, production credentials are active immediately
 
+## Private vs OAuth — why "login with Monerium" needs a second app
+
+Checked in the production dashboard on 2026-10-02: the account has exactly **one** developer
+app, `pay.domovina.ai`, type **Private application**, status Live. Its permissions are
+Wallets: create address · IBAN: read/create/update · Orders: create payments. There is no
+Redirect URI field and no OAuth setting on the page — the app type is chosen at creation
+(Whitelabel / OAuth / Private) and cannot be changed afterwards.
+
+Consequences:
+
+- `client_credentials` with this app only ever acts on **our own** profile (ITalk d.o.o.):
+  webhooks, our IBANs, our wallets, our orders. Nothing in this repo uses
+  `authorization_code` / PKCE today.
+- Letting **other people** sign in with their own Monerium account (read their IBANs,
+  wallets, orders; place orders on their behalf) requires a **separate OAuth app**
+  (Authorization Code + PKCE, own Client ID, registered redirect URIs). Keep the Private
+  app for the backend — do not mix the two security contexts.
+- The same OAuth app can serve `monerium-wallet-ios` (which is waiting for a Client ID) by
+  adding a second redirect URI for the iOS app scheme. The full PKCE spec and SDK are
+  mirrored in that repo's `docs/`.
+- Dashboard URL contains the **App ID** (`/developers/apps/<app-id>`), which is **not** the
+  **Client ID** shown under Credentials. Token requests use the Client ID.
+
 ---
 
 ## Backend implementation notes (this repo)
