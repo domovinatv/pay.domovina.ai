@@ -1,5 +1,9 @@
 # Fable 5 nezavisni review — pay.domovina.ai (2026-07-07)
 
+> **Nastavak (2026-10-02):** drugi prolaz s F0 passom wallet crypta i statusom
+> svakog nalaza odavde je u `../2026-10-fable51/` (glavni deliverable
+> `implementation-plan.md`). Ovaj dokument ostaje kao povijest.
+
 Nezavisni review cijelog codebasea payment raila. Metoda: multi-agent
 fan-out (13 finder agenata po podsustavima) → dedup → adversarial verify.
 Svaki MONEY/SEC/BUG nalaz je traceovan protiv **stvarnog koda**, ne protiv

@@ -4,6 +4,8 @@ Povod: prelazak na model u kojem merchant ima vlastiti Monerium KYC/KYB račun, 
 u realnom vremenu javljamo stanje uplate (analogno Stripe webhookovima). U tom modelu
 obavijesti postaju proizvod, pa je pregled usmjeren na njih.
 
+Nastavak: `2026-10-fable51/` (Fable 5.1, 2026-10-02) potvrđuje status svih stavki odavde i nosi implementacijski plan.
+
 Povezano: [Monerium screening prve uplate](../research/2026-09-monerium-first-iban-screening.md). Nastavlja se na `docs/reviews/2026-07-fable5/` — tamo već popisani nalazi (BW-xx) ovdje su
 samo potvrđeni kao još otvoreni.
 
