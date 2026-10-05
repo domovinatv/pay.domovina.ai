@@ -32,6 +32,10 @@ function harness(over: Partial<ForwardDeps> = {}): { deps: ForwardDeps; rec: Rec
       isWhitelisted: async (_t, addr) => addr.toLowerCase() === PAYEE,
       safeAddress: SAFE,
       defaultTenantId: 'italk',
+      // Legacy (ITalk) rail — ADR 0017 fields at their pre-multi-tenant values.
+      railTenantId: 'italk',
+      requireMintAt: null,
+      maxForwardCents: null,
     },
     getForwardByOrder: async () => null,
     insertForward: async (args) => {
@@ -237,6 +241,68 @@ describe('maybeForward idempotency', () => {
     const { deps, rec } = harness({ getForwardByOrder: async () => ({ status: 'failed' }) });
     await maybeForward(deps, order(`mpt:${PAYEE}?sid=abc123def456`));
     expect(rec.forwards).toHaveLength(1);
+  });
+});
+
+describe('live-forward latch (migration 0016)', () => {
+  // Simulates ux_forwards_live: the first live insert for an order wins,
+  // every later one is refused with id 0.
+  function latched(): Partial<ForwardDeps> & { claimed: Set<string> } {
+    const claimed = new Set<string>();
+    return {
+      claimed,
+      insertForward: async (args) => {
+        const live = args.status === 'pending' || args.status === 'submitted' || args.status === 'confirmed';
+        if (live && claimed.has(args.orderId)) return 0;
+        if (live) claimed.add(args.orderId);
+        return claimed.size;
+      },
+    };
+  }
+
+  it('broadcasts exactly once when two deliveries race past the early check', async () => {
+    const latch = latched();
+    const { deps, rec } = harness({ insertForward: latch.insertForward });
+    const o = order(`mpt:${PAYEE}?sid=abc123def456`);
+    await Promise.all([maybeForward(deps, o), maybeForward(deps, o)]);
+    expect(rec.forwards).toHaveLength(1);
+    expect(rec.polls).toBe(1);
+  });
+
+  it('settles a self-target no-op only once', async () => {
+    const latch = latched();
+    const base = harness().deps.authorize;
+    const { deps, rec } = harness({
+      insertForward: latch.insertForward,
+      authorize: { ...base, getIntentBySid: async () => ({ target_address: SAFE, tenant_id: 'italk' }) },
+    });
+    const o = order(`mpt:${SAFE}?sid=abc123def456`);
+    await handleForward(deps, o);
+    await handleForward(deps, o);
+    expect(rec.settledNonRouted).toBe(1);
+  });
+
+  it('a failed row does not hold the latch — the retry broadcasts', async () => {
+    const claimed = new Set<string>();
+    const { deps, rec } = harness({
+      insertForward: async (args) => {
+        if (args.status === 'pending' && claimed.has(args.orderId)) return 0;
+        if (args.status === 'pending') claimed.add(args.orderId);
+        return 1;
+      },
+      updateForward: async (_id, patch) => {
+        // failed status releases the partial-index slot
+        if (patch.status === 'failed') claimed.clear();
+      },
+      forward: (() => {
+        let n = 0;
+        return async () => (n++ === 0 ? { ok: false, error: 'rpc down' } : { ok: true, txHash: '0xbeef' as `0x${string}` });
+      })(),
+    });
+    const o = order(`mpt:${PAYEE}?sid=abc123def456`);
+    await handleForward(deps, o);
+    await handleForward(deps, o);
+    expect(rec.polls).toBe(1);
   });
 });
 

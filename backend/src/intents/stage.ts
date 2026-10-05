@@ -3,6 +3,7 @@ import type { PaymentIntentRow } from './db';
 import type { MoneriumOrderRow, MoneriumForwardRow } from '../monerium/db';
 import { getMoneriumOrder, getForwardByOrder, isKnownPayer } from '../monerium/db';
 import { makeConfirmDeps, settleConfirmedForward } from './confirm';
+import { defaultTenantId } from '../tenants/whitelist';
 import type { Hex } from 'viem';
 
 /// Canonical per-stage payment status — "gdje su moji novci".
@@ -304,6 +305,11 @@ export async function loadStageContext(
       .first<MoneriumOrderRow>();
     order = row ?? null;
   }
+  // ADR 0017: an order received on another tenant's IBAN never advances this
+  // intent's timeline, even if its memo carries this sid.
+  if (order && (order.tenant_id ?? defaultTenantId(env)) !== (intent.tenant_id ?? defaultTenantId(env))) {
+    order = null;
+  }
   const forward = order ? await getForwardByOrder(env, order.id) : null;
   // Only worth a query while Monerium still holds the funds.
   const knownPayer = order && order.state !== 'processed' && order.state !== 'rejected'
@@ -326,7 +332,7 @@ export async function confirmForwardIfMined(
   if (forward.status !== 'submitted' || !forward.tx_hash) return;
   try {
     const deps = makeConfirmDeps(env);
-    const status = await deps.getForwardStatus(forward.tx_hash as Hex);
+    const status = await deps.getForwardStatus(forward.tx_hash as Hex, forward.tenant_id);
     if (status === 'confirmed') {
       await settleConfirmedForward(deps, forward);
     } else if (status === 'failed') {

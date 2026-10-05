@@ -9,6 +9,7 @@ import {
   updateForward,
 } from '../monerium/db';
 import { getForwardStatus } from '../router/safe';
+import { publishIntentChange } from './stream';
 import { parseCampaignIdFromText, type SenderInfo } from '../monerium/sid';
 import type { PaymentIntentRow } from './db';
 import { getIntent, markIntentLate, markIntentPaid } from './db';
@@ -39,10 +40,13 @@ import {
 export type SettleableForward = Pick<
   MoneriumForwardRow,
   'id' | 'order_id' | 'sid' | 'tx_hash' | 'amount_cents' | 'memo_prefix' | 'target_address'
->;
+> & {
+  /// Tenant whose chain the receipt lives on (ADR 0017). Absent/NULL = legacy.
+  tenant_id?: string | null;
+};
 
 export interface ConfirmDeps {
-  getForwardStatus(txHash: Hex): Promise<'pending' | 'confirmed' | 'failed' | 'unknown'>;
+  getForwardStatus(txHash: Hex, tenantId?: string | null): Promise<'pending' | 'confirmed' | 'failed' | 'unknown'>;
   /// Atomic `submitted → confirmed` flip; true only for the caller that won.
   confirmForwardOnce(forwardId: number): Promise<boolean>;
   markForwardFailed(forwardId: number, error: string): Promise<void>;
@@ -83,11 +87,14 @@ export interface ConfirmDeps {
   }): Promise<void>;
   listSubmittedForwards(olderThanUnix: number): Promise<MoneriumForwardRow[]>;
   sleep(ms: number): Promise<void>;
+  /// Poke the intent's SSE stream after settlement (ADR 0017). Optional and
+  /// fail-soft: the stream's own heartbeat re-read is the backstop.
+  publish?(sid: string): Promise<void>;
 }
 
 export function makeConfirmDeps(env: Env): ConfirmDeps {
   return {
-    getForwardStatus: (txHash) => getForwardStatus(env, txHash),
+    getForwardStatus: (txHash, tenantId) => getForwardStatus(env, txHash, tenantId ?? null),
     confirmForwardOnce: (id) => confirmForwardOnce(env, id),
     markForwardFailed: (id, error) => updateForward(env, id, { status: 'failed', error }),
     getOrder: (orderId) => getMoneriumOrder(env, orderId),
@@ -99,6 +106,7 @@ export function makeConfirmDeps(env: Env): ConfirmDeps {
     emitCampaignContribution: (args) => emitCampaignContributionWebhook(env, args),
     listSubmittedForwards: (olderThan) => listSubmittedForwardsOlderThan(env, olderThan),
     sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+    publish: (sid) => publishIntentChange(env, sid),
   };
 }
 
@@ -135,6 +143,7 @@ export async function settleConfirmedForward(
       amountCents: fwd.amount_cents,
       sender,
     });
+    await deps.publish?.(fwd.sid);
   }
   // Permanent campaign QR (`cmp:`): one contribution per Monerium order.
   // Single-fire now rests on the atomic flip above (previously on
@@ -174,7 +183,9 @@ export async function settleNonRoutedPaid(
     sender: SenderInfo;
   },
 ): Promise<boolean> {
-  return flipPaidAndNotify(deps, { ...args, forwardTxHash: null });
+  const flipped = await flipPaidAndNotify(deps, { ...args, forwardTxHash: null });
+  await deps.publish?.(args.sid);
+  return flipped;
 }
 
 /// Primary confirmation path: poll the receipt right after broadcast, inside
@@ -187,7 +198,7 @@ export async function pollForwardConfirmation(
   if (!fwd.tx_hash) return 'timeout';
   for (const delayMs of CONFIRM_POLL_DELAYS_MS) {
     await deps.sleep(delayMs);
-    const status = await deps.getForwardStatus(fwd.tx_hash as Hex);
+    const status = await deps.getForwardStatus(fwd.tx_hash as Hex, fwd.tenant_id);
     if (status === 'confirmed') {
       await settleConfirmedForward(deps, fwd);
       return 'confirmed';
@@ -214,7 +225,7 @@ export async function reconcileSubmittedForwards(
   let failed = 0;
   for (const fwd of rows) {
     if (!fwd.tx_hash) continue;
-    const status = await deps.getForwardStatus(fwd.tx_hash as Hex);
+    const status = await deps.getForwardStatus(fwd.tx_hash as Hex, fwd.tenant_id);
     if (status === 'confirmed') {
       if (await settleConfirmedForward(deps, fwd)) confirmed++;
     } else if (status === 'failed') {

@@ -34,6 +34,10 @@ function deps(over: Partial<AuthorizeDeps> = {}): AuthorizeDeps {
     isWhitelisted: async (_t, addr) => addr.toLowerCase() === PAYEE,
     safeAddress: SAFE,
     defaultTenantId: 'italk',
+    // Legacy (ITalk) rail — ADR 0017 fields at their pre-multi-tenant values.
+    railTenantId: 'italk',
+    requireMintAt: null,
+    maxForwardCents: null,
     ...over,
   };
 }
@@ -273,5 +277,157 @@ describe('parseAllowSources', () => {
     expect(parseAllowSources('not json')).toEqual([]);
     expect(parseAllowSources('{"wallet_registry":true}')).toEqual([]);
     expect(parseAllowSources(null)).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ADR 0017 — money that landed on tenant X's IBAN stays inside tenant X.
+// ---------------------------------------------------------------------------
+
+const A_MAIN = '0xa000000000000000000000000000000000000001';    // zupa-a: IBAN-linked Safe
+const A_PURPOSE = '0xa000000000000000000000000000000000000002'; // zupa-a: Safe "elektrana"
+const B_PURPOSE = '0xb000000000000000000000000000000000000002'; // zupa-b: Safe "krov"
+
+function tenantDeps(over: Partial<AuthorizeDeps> = {}): AuthorizeDeps {
+  return {
+    getIntentBySid: async (sid) => {
+      if (sid === 'sid-of-a') return { target_address: A_PURPOSE, tenant_id: 'zupa-a' };
+      if (sid === 'sid-of-b') return { target_address: B_PURPOSE, tenant_id: 'zupa-b' };
+      if (sid === 'sid-legacy') return { target_address: PAYEE, tenant_id: null };
+      return null;
+    },
+    getCampaignById: async (id) =>
+      id === 'cmp-of-b' ? { tenant_id: 'zupa-b', safe_address: B_PURPOSE } : null,
+    getTenantStatus: async (id) => (id === 'zupa-a' || id === 'zupa-b' || id === 'italk' ? 'active' : null),
+    isWhitelisted: async (t, addr) =>
+      (t === 'zupa-a' && addr.toLowerCase() === A_PURPOSE) ||
+      (t === 'zupa-b' && addr.toLowerCase() === B_PURPOSE),
+    safeAddress: A_MAIN,
+    defaultTenantId: 'italk',
+    railTenantId: 'zupa-a',
+    requireMintAt: A_MAIN,
+    maxForwardCents: 500_000,
+    ...over,
+  };
+}
+
+const mintedToA = { mintAddress: A_MAIN, amountCents: 10_000 };
+
+describe('authorizeForward — tenant isolation (ADR 0017)', () => {
+  it("forwards tenant A's money to tenant A's whitelisted purpose Safe", async () => {
+    const d = await authorizeForward(
+      tenantDeps(),
+      routing({ target: A_PURPOSE, diagnosticTarget: A_PURPOSE, sid: 'sid-of-a' }),
+      mintedToA,
+    );
+    expect(d).toEqual({ action: 'forward', tenantId: 'zupa-a' });
+  });
+
+  it("parks money on A's IBAN that carries tenant B's sid — never reaches B's Safe", async () => {
+    const d = await authorizeForward(
+      tenantDeps(),
+      routing({ target: B_PURPOSE, diagnosticTarget: B_PURPOSE, sid: 'sid-of-b' }),
+      mintedToA,
+    );
+    expect(d).toEqual({ action: 'park', tenantId: 'zupa-b', reason: 'tenant_mismatch' });
+  });
+
+  it("parks money on A's IBAN that carries tenant B's campaign", async () => {
+    const d = await authorizeForward(
+      tenantDeps(),
+      routing({ prefix: 'cmp', sid: null, campaignId: 'cmp-of-b', target: B_PURPOSE, diagnosticTarget: B_PURPOSE }),
+      mintedToA,
+    );
+    expect(d).toMatchObject({ action: 'park', reason: 'tenant_mismatch' });
+  });
+
+  it("parks a pre-tenant (ITalk) intent paid to A's IBAN", async () => {
+    const d = await authorizeForward(
+      tenantDeps(),
+      routing({ target: PAYEE, diagnosticTarget: PAYEE, sid: 'sid-legacy' }),
+      mintedToA,
+    );
+    expect(d).toEqual({ action: 'park', tenantId: 'italk', reason: 'tenant_mismatch' });
+  });
+
+  it("parks on ITalk's rail an order naming tenant A's intent", async () => {
+    const d = await authorizeForward(
+      tenantDeps({ railTenantId: 'italk', requireMintAt: null, safeAddress: SAFE, maxForwardCents: null }),
+      routing({ target: A_PURPOSE, diagnosticTarget: A_PURPOSE, sid: 'sid-of-a' }),
+    );
+    expect(d).toEqual({ action: 'park', tenantId: 'zupa-a', reason: 'tenant_mismatch' });
+  });
+
+  it("parks A's own intent if the memo was rewritten to B's Safe (binding)", async () => {
+    const d = await authorizeForward(
+      tenantDeps(),
+      routing({ target: B_PURPOSE, diagnosticTarget: B_PURPOSE, sid: 'sid-of-a' }),
+      mintedToA,
+    );
+    expect(d).toEqual({ action: 'park', tenantId: 'zupa-a', reason: 'target_mismatch' });
+  });
+
+  it("parks an address that is on B's whitelist but not on A's", async () => {
+    const d = await authorizeForward(
+      tenantDeps({
+        getIntentBySid: async () => ({ target_address: B_PURPOSE, tenant_id: 'zupa-a' }),
+      }),
+      routing({ target: B_PURPOSE, diagnosticTarget: B_PURPOSE, sid: 'sid-of-a' }),
+      mintedToA,
+    );
+    expect(d).toEqual({ action: 'park', tenantId: 'zupa-a', reason: 'not_whitelisted' });
+  });
+
+  it('parks when Monerium minted somewhere other than the Safe we sign from', async () => {
+    const r = routing({ target: A_PURPOSE, diagnosticTarget: A_PURPOSE, sid: 'sid-of-a' });
+    expect(await authorizeForward(tenantDeps(), r, { mintAddress: A_PURPOSE, amountCents: 100 }))
+      .toEqual({ action: 'park', tenantId: 'zupa-a', reason: 'mint_address_mismatch' });
+    expect(await authorizeForward(tenantDeps(), r, { mintAddress: null, amountCents: 100 }))
+      .toMatchObject({ reason: 'mint_address_mismatch' });
+    expect(await authorizeForward(tenantDeps(), r))
+      .toMatchObject({ reason: 'mint_address_mismatch' });
+  });
+
+  it('compares the mint address case-insensitively', async () => {
+    const d = await authorizeForward(
+      tenantDeps(),
+      routing({ target: A_PURPOSE, diagnosticTarget: A_PURPOSE, sid: 'sid-of-a' }),
+      { mintAddress: A_MAIN.toUpperCase().replace('0X', '0x'), amountCents: 100 },
+    );
+    expect(d.action).toBe('forward');
+  });
+
+  it('parks at or above the per-forward cap (strict, like the on-chain LessThan)', async () => {
+    const r = routing({ target: A_PURPOSE, diagnosticTarget: A_PURPOSE, sid: 'sid-of-a' });
+    expect(await authorizeForward(tenantDeps(), r, { mintAddress: A_MAIN, amountCents: 500_000 }))
+      .toEqual({ action: 'park', tenantId: 'zupa-a', reason: 'over_cap' });
+    expect(await authorizeForward(tenantDeps(), r, { mintAddress: A_MAIN, amountCents: 499_999 }))
+      .toEqual({ action: 'forward', tenantId: 'zupa-a' });
+    expect(await authorizeForward(tenantDeps(), r, { mintAddress: A_MAIN, amountCents: null }))
+      .toMatchObject({ reason: 'over_cap' });
+  });
+
+  it("treats a memo at the tenant's own main Safe as the no-op — not ITalk's Safe", async () => {
+    const own = await authorizeForward(
+      tenantDeps({ getIntentBySid: async () => ({ target_address: A_MAIN, tenant_id: 'zupa-a' }) }),
+      routing({ target: A_MAIN, diagnosticTarget: A_MAIN, sid: 'sid-of-a' }),
+      mintedToA,
+    );
+    expect(own).toEqual({ action: 'self_noop', tenantId: 'zupa-a' });
+    const italkSafe = await authorizeForward(
+      tenantDeps({ getIntentBySid: async () => ({ target_address: SAFE, tenant_id: 'zupa-a' }) }),
+      routing({ target: SAFE, diagnosticTarget: SAFE, sid: 'sid-of-a' }),
+      mintedToA,
+    );
+    expect(italkSafe).toEqual({ action: 'park', tenantId: 'zupa-a', reason: 'not_whitelisted' });
+  });
+
+  it('parks when the tenant is suspended', async () => {
+    const d = await authorizeForward(
+      tenantDeps({ getTenantStatus: async () => 'suspended' }),
+      routing({ target: A_PURPOSE, diagnosticTarget: A_PURPOSE, sid: 'sid-of-a' }),
+      mintedToA,
+    );
+    expect(d).toMatchObject({ action: 'park', reason: 'tenant_suspended' });
   });
 });

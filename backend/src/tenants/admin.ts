@@ -21,6 +21,7 @@ import {
 import { generateApiKey } from './auth';
 import { trySendAlert } from '../alerts';
 import { renderWhitelistPage } from '../admin/views';
+import { mountRailAdmin } from './railAdmin';
 
 /// Admin surface for the tenant payout whitelist. Mounted under `/admin/*`,
 /// which the existing Basic Auth middleware in ../admin/app.ts already gates —
@@ -34,7 +35,7 @@ const ID_RE = /^[A-Za-z0-9_-]{2,64}$/;
 
 /// Basic Auth username of the caller, for the audit trail. The middleware has
 /// already verified the credentials — we only decode them for attribution.
-function actorFrom(header: string | undefined): string {
+export function actorFrom(header: string | undefined): string {
   if (!header?.startsWith('Basic ')) return 'admin:unknown';
   try {
     const user = atob(header.slice(6)).split(':')[0];
@@ -45,6 +46,7 @@ function actorFrom(header: string | undefined): string {
 }
 
 export function mountTenantAdmin(app: Hono<{ Bindings: Env }>): void {
+  mountRailAdmin(app);
   app.get('/admin/whitelist', (c) => c.html(renderWhitelistPage()));
 
   app.get('/admin/api/tenants', async (c) => {

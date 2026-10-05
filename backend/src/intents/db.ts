@@ -180,16 +180,18 @@ export async function listIntents(
 
 /// Cron-driven sweep: flip overdue pending intents to expired. Idempotent.
 /// Returns number of intents flipped.
-export async function sweepExpiredIntents(env: Env): Promise<number> {
+/// Returns the sids that flipped, so their SSE streams can be told.
+export async function sweepExpiredIntents(env: Env): Promise<string[]> {
   const res = await env.DB.prepare(
     `UPDATE payment_intents
         SET state = 'expired'
       WHERE state = 'pending'
-        AND expires_at < ?`,
+        AND expires_at < ?
+      RETURNING sid`,
   )
     .bind(Math.floor(Date.now() / 1000))
-    .run();
-  return (res.meta?.changes ?? 0) as number;
+    .all<{ sid: string }>();
+  return res.results.map((r) => r.sid);
 }
 
 /// Find intent matching a Monerium order via the sid extracted from memo.

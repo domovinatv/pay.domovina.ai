@@ -68,6 +68,16 @@ export interface Env {
   DEFAULT_TENANT_ID: string;          // tenant assumed when a caller sends no API key; default 'italk'
   INTENT_REQUIRE_TENANT_KEY: string;  // "1" → POST /api/intents demands a tenant key; anything else → soft mode
 
+  // Multi-tenant rail (ADR 0017). Every tenant other than DEFAULT_TENANT_ID
+  // has its own Monerium account, webhook and signer in `tenant_rail`.
+  MULTI_TENANT_RAIL: string;          // "1" → tenant rails live; anything else → only the default tenant
+  TENANT_SECRETS_KEK: string;         // SECRET — base64 of 32 bytes; AES-GCM key for tenant_rail *_enc columns
+  INTENT_SSE: string;                 // "1" → GET /api/intents/:sid/stream serves SSE; else 404 as before
+  /// Durable Object namespace holding one SSE hub per sid (src/intents/stream.ts).
+  /// Optional so environments without the binding (tests, old deploys) keep
+  /// the 404 + polling behaviour.
+  INTENT_STREAM?: DurableObjectNamespace;
+
   // Operator alerting (src/alerts.ts). Both unset → alerts degrade to console
   // warnings; never fatal, never on a money path's critical section.
   TELEGRAM_BOT_TOKEN: string;       // SECRET — @BotFather token

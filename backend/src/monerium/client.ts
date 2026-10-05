@@ -1,11 +1,10 @@
 import type { Env } from '../types';
+import { legacyRail, type MoneriumCreds } from '../tenants/rail';
 import type {
   MoneriumOrder,
   MoneriumProfile,
   MoneriumTokenResponse,
 } from './types';
-
-const TOKEN_KEY = 'monerium:access_token';
 
 /// Monerium uses a custom Accept header to select API version. v2 is required
 /// for `/profiles`, `/orders`, `/webhooks` and the modern shape used by the
@@ -21,6 +20,16 @@ interface MoneriumAuthContext {
   [k: string]: unknown;
 }
 
+export interface MoneriumIban {
+  iban: string;
+  bic?: string;
+  profile?: string;
+  /// Address the IBAN mints to.
+  address?: string;
+  chain?: string;
+  [k: string]: unknown;
+}
+
 export interface MoneriumWebhookSubscription {
   id: string;
   url?: string;
@@ -30,21 +39,23 @@ export interface MoneriumWebhookSubscription {
 }
 
 /// Fetches an OAuth2 client_credentials access token and caches it in KV
-/// for slightly less than its declared TTL.
-async function getAccessToken(env: Env): Promise<string> {
-  const cached = await env.TOKEN_CACHE.get(TOKEN_KEY);
+/// for slightly less than its declared TTL. The cache key is per tenant
+/// (ADR 0017): ITalk keeps the historical `monerium:access_token`, every
+/// other tenant gets `monerium:access_token:<tenant>`.
+async function getAccessToken(env: Env, creds: MoneriumCreds): Promise<string> {
+  const cached = await env.TOKEN_CACHE.get(creds.tokenCacheKey);
   if (cached) return cached;
-  if (!env.MONERIUM_CLIENT_ID || !env.MONERIUM_CLIENT_SECRET) {
+  if (!creds.clientId || !creds.clientSecret) {
     throw new Error(
       'Monerium credentials missing: set MONERIUM_CLIENT_ID and MONERIUM_CLIENT_SECRET',
     );
   }
   const body = new URLSearchParams({
     grant_type: 'client_credentials',
-    client_id: env.MONERIUM_CLIENT_ID,
-    client_secret: env.MONERIUM_CLIENT_SECRET,
+    client_id: creds.clientId,
+    client_secret: creds.clientSecret,
   });
-  const res = await fetch(`${env.MONERIUM_BASE_URL}/auth/token`, {
+  const res = await fetch(`${creds.baseUrl}/auth/token`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/x-www-form-urlencoded',
@@ -59,18 +70,25 @@ async function getAccessToken(env: Env): Promise<string> {
   }
   const json = (await res.json()) as MoneriumTokenResponse;
   const ttl = Math.max(60, json.expires_in - 60);
-  await env.TOKEN_CACHE.put(TOKEN_KEY, json.access_token, {
+  await env.TOKEN_CACHE.put(creds.tokenCacheKey, json.access_token, {
     expirationTtl: ttl,
   });
   return json.access_token;
 }
 
 export class MoneriumClient {
-  constructor(private env: Env) {}
+  private creds: MoneriumCreds;
+
+  /// Without `creds` the client acts for the default (ITalk) tenant from env,
+  /// exactly as before ADR 0017. Pass a tenant's `TenantRail.monerium` to act
+  /// on that tenant's own Monerium account.
+  constructor(private env: Env, creds?: MoneriumCreds) {
+    this.creds = creds ?? legacyRail(env).monerium;
+  }
 
   private async call<T>(path: string, init?: RequestInit): Promise<T> {
-    const token = await getAccessToken(this.env);
-    const res = await fetch(`${this.env.MONERIUM_BASE_URL}${path}`, {
+    const token = await getAccessToken(this.env, this.creds);
+    const res = await fetch(`${this.creds.baseUrl}${path}`, {
       ...init,
       headers: {
         Authorization: `Bearer ${token}`,
@@ -96,11 +114,12 @@ export class MoneriumClient {
   }
 
   /// Picks the profile to operate on. Order of resolution:
-  ///   1. MONERIUM_PROFILE_ID env override
+  ///   1. configured profile (MONERIUM_PROFILE_ID for ITalk; always set for
+  ///      other tenants — `tenant_rail.profile_id`)
   ///   2. /auth/context default profile (what the access token is scoped to)
   ///   3. first profile from /profiles list
   async resolveProfileId(): Promise<string> {
-    if (this.env.MONERIUM_PROFILE_ID) return this.env.MONERIUM_PROFILE_ID;
+    if (this.creds.profileId) return this.creds.profileId;
     try {
       const ctx = await this.getAuthContext();
       const fromCtx =
@@ -129,6 +148,16 @@ export class MoneriumClient {
 
   async getOrder(orderId: string): Promise<MoneriumOrder> {
     return this.call<MoneriumOrder>(`/orders/${orderId}`);
+  }
+
+  /// IBANs of a profile and the address each one mints to
+  /// (`GET /ibans?profile=` → `{ ibans: [...] }`, SDK 4.2 `IBANsResponse`).
+  async listIbans(profileId: string): Promise<MoneriumIban[]> {
+    const res = await this.call<{ ibans?: MoneriumIban[] } | MoneriumIban[]>(
+      `/ibans?profile=${encodeURIComponent(profileId)}`,
+    );
+    if (Array.isArray(res)) return res;
+    return res.ibans ?? [];
   }
 
   async listWebhookSubscriptions(): Promise<MoneriumWebhookSubscription[]> {

@@ -19,7 +19,9 @@ import {
   type ParkReason,
 } from '../tenants/whitelist';
 import { writeAudit } from '../tenants/db';
+import type { TenantRail } from '../tenants/rail';
 import { sendAlert } from '../alerts';
+import { publishIntentChange } from '../intents/stream';
 
 /// The forward hop: EURe that Monerium minted into the MPT Safe is pushed on
 /// to the payee. Extracted out of index.ts so the fail-closed branches are
@@ -43,6 +45,7 @@ export interface ForwardDeps {
   }): Promise<boolean>;
   pollConfirmation(fwd: {
     id: number;
+    tenant_id: string | null;
     order_id: string;
     sid: string | null;
     tx_hash: string;
@@ -51,6 +54,8 @@ export interface ForwardDeps {
     target_address: string;
   }): Promise<'confirmed' | 'failed' | 'timeout'>;
   alert(text: string): Promise<void>;
+  /// Poke the intent's SSE stream (ADR 0017). Optional, fail-soft.
+  publish?(sid: string | null): Promise<void>;
   audit(entry: {
     tenantId: string | null;
     action: string;
@@ -69,16 +74,21 @@ export interface ForwardDeps {
   }): Promise<void>;
 }
 
-export function makeForwardDeps(env: Env): ForwardDeps {
+/// Deps for one tenant's rail (ADR 0017). Everything that decides or moves
+/// value is bound to `rail`: whose intents it may settle, which Safe the money
+/// must be in, and which signer moves it. Forward rows are stamped with the
+/// tenant so confirmation reads the right chain.
+export function makeForwardDeps(env: Env, rail: TenantRail): ForwardDeps {
   return {
-    authorize: makeAuthorizeDeps(env),
+    authorize: makeAuthorizeDeps(env, rail),
     getForwardByOrder: (orderId) => getForwardByOrder(env, orderId),
-    insertForward: (args) => insertForward(env, args),
+    insertForward: (args) => insertForward(env, { ...args, tenantId: rail.tenantId }),
     updateForward: (id, patch) => updateForward(env, id, patch),
-    forward: (args) => forwardViaSafe(env, args),
+    forward: (args) => forwardViaSafe(rail.signer, args),
     settleNonRoutedPaid: (args) => settleNonRoutedPaid(makeConfirmDeps(env), args),
     pollConfirmation: (fwd) => pollForwardConfirmation(makeConfirmDeps(env), fwd),
     alert: (text) => sendAlert(env, text),
+    publish: (sid) => publishIntentChange(env, sid),
     audit: (entry) => writeAudit(env, entry),
     emitBlocked: (args) => emitForwardBlockedWebhook(env, args),
   };
@@ -106,6 +116,8 @@ export async function maybeForward(
   deps: ForwardDeps,
   order: MoneriumOrder,
 ): Promise<void> {
+  // Cheap early exit for the common retry. NOT the guard — the atomic latch
+  // on insertForward is (check-then-act here would race, BW-02).
   const existing = await deps.getForwardByOrder(order.id);
   if (existing && (existing.status === 'submitted' || existing.status === 'confirmed')) {
     console.log(`forward ${order.id} already ${existing.status}, skipping`);
@@ -123,7 +135,10 @@ export async function handleForward(
   const amountCents = parseAmountCents(order.amount);
 
   // ---- Single authorisation gate. No forward path bypasses this. ----
-  const decision = await authorizeForward(deps.authorize, routing);
+  const decision = await authorizeForward(deps.authorize, routing, {
+    mintAddress: order.address ?? null,
+    amountCents,
+  });
 
   if (decision.action === 'park') {
     await park(deps, {
@@ -150,6 +165,10 @@ export async function handleForward(
       status: 'confirmed',
       error: 'self_target_noop',
     });
+    if (forwardId === 0) {
+      console.log(`forward ${order.id} self_noop already claimed by a concurrent delivery`);
+      return;
+    }
     if (routing.sid) {
       await deps.settleNonRoutedPaid({
         sid: routing.sid,
@@ -174,6 +193,12 @@ export async function handleForward(
     memoPrefix: routing.prefix,
     status: 'pending',
   });
+  // The INSERT is the decision (migration 0016 latch): a concurrent delivery
+  // that lost the race must not broadcast a second transfer.
+  if (forwardId === 0) {
+    console.log(`forward ${order.id} already claimed by a concurrent delivery, skipping`);
+    return;
+  }
   const result = await deps.forward({
     target: target as Address,
     amountWei,
@@ -189,6 +214,7 @@ export async function handleForward(
       attempts: 1,
     });
     console.error(`forward ${order.id} FAILED: ${result.error}`);
+    await safely(deps.publish?.(routing.sid) ?? Promise.resolve());
     // Money is minted but parked in the MPT Safe and nothing retries a
     // failed broadcast automatically (Fable5 BW-04) — an operator must know.
     await safely(deps.alert(
@@ -206,6 +232,7 @@ export async function handleForward(
     attempts: 1,
   });
   console.log(`forward ${order.id} → ${target} tx=${result.txHash}`);
+  await safely(deps.publish?.(routing.sid) ?? Promise.resolve());
   // 'paid' + the merchant/campaign webhooks fire on ON-CHAIN CONFIRMATION, not
   // on broadcast — a forward that later reverts must never have told the
   // merchant "plaćeno". If this poll is evicted, the cron reconcile and the
@@ -213,6 +240,7 @@ export async function handleForward(
   // atomic submitted → confirmed flip, so effects stay single-fire.
   const outcome = await deps.pollConfirmation({
     id: forwardId,
+    tenant_id: deps.authorize.railTenantId,
     order_id: order.id,
     sid: routing.sid,
     tx_hash: result.txHash!,
@@ -220,6 +248,7 @@ export async function handleForward(
     memo_prefix: routing.prefix,
     target_address: target,
   });
+  await safely(deps.publish?.(routing.sid) ?? Promise.resolve());
   if (outcome === 'timeout') {
     console.log(`forward ${order.id} unconfirmed after poll window — cron reconcile will settle`);
   } else if (outcome === 'failed') {
@@ -294,6 +323,8 @@ async function park(
       `adresa iz memo-a: <code>${observed || '-'}</code>\n` +
       `tenant: <code>${tenantId ?? '-'}</code> · prefix: <code>${routing.prefix ?? '-'}</code>`,
   ));
+
+  await safely(deps.publish?.(routing.sid) ?? Promise.resolve());
 
   // Only worth telling the merchant when there is something to correlate on.
   if (routing.sid || routing.campaignId) {

@@ -13,9 +13,10 @@ import {
   type Hex,
 } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
-import { gnosis } from 'viem/chains';
+import { gnosis, gnosisChiado } from 'viem/chains';
 
 import type { Env } from '../types';
+import { getTenantRail, isLegacyTenant, legacyRail, type RailChain, type RailSigner } from '../tenants/rail';
 
 /// EURe (Monerium EUR e-money token on Gnosis) — ERC-20 with `transfer`.
 const EURE_ABI = [
@@ -128,26 +129,29 @@ export interface ForwardResult {
 /// Returns the broadcast TX hash; does NOT wait for confirmation (the caller
 /// already runs inside `c.executionCtx.waitUntil(...)` to keep the webhook
 /// response fast — confirmation polling happens separately).
+///
+/// `signer` is the tenant's rail (ADR 0017): ITalk's comes from env exactly as
+/// before; any other tenant signs with ITS router EOA through ITS Roles
+/// Modifier, whose avatar is ITS receiving Safe — never ITalk's.
 export async function forwardViaSafe(
-  env: Env,
+  signer: RailSigner,
   args: ForwardArgs,
 ): Promise<ForwardResult> {
-  if (!env.ROUTER_PRIVATE_KEY) return { ok: false, error: 'router_disabled: no ROUTER_PRIVATE_KEY' };
-  if (!env.ROLES_MODIFIER_ADDRESS) return { ok: false, error: 'router_disabled: no ROLES_MODIFIER_ADDRESS' };
-  if (!env.ROLE_KEY) return { ok: false, error: 'router_disabled: no ROLE_KEY' };
+  if (!signer.privateKey) return { ok: false, error: 'router_disabled: no ROUTER_PRIVATE_KEY' };
+  if (!signer.rolesModifier) return { ok: false, error: 'router_disabled: no ROLES_MODIFIER_ADDRESS' };
+  if (!signer.roleKey) return { ok: false, error: 'router_disabled: no ROLE_KEY' };
   if (!isAddress(args.target)) return { ok: false, error: `invalid target: ${args.target}` };
   if (args.amountWei <= 0n) return { ok: false, error: `invalid amount: ${args.amountWei}` };
 
-  const account = privateKeyToAccount(normalizeHex(env.ROUTER_PRIVATE_KEY) as Hex);
-  const rpcUrl = env.GNOSIS_RPC_URL || 'https://rpc.gnosischain.com';
-  const wallet = createWalletClient({ account, chain: gnosis, transport: http(rpcUrl) });
+  const account = privateKeyToAccount(normalizeHex(signer.privateKey) as Hex);
+  const wallet = createWalletClient({ account, chain: viemChain(signer.chain), transport: http(signer.rpcUrl) });
 
   const useRegistry =
     args.sessionId &&
-    env.PAYMENT_REGISTRY_ADDRESS &&
-    env.MULTISEND_ADDRESS &&
-    isAddress(env.PAYMENT_REGISTRY_ADDRESS) &&
-    isAddress(env.MULTISEND_ADDRESS);
+    signer.paymentRegistry &&
+    signer.multiSend &&
+    isAddress(signer.paymentRegistry) &&
+    isAddress(signer.multiSend);
 
   const transferCalldata = encodeFunctionData({
     abi: EURE_ABI,
@@ -170,30 +174,30 @@ export async function forwardViaSafe(
           sidBytes32,
           kindBytes32,
           args.target,
-          env.EURE_CONTRACT as Address,
+          signer.eureContract as Address,
           args.amountWei,
           args.metadataURI ?? '',
         ],
       });
       const multiSendPayload = encodeMultiSend([
-        { operation: OP_CALL, to: env.PAYMENT_REGISTRY_ADDRESS as Address, value: 0n, data: recordCalldata },
-        { operation: OP_CALL, to: env.EURE_CONTRACT as Address,            value: 0n, data: transferCalldata },
+        { operation: OP_CALL, to: signer.paymentRegistry as Address, value: 0n, data: recordCalldata },
+        { operation: OP_CALL, to: signer.eureContract as Address,            value: 0n, data: transferCalldata },
       ]);
       data = encodeFunctionData({
         abi: MULTISEND_ABI,
         functionName: 'multiSend',
         args: [multiSendPayload],
       });
-      to = env.MULTISEND_ADDRESS as Address;
+      to = signer.multiSend as Address;
       operation = OP_DELEGATECALL;
     } else {
-      to = env.EURE_CONTRACT as Address;
+      to = signer.eureContract as Address;
       data = transferCalldata;
       operation = OP_CALL;
     }
 
     const txHash = await wallet.writeContract({
-      address: env.ROLES_MODIFIER_ADDRESS as Address,
+      address: signer.rolesModifier as Address,
       abi: ROLES_ABI,
       functionName: 'execTransactionWithRole',
       args: [
@@ -201,7 +205,7 @@ export async function forwardViaSafe(
         0n,
         data,
         operation,
-        normalizeHex(env.ROLE_KEY) as Hex,
+        normalizeHex(signer.roleKey) as Hex,
         true, // shouldRevert — surface scope violations as TX revert
       ],
     });
@@ -214,12 +218,17 @@ export async function forwardViaSafe(
 /// Best-effort confirmation poll. Called from a separate cron / admin replay
 /// path rather than the webhook hot path so we never block Monerium's
 /// retry timer.
+///
+/// The receipt is read on the chain of the tenant that broadcast it (ADR 0017
+/// — a sandbox tenant forwards on Chiado). NULL / default tenant = env RPC.
 export async function getForwardStatus(
   env: Env,
   txHash: Hex,
+  tenantId: string | null = null,
 ): Promise<'pending' | 'confirmed' | 'failed' | 'unknown'> {
-  const rpcUrl = env.GNOSIS_RPC_URL || 'https://rpc.gnosischain.com';
-  const client = createPublicClient({ chain: gnosis, transport: http(rpcUrl) });
+  const rail = !tenantId || isLegacyTenant(env, tenantId) ? legacyRail(env) : await getTenantRail(env, tenantId);
+  if (!rail) return 'unknown';
+  const client = createPublicClient({ chain: viemChain(rail.signer.chain), transport: http(rail.signer.rpcUrl) });
   try {
     const receipt = await client.getTransactionReceipt({ hash: txHash });
     if (!receipt) return 'pending';
@@ -259,6 +268,10 @@ function asciiToBytes32(s: string): Hex {
     throw new Error(`asciiToBytes32: "${s}" is ${bytes.length} bytes (>32)`);
   }
   return stringToHex(s, { size: 32 });
+}
+
+function viemChain(chain: RailChain) {
+  return chain === 'chiado' ? gnosisChiado : gnosis;
 }
 
 function normalizeHex(s: string): string {
