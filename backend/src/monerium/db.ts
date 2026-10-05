@@ -27,9 +27,13 @@ export interface MoneriumOrderRow {
 /// state ranks BELOW the stored one (e.g. a retried `order.created` arriving
 /// after `order.updated processed`) is ignored. Returns false in that case so
 /// the caller can skip side effects for the stale event.
+///
+/// `tenantId` is written on INSERT only (ADR 0017) — a later snapshot never
+/// re-attributes an order to a different tenant.
 export async function upsertMoneriumOrder(
   env: Env,
   order: MoneriumOrder,
+  tenantId: string | null = null,
 ): Promise<boolean> {
   const ident = order.counterpart?.identifier;
   const counterpartIban =
@@ -39,8 +43,8 @@ export async function upsertMoneriumOrder(
        (id, profile_id, account_id, kind, state, amount, currency,
         address, chain, counterpart_iban, counterpart_name, memo,
         reference_number, tx_hashes, placed_at, processed_at,
-        raw_json, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        raw_json, updated_at, tenant_id)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(id) DO UPDATE SET
        state = excluded.state,
        amount = excluded.amount,
@@ -77,6 +81,7 @@ export async function upsertMoneriumOrder(
       order.meta?.processedAt ?? null,
       JSON.stringify(order),
       Math.floor(Date.now() / 1000),
+      tenantId,
     )
     .run();
   return (res.meta?.changes ?? 0) > 0;
@@ -141,13 +146,17 @@ export async function recordMoneriumWebhookEvent(
     amountCents?: number | null;
     currency?: string | null;
     processingNote?: string | null;
+    /// Tenant whose webhook URL received the event (ADR 0017). For an
+    /// unverified delivery this is only the CLAIMED tenant from the URL.
+    tenantId?: string | null;
   },
 ): Promise<number> {
   const res = await env.DB.prepare(
     `INSERT INTO monerium_webhook_events
        (order_id, event_type, signature_ok, payload, received_at,
-        headers_json, sid_extracted, amount_cents, currency, processing_note)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        headers_json, sid_extracted, amount_cents, currency, processing_note,
+        tenant_id)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   )
     .bind(
       args.orderId,
@@ -160,6 +169,7 @@ export async function recordMoneriumWebhookEvent(
       args.amountCents ?? null,
       args.currency ?? null,
       args.processingNote ?? null,
+      args.tenantId ?? null,
     )
     .run();
   return (res.meta?.last_row_id as number | undefined) ?? 0;

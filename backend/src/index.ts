@@ -16,21 +16,15 @@ import {
   upsertTransactions,
 } from './db';
 import { MoneriumClient } from './monerium/client';
+import { verifyWebhookSignature } from './monerium/webhook';
 import {
-  extractEventType,
-  extractOrder,
-  verifyWebhookSignature,
-} from './monerium/webhook';
-import {
-  alreadyProcessedEvent,
-  releaseProcessedEvent,
   getMoneriumOrder,
   listMoneriumOrders,
   recordMoneriumWebhookEvent,
   upsertMoneriumOrder,
 } from './monerium/db';
-import { extractSessionId } from './monerium/sid';
-import { makeForwardDeps, maybeForward, parseAmountCents } from './monerium/forward';
+import { handleMoneriumWebhook, makeWebhookDeps } from './monerium/webhookHandler';
+import { getTenantRail, isLegacyTenant, legacyRail, multiTenantEnabled } from './tenants/rail';
 import { mountAdminUi } from './admin/app';
 import { buildIntentApi, buildIntentStatus } from './intents/api';
 import { buildWalletApi } from './wallets/api';
@@ -46,13 +40,11 @@ import {
 } from './intents/confirm';
 import { scanOnchainDonations } from './intents/onchainIndexer';
 import { deliverDue, makeOutboxDeps } from './intents/outbox';
-import { notifyOrderLifecycle } from './intents/lifecycle';
 import { RECONCILE_INTERVAL_S, reconcileMoneriumOrders } from './monerium/reconcile';
 import { fetchOgPreview } from './og/preview';
 import { renderCheckoutPage } from './checkout/page';
 import { getSepaDetails } from './tenants/db';
 import { defaultTenantId } from './tenants/whitelist';
-import type { MoneriumWebhookEvent } from './monerium/types';
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -153,108 +145,44 @@ app.get('/api/hpb/callback', async (c) => {
 // ---- Monerium webhook (public, signature-verified) ----
 
 app.post('/api/monerium/webhook', async (c) => {
+  // ITalk (default tenant): env secret, env rail — unchanged since ADR 0016.
+  const rail = legacyRail(c.env);
+  const res = await handleMoneriumWebhook(
+    makeWebhookDeps(c.env, rail, c.executionCtx),
+    rail,
+    await c.req.text(),
+    c.req.raw.headers,
+  );
+  return c.json(res.body, res.status);
+});
+
+// Per-tenant webhook (ADR 0017). The tenant in the URL decides whose secret
+// verifies the signature and whose rail handles the order — never a
+// fallback to ITalk. Off (404) unless MULTI_TENANT_RAIL=1.
+app.post('/api/monerium/webhook/t/:tenantId', async (c) => {
+  if (!multiTenantEnabled(c.env)) return c.json({ error: 'not_found' }, 404);
+  const tenantId = c.req.param('tenantId');
   const rawBody = await c.req.text();
-  const verify = await verifyWebhookSignature(
+  // The default tenant has exactly one entry point (the legacy URL above).
+  const rail = isLegacyTenant(c.env, tenantId) ? null : await getTenantRail(c.env, tenantId);
+  if (!rail) {
+    await recordMoneriumWebhookEvent(c.env, {
+      orderId: null,
+      eventType: 'unknown_tenant',
+      signatureOk: false,
+      payload: rawBody,
+      processingNote: `unknown_tenant: ${tenantId.slice(0, 64)}`,
+      tenantId: null,
+    });
+    return c.json({ error: 'unknown_tenant' }, 404);
+  }
+  const res = await handleMoneriumWebhook(
+    makeWebhookDeps(c.env, rail, c.executionCtx),
+    rail,
     rawBody,
     c.req.raw.headers,
-    c.env.MONERIUM_WEBHOOK_SECRET,
   );
-  let event: MoneriumWebhookEvent | null = null;
-  try {
-    event = JSON.parse(rawBody) as MoneriumWebhookEvent;
-  } catch {
-    // Persist the raw payload anyway so we can debug malformed events.
-  }
-  const eventType = event ? extractEventType(event) : 'invalid_json';
-  const order = event ? extractOrder(event) : null;
-  const sid = extractSessionId(order);
-  const amountCents = parseAmountCents(order?.amount);
-  const headersObj: Record<string, string> = {};
-  c.req.raw.headers.forEach((v, k) => { headersObj[k] = v; });
-  let processingNote: string | null = null;
-  if (!verify.ok) processingNote = `signature_invalid: ${verify.reason}`;
-  else if (eventType === 'subscription.created') processingNote = 'subscription_ack';
-  else if (!order) processingNote = 'no_order_in_payload';
-  await recordMoneriumWebhookEvent(c.env, {
-    orderId: order?.id ?? null,
-    eventType,
-    signatureOk: verify.ok,
-    payload: rawBody,
-    headersJson: JSON.stringify(headersObj),
-    sidExtracted: sid,
-    amountCents,
-    currency: order?.currency ?? null,
-    processingNote,
-  });
-  if (!verify.ok) {
-    console.warn(
-      `monerium webhook signature FAILED: ${verify.reason}\n` +
-        `  body[${rawBody.length}b]: ${rawBody.slice(0, 300)}\n` +
-        `  debug: ${JSON.stringify(verify.debug, null, 2)}`,
-    );
-    return c.json({ error: 'invalid signature' }, 401);
-  }
-  // Idempotency: skip re-processing if Monerium retried (up to 10× / 12h).
-  if (verify.webhookId) {
-    const seen = await alreadyProcessedEvent(c.env, verify.webhookId);
-    if (seen) {
-      console.log(`monerium webhook ${verify.webhookId} already processed`);
-      return c.json({ ok: true, dedup: true });
-    }
-  }
-  // `subscription.created` is sent once on registration — just return 200.
-  if (eventType === 'subscription.created') {
-    console.log('monerium subscription.created — webhook activated');
-    return c.json({ ok: true });
-  }
-  if (order) {
-    try {
-      const applied = await upsertMoneriumOrder(c.env, order);
-      if (!applied) {
-        // Out-of-order retry (e.g. order.created after order.updated
-        // processed): the stored order is already further along. Nothing to
-        // do — acting on it would replay stale side effects.
-        console.log(`monerium ${eventType} order ${order.id} state=${order.state ?? '?'} STALE — ignored`);
-        return c.json({ ok: true, stale: true });
-      }
-      console.log(`monerium ${eventType} order ${order.id} state=${order.state ?? '?'}`);
-      // Merchant sees `payment.received` the moment Monerium holds the funds
-      // (order.created, ~1 s) — the card-like "approved" moment — and
-      // `payment.rejected` if Monerium refuses. Settlement (`intent.paid`)
-      // still waits for the confirmed on-chain forward below.
-      c.executionCtx.waitUntil(notifyOrderLifecycle(c.env, order));
-      // Auto-forward via Safe + Roles Modifier on incoming issue orders.
-      //
-      // Critical race-condition fix (2026-05-21): only forward AFTER Monerium
-      // has actually executed the EURe mint TX on-chain. `order.created` fires
-      // when Monerium receives the SEPA payment but BEFORE the mint reaches
-      // chain — Safe has no EURe to forward, so `execTransactionWithRole`
-      // reverts with `ModuleTransactionFailed()` at the inner `EURe.transfer`
-      // call. `order.updated` with `state=processed` is the signal that the
-      // mint TX is in `meta.txHashes` and the Safe balance is live.
-      //
-      // Idempotency: order.updated may fire more than once. Skip if we already
-      // have a `submitted` or `confirmed` forward for this order_id. A prior
-      // `failed` forward is allowed to retry — covers transient RPC errors.
-      if (
-        order.kind === 'issue'
-        && eventType === 'order.updated'
-        && order.state === 'processed'
-        && c.env.ROUTER_PRIVATE_KEY
-      ) {
-        c.executionCtx.waitUntil(maybeForward(makeForwardDeps(c.env), order));
-      }
-    } catch (e) {
-      // Release the idempotency claim so Monerium's retry of this same
-      // webhook-id gets processed instead of dropped as a duplicate (BW-03).
-      if (verify.webhookId) {
-        await releaseProcessedEvent(c.env, verify.webhookId).catch(() => {});
-      }
-      console.error(`monerium webhook processing failed for order ${order.id}: ${(e as Error).message}`);
-      return c.json({ error: 'processing_failed' }, 500);
-    }
-  }
-  return c.json({ ok: true });
+  return c.json(res.body, res.status);
 });
 
 // ---- Monerium read endpoints (public) ----
