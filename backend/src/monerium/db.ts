@@ -162,8 +162,6 @@ export async function recordMoneriumWebhookEvent(
       args.processingNote ?? null,
     )
     .run();
-  // 0 = another caller already holds the live forward for this order.
-  if ((res.meta?.changes ?? 0) === 0) return 0;
   return (res.meta?.last_row_id as number | undefined) ?? 0;
 }
 
