@@ -69,6 +69,12 @@ P2 (kad slegne)
 
 ### P0-2 [S] Atomski zasun na `monerium_forwards` — DB-04 / BW-02(a)
 
+> ✅ **Napravljeno 2026-10-05** (PR #58, `ec9d26f`, deployano): migracija
+> `0016_forward_latch.sql` + `insertForward` s `ON CONFLICT DO NOTHING` → 0;
+> pre-check na produkciji vratio 0 redaka. Točka 5 (viem `nonceManager`) NIJE
+> napravljena. U istom PR-u `/api/monerium/orders*` je iza `ADMIN_TOKEN` (dio
+> BW-05 iz P0-5). Kontekst: ADR 0017.
+
 **Promjene.**
 1. Prije migracije: `SELECT order_id, COUNT(*) FROM monerium_forwards WHERE status IN ('pending','submitted','confirmed') GROUP BY order_id HAVING COUNT(*)>1` na produkciji; ako ima redaka, ručno razriješiti (očekivano 0 prema stanju od 2026-09-28).
 2. `backend/migrations/0016_forward_latch.sql`: `CREATE UNIQUE INDEX ux_forwards_live ON monerium_forwards(order_id) WHERE status IN ('pending','submitted','confirmed');`
