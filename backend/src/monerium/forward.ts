@@ -19,6 +19,7 @@ import {
   type ParkReason,
 } from '../tenants/whitelist';
 import { writeAudit } from '../tenants/db';
+import type { TenantRail } from '../tenants/rail';
 import { sendAlert } from '../alerts';
 
 /// The forward hop: EURe that Monerium minted into the MPT Safe is pushed on
@@ -43,6 +44,7 @@ export interface ForwardDeps {
   }): Promise<boolean>;
   pollConfirmation(fwd: {
     id: number;
+    tenant_id: string | null;
     order_id: string;
     sid: string | null;
     tx_hash: string;
@@ -69,13 +71,17 @@ export interface ForwardDeps {
   }): Promise<void>;
 }
 
-export function makeForwardDeps(env: Env): ForwardDeps {
+/// Deps for one tenant's rail (ADR 0017). Everything that decides or moves
+/// value is bound to `rail`: whose intents it may settle, which Safe the money
+/// must be in, and which signer moves it. Forward rows are stamped with the
+/// tenant so confirmation reads the right chain.
+export function makeForwardDeps(env: Env, rail: TenantRail): ForwardDeps {
   return {
-    authorize: makeAuthorizeDeps(env),
+    authorize: makeAuthorizeDeps(env, rail),
     getForwardByOrder: (orderId) => getForwardByOrder(env, orderId),
-    insertForward: (args) => insertForward(env, args),
+    insertForward: (args) => insertForward(env, { ...args, tenantId: rail.tenantId }),
     updateForward: (id, patch) => updateForward(env, id, patch),
-    forward: (args) => forwardViaSafe(env, args),
+    forward: (args) => forwardViaSafe(rail.signer, args),
     settleNonRoutedPaid: (args) => settleNonRoutedPaid(makeConfirmDeps(env), args),
     pollConfirmation: (fwd) => pollForwardConfirmation(makeConfirmDeps(env), fwd),
     alert: (text) => sendAlert(env, text),
@@ -125,7 +131,10 @@ export async function handleForward(
   const amountCents = parseAmountCents(order.amount);
 
   // ---- Single authorisation gate. No forward path bypasses this. ----
-  const decision = await authorizeForward(deps.authorize, routing);
+  const decision = await authorizeForward(deps.authorize, routing, {
+    mintAddress: order.address ?? null,
+    amountCents,
+  });
 
   if (decision.action === 'park') {
     await park(deps, {
@@ -225,6 +234,7 @@ export async function handleForward(
   // atomic submitted → confirmed flip, so effects stay single-fire.
   const outcome = await deps.pollConfirmation({
     id: forwardId,
+    tenant_id: deps.authorize.railTenantId,
     order_id: order.id,
     sid: routing.sid,
     tx_hash: result.txHash!,

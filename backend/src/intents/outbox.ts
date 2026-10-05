@@ -1,5 +1,7 @@
 import type { Env } from '../types';
 import { sendAlert } from '../alerts';
+import { getTenantRail } from '../tenants/rail';
+import { defaultTenantId } from '../tenants/whitelist';
 
 /// Durable delivery of outbound merchant webhooks (migration 0015).
 ///
@@ -60,7 +62,9 @@ export interface OutboxDeps {
   markDelivered(id: string, attempts: number, status: number, nowUnix: number): Promise<void>;
   markRetry(id: string, attempts: number, nextAt: number, status: number | null, error: string | null): Promise<void>;
   markFailed(id: string, attempts: number, status: number | null, error: string | null): Promise<void>;
-  send(id: string, body: string): Promise<SendResult>;
+  /// `tenantId` picks the endpoint (ADR 0017): each tenant's events go only
+  /// to that tenant's receiver.
+  send(id: string, body: string, tenantId: string | null): Promise<SendResult>;
   alert(text: string): Promise<void>;
 }
 
@@ -108,7 +112,7 @@ export async function attemptDelivery(
   row: OutboxRow,
   nowUnix: number,
 ): Promise<'delivered' | 'retry' | 'failed'> {
-  const res = await deps.send(row.id, row.payload);
+  const res = await deps.send(row.id, row.payload, row.tenant_id);
   const attempts = row.attempts + 1;
   const cls = classifyResponse(res.status);
   if (cls === 'delivered') {
@@ -149,17 +153,16 @@ export async function deliverDue(
 
 // ---- Env wiring -----------------------------------------------------------
 
-/// The endpoint is resolved at send time. Today there is one global endpoint
-/// (INTENT_WEBHOOK_URL); a per-tenant endpoint only needs this function to
-/// look at `tenant_id`.
-function endpoint(env: Env): { url: string; secret: string } | null {
-  const url = env.INTENT_WEBHOOK_URL?.trim();
-  const secret = env.INTENT_WEBHOOK_SECRET?.trim();
-  return url && secret ? { url, secret } : null;
-}
-
-export function outboxConfigured(env: Env): boolean {
-  return endpoint(env) !== null;
+/// The endpoint is resolved at send time, per tenant (ADR 0017). The default
+/// tenant (rows with tenant_id NULL or = DEFAULT_TENANT_ID) keeps the global
+/// INTENT_WEBHOOK_URL; any other tenant uses only its own endpoint from
+/// tenant_rail, or gets none.
+async function endpointFor(
+  env: Env,
+  tenantId: string | null,
+): Promise<{ url: string; secret: string } | null> {
+  const rail = await getTenantRail(env, tenantId ?? defaultTenantId(env));
+  return rail?.outboundWebhook ?? null;
 }
 
 export function makeOutboxDeps(env: Env): OutboxDeps {
@@ -205,7 +208,7 @@ export function makeOutboxDeps(env: Env): OutboxDeps {
           WHERE id = ?`,
       ).bind(attempts, status, error, id).run();
     },
-    send: (id, body) => signedPost(env, id, body),
+    send: (id, body, tenantId) => signedPost(env, id, body, tenantId),
     alert: (text) => sendAlert(env, text),
   };
 }
@@ -214,7 +217,9 @@ export function makeOutboxDeps(env: Env): OutboxDeps {
 /// (the rail then simply doesn't notify, as before the outbox). Never throws:
 /// callers sit on money paths.
 export async function enqueueWebhook(env: Env, evt: OutboxEvent): Promise<void> {
-  if (!outboxConfigured(env)) return;
+  // No endpoint for this tenant → nothing is stored or sent. Checked per
+  // event, never against the global endpoint (no cross-tenant leak).
+  if (!(await endpointFor(env, evt.tenantId ?? null))) return;
   try {
     const r = await enqueueAndDeliver(makeOutboxDeps(env), evt, Math.floor(Date.now() / 1000));
     if (r !== 'delivered' && r !== 'duplicate') {
@@ -235,8 +240,8 @@ export async function resendWebhook(env: Env, id: string): Promise<'delivered' |
   return attemptDelivery(makeOutboxDeps(env), { ...row, status: 'pending', attempts: 0 }, Math.floor(Date.now() / 1000));
 }
 
-async function signedPost(env: Env, id: string, body: string): Promise<SendResult> {
-  const ep = endpoint(env);
+async function signedPost(env: Env, id: string, body: string, tenantId: string | null): Promise<SendResult> {
+  const ep = await endpointFor(env, tenantId);
   if (!ep) return { status: null, error: 'endpoint_not_configured' };
   const keyBytes = decodeWebhookSecret(ep.secret);
   if (!keyBytes) return { status: null, error: 'invalid INTENT_WEBHOOK_SECRET format' };

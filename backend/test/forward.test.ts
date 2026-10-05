@@ -32,6 +32,10 @@ function harness(over: Partial<ForwardDeps> = {}): { deps: ForwardDeps; rec: Rec
       isWhitelisted: async (_t, addr) => addr.toLowerCase() === PAYEE,
       safeAddress: SAFE,
       defaultTenantId: 'italk',
+      // Legacy (ITalk) rail — ADR 0017 fields at their pre-multi-tenant values.
+      railTenantId: 'italk',
+      requireMintAt: null,
+      maxForwardCents: null,
     },
     getForwardByOrder: async () => null,
     insertForward: async (args) => {

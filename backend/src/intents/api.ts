@@ -8,6 +8,7 @@ import { computeStage, confirmForwardIfMined, loadStageContext } from './stage';
 import type { StageResult } from './stage';
 import { resolveRequestTenant } from '../tenants/auth';
 import { defaultTenantId } from '../tenants/whitelist';
+import { getTenantRail, isLegacyTenant, multiTenantEnabled } from '../tenants/rail';
 import { getCampaign, getSepaDetails, isAddressWhitelisted, type SepaDetails } from '../tenants/db';
 
 /// Public, unauthenticated intent API. Mountable into the root Hono app
@@ -54,6 +55,11 @@ export function buildIntentApi(): Hono<{ Bindings: Env }> {
     if (!tenant.ok) {
       return c.json({ error: tenant.error }, tenant.error === 'tenant_suspended' ? 403 : 401);
     }
+    // A non-default tenant collects on ITS OWN IBAN. Issuing a QR for that
+    // IBAN while the rail cannot see the tenant's Monerium webhook would take
+    // money we can never report or route — refuse instead (ADR 0017).
+    const railRefusal = await tenantRailRefusal(c.env, tenant.tenantId);
+    if (railRefusal) return c.json({ error: railRefusal, tenant_id: tenant.tenantId }, 403);
     // Fail fast on a destination the forward gate would refuse anyway. This is
     // UX, not the security boundary — `authorizeForward` re-checks at forward
     // time, because an address can be revoked between intent and payment.
@@ -110,6 +116,8 @@ export function buildIntentApi(): Hono<{ Bindings: Env }> {
     if (!/^[A-Za-z0-9_-]{6,64}$/.test(id)) return c.json({ error: 'invalid_campaign_id' }, 400);
     const campaign = await getCampaign(c.env, id);
     if (!campaign) return c.json({ error: 'campaign_not_registered', campaign_id: id }, 404);
+    const railRefusal = await tenantRailRefusal(c.env, campaign.tenant_id);
+    if (railRefusal) return c.json({ error: railRefusal, campaign_id: id }, 403);
     if (campaign.safe_address.toLowerCase() !== target.toLowerCase()) {
       return c.json(
         {
@@ -176,6 +184,20 @@ export function buildIntentApi(): Hono<{ Bindings: Env }> {
   });
 
   return api;
+}
+
+/// Why a tenant may not issue payment QRs right now, or null when it may.
+/// The default tenant (ITalk) is never refused here — its behaviour is
+/// unchanged by ADR 0017.
+async function tenantRailRefusal(
+  env: Env,
+  tenantId: string,
+): Promise<'tenant_rail_disabled' | 'tenant_rail_not_configured' | null> {
+  if (isLegacyTenant(env, tenantId)) return null;
+  if (!multiTenantEnabled(env)) return 'tenant_rail_disabled';
+  const rail = await getTenantRail(env, tenantId);
+  if (!rail || !rail.webhookSecret) return 'tenant_rail_not_configured';
+  return null;
 }
 
 /// Builds the full intent representation returned to API callers and used

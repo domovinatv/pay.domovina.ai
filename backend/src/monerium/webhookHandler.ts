@@ -60,8 +60,8 @@ export function makeWebhookDeps(
     alreadyProcessed: (key) => alreadyProcessedEvent(env, key),
     releaseProcessed: (key) => releaseProcessedEvent(env, key),
     upsertOrder: (order) => upsertMoneriumOrder(env, order, rail.tenantId),
-    notifyLifecycle: (order) => notifyOrderLifecycle(env, order),
-    forward: (order) => maybeForward(makeForwardDeps(env), order),
+    notifyLifecycle: (order) => notifyOrderLifecycle(env, order, rail.tenantId),
+    forward: (order) => maybeForward(makeForwardDeps(env, rail), order),
     alert: (text) => sendAlert(env, text),
     waitUntil: (p) => ctx.waitUntil(p),
   };
@@ -201,7 +201,6 @@ export async function handleMoneriumWebhook(
         && eventType === 'order.updated'
         && order.state === 'processed'
         && rail.signer.privateKey
-        && forwardEnabledFor(rail)
       ) {
         deps.waitUntil(deps.forward(order));
       }
@@ -216,12 +215,6 @@ export async function handleMoneriumWebhook(
     }
   }
   return { status: 200, body: { ok: true } };
-}
-
-/// Tenant forwards are switched on together with tenant-scoped authorisation
-/// and signing (ADR 0017 step 2). Until then only the legacy rail forwards.
-function forwardEnabledFor(rail: TenantRail): boolean {
-  return rail.legacy;
 }
 
 async function safely(p: Promise<unknown>): Promise<void> {

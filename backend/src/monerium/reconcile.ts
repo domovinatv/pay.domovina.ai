@@ -108,7 +108,7 @@ async function reconcileTenant(env: Env, rail: TenantRail, nowUnix: number): Pro
       if (await upsertMoneriumOrder(env, order, rail.tenantId)) {
         result.advanced++;
         console.log(`reconcile: order ${order.id} → ${orderState(order)} (webhook missed or late)`);
-        await notifyOrderLifecycle(env, order);
+        await notifyOrderLifecycle(env, order, rail.tenantId);
       }
     }
     if (await isStuckWithoutForward(env, order, nowUnix)) {

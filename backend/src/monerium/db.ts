@@ -4,6 +4,8 @@ import { normalizeIban, orderStateRankSql } from './orderState';
 
 export interface MoneriumOrderRow {
   id: string;
+  /// ADR 0017. NULL on rows written before migration 0017 (all ITalk).
+  tenant_id: string | null;
   profile_id: string | null;
   account_id: string | null;
   kind: string;
@@ -246,6 +248,8 @@ export async function getMoneriumWebhookEvent(
 
 export interface MoneriumForwardRow {
   id: number;
+  /// ADR 0017. NULL on rows written before migration 0017 (all ITalk).
+  tenant_id: string | null;
   order_id: string;
   target_address: string;
   amount_wei: string;
@@ -277,6 +281,8 @@ export async function insertForward(
     status: MoneriumForwardRow['status'];
     txHash?: string | null;
     error?: string | null;
+    /// Tenant whose rail this forward runs on (ADR 0017). NULL = legacy.
+    tenantId?: string | null;
   },
 ): Promise<number> {
   const now = Math.floor(Date.now() / 1000);
@@ -286,8 +292,8 @@ export async function insertForward(
   const res = await env.DB.prepare(
     `INSERT INTO monerium_forwards
        (order_id, target_address, amount_wei, amount_cents, sid, memo_prefix,
-        tx_hash, status, error, attempts, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        tx_hash, status, error, attempts, created_at, updated_at, tenant_id)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT DO NOTHING`,
   )
     .bind(
@@ -303,6 +309,7 @@ export async function insertForward(
       args.txHash ? 1 : 0,
       now,
       now,
+      args.tenantId ?? null,
     )
     .run();
   // 0 = another caller already holds the live forward for this order.

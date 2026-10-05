@@ -164,7 +164,7 @@ describe('per-tenant webhook — attribution', () => {
     expect(rec.upserts).toHaveLength(0);
   });
 
-  it('records and upserts a matching order, but does not forward before step 2', async () => {
+  it('records, upserts and forwards a matching processed order', async () => {
     const { deps, rec, settle } = harness();
     const d = await delivery(SECRET_A, { type: 'order.updated', data: processedOrder() });
     const res = await handleMoneriumWebhook(deps, rail(), d.body, d.headers);
@@ -172,7 +172,7 @@ describe('per-tenant webhook — attribution', () => {
     expect(res.status).toBe(200);
     expect(rec.upserts).toEqual(['ord-1']);
     expect(rec.lifecycle).toBe(1);
-    expect(rec.forwards).toBe(0);
+    expect(rec.forwards).toBe(1);
     expect(rec.records[0]).toMatchObject({ signatureOk: true, tenantId: 'zupa-a', processingNote: null });
   });
 

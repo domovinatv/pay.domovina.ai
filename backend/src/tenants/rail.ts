@@ -63,6 +63,10 @@ export interface TenantRail {
   signer: RailSigner;
   /// Software cap per forward (cents); null = none.
   maxForwardCents: number | null;
+  /// Where this tenant's outbound merchant webhooks go. null = nowhere. A
+  /// tenant's events never fall back to another tenant's endpoint — that
+  /// would hand its payers' IBANs and names to someone else's receiver.
+  outboundWebhook: { url: string; secret: string } | null;
 }
 
 export const LEGACY_TOKEN_KEY = 'monerium:access_token';
@@ -106,6 +110,10 @@ export function legacyRail(env: Env): TenantRail {
       multiSend: env.MULTISEND_ADDRESS ?? '',
     },
     maxForwardCents: null,
+    outboundWebhook:
+      env.INTENT_WEBHOOK_URL?.trim() && env.INTENT_WEBHOOK_SECRET?.trim()
+        ? { url: env.INTENT_WEBHOOK_URL.trim(), secret: env.INTENT_WEBHOOK_SECRET.trim() }
+        : null,
   };
 }
 
@@ -190,6 +198,13 @@ export async function railFromRow(
       multiSend: '',
     },
     maxForwardCents: row.max_forward_cents,
+    outboundWebhook:
+      row.outbound_webhook_url && row.outbound_webhook_secret_enc
+        ? {
+            url: row.outbound_webhook_url,
+            secret: await decrypt('outbound_webhook_secret', row.outbound_webhook_secret_enc),
+          }
+        : null,
   };
 }
 

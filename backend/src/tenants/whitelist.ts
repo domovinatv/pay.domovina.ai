@@ -2,6 +2,7 @@ import type { Env } from '../types';
 import type { RoutingTarget } from '../monerium/sid';
 import { getCampaign, getTenant, isAddressWhitelisted } from './db';
 import { getIntent } from '../intents/db';
+import type { TenantRail } from './rail';
 
 /// THE enforcement point. Every code path that could move EURe out of the MPT
 /// Safe must run through `authorizeForward` and act only on its verdict —
@@ -33,7 +34,14 @@ export type ParkReason =
   | 'target_mismatch'     // memo address ≠ the authorised destination
   | 'tenant_suspended'
   | 'tenant_unknown'
-  | 'not_whitelisted';    // bound correctly, but address is not on the list
+  | 'not_whitelisted'     // bound correctly, but address is not on the list
+  // ADR 0017 — multi-tenant rail:
+  | 'tenant_mismatch'     // intent/campaign belongs to another tenant than
+                          // the one whose IBAN (webhook) received the money
+  | 'mint_address_mismatch' // Monerium minted somewhere else than the Safe
+                          // this tenant forwards from — moving value out of
+                          // that Safe would spend money this order never brought
+  | 'over_cap';           // above the tenant's per-forward cap
 
 export type ForwardDecision =
   | { action: 'forward'; tenantId: string; reason?: undefined }
@@ -54,9 +62,25 @@ export interface AuthorizeDeps {
   safeAddress: string | null;
   /// Tenant assumed for intents created before tenants existed (tenant_id NULL).
   defaultTenantId: string;
+  /// Tenant whose Monerium account (signed webhook) received the money. An
+  /// intent/campaign of any other tenant is refused (ADR 0017).
+  railTenantId: string;
+  /// Non-null for tenant rails: the order must have been minted to exactly
+  /// this address (the Safe forwards are signed from). Null for the legacy
+  /// ITalk rail, whose behaviour stays as it was.
+  requireMintAt: string | null;
+  /// Per-forward cap in cents, STRICT (amount must be below it, matching the
+  /// on-chain LessThan); null = none.
+  maxForwardCents: number | null;
 }
 
-export function makeAuthorizeDeps(env: Env): AuthorizeDeps {
+/// Facts about the order itself (as opposed to its routing memo).
+export interface OrderFacts {
+  mintAddress: string | null;
+  amountCents: number | null;
+}
+
+export function makeAuthorizeDeps(env: Env, rail: TenantRail): AuthorizeDeps {
   return {
     getIntentBySid: async (sid) => {
       const row = await getIntent(env, sid);
@@ -71,8 +95,11 @@ export function makeAuthorizeDeps(env: Env): AuthorizeDeps {
       return t ? t.status : null;
     },
     isWhitelisted: (tenantId, address) => isAddressWhitelisted(env, tenantId, address),
-    safeAddress: env.SAFE_ADDRESS || null,
+    safeAddress: rail.receivingSafe,
     defaultTenantId: defaultTenantId(env),
+    railTenantId: rail.tenantId,
+    requireMintAt: rail.legacy ? null : rail.receivingSafe,
+    maxForwardCents: rail.maxForwardCents,
   };
 }
 
@@ -88,7 +115,14 @@ function eq(a: string | null | undefined, b: string | null | undefined): boolean
 export async function authorizeForward(
   deps: AuthorizeDeps,
   routing: RoutingTarget,
+  facts?: OrderFacts,
 ): Promise<ForwardDecision> {
+  // Tenant rails only: the money must actually be in the Safe we would sign
+  // from. Missing facts count as a mismatch (fail-closed).
+  if (deps.requireMintAt && !eq(facts?.mintAddress, deps.requireMintAt)) {
+    return { action: 'park', tenantId: deps.railTenantId, reason: 'mint_address_mismatch' };
+  }
+
   // The parser only fills `target` for routing prefixes it trusts (mpt:/cmp:).
   // A bare 0x / gnosis: memo leaves target null but sets diagnosticTarget, so
   // we can tell "no address at all" from "address we refuse to route on".
@@ -122,6 +156,12 @@ export async function authorizeForward(
     return { action: 'park', tenantId: null, reason: 'unroutable_prefix' };
   }
 
+  // Money that landed on tenant X's IBAN may only ever settle tenant X's
+  // intents/campaigns — never another tenant's, whatever the memo says.
+  if (tenantId !== deps.railTenantId) {
+    return { action: 'park', tenantId, reason: 'tenant_mismatch' };
+  }
+
   if (!eq(routing.target, authorizedTarget)) {
     return { action: 'park', tenantId, reason: 'target_mismatch' };
   }
@@ -135,6 +175,15 @@ export async function authorizeForward(
   // had to hold, otherwise an unbound memo could flip somebody's intent paid.
   if (eq(routing.target, deps.safeAddress)) {
     return { action: 'self_noop', tenantId };
+  }
+
+  // Strict, like the on-chain `LessThan` in safe-tx/007: an amount equal to
+  // the cap would revert on-chain, so it parks here instead.
+  if (deps.maxForwardCents !== null) {
+    const cents = facts?.amountCents ?? null;
+    if (cents === null || cents >= deps.maxForwardCents) {
+      return { action: 'park', tenantId, reason: 'over_cap' };
+    }
   }
 
   // --- 2. whitelist ---
@@ -157,5 +206,8 @@ export function describeParkReason(reason: ParkReason): string {
     case 'tenant_suspended': return 'tenant je suspendiran';
     case 'tenant_unknown': return 'tenant ne postoji';
     case 'not_whitelisted': return 'adresa nije na whitelisti tenanta';
+    case 'tenant_mismatch': return 'intent/kampanja pripada drugom tenantu nego IBAN na koji je novac stigao';
+    case 'mint_address_mismatch': return 'Monerium nije mintao na prihvatni Safe tenanta';
+    case 'over_cap': return 'iznos je iznad kapice po forwardu za tenanta';
   }
 }

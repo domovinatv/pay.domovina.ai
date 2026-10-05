@@ -43,8 +43,9 @@ CREATE TABLE tenant_rail (
   -- tenant's payer data to another tenant's receiver).
   outbound_webhook_url        TEXT,
   outbound_webhook_secret_enc TEXT,
-  -- Software mirror of the on-chain per-transfer cap (cents). NULL = no cap
-  -- beyond the intent API maximum.
+  -- Software mirror of the on-chain per-transfer cap (cents), STRICT: the
+  -- amount must be below it, exactly like the LessThan in safe-tx/007.
+  -- NULL = no cap beyond the intent API maximum.
   max_forward_cents INTEGER,
   verified_at      INTEGER,
   verify_report    TEXT,             -- JSON from POST …/rail/verify

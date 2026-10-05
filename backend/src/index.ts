@@ -185,7 +185,13 @@ app.post('/api/monerium/webhook/t/:tenantId', async (c) => {
   return c.json(res.body, res.status);
 });
 
-// ---- Monerium read endpoints (public) ----
+// ---- Monerium read endpoints (admin bearer) ----
+//
+// Were public until ADR 0017. They return payer IBANs and names (Fable BW-05),
+// and with tenant rails those are other entities' donors — admin only now.
+// The /admin dashboard reads orders through /admin/api/*, not these.
+app.use('/api/monerium/orders', async (c, next) => bearerAuth({ token: c.env.ADMIN_TOKEN })(c, next));
+app.use('/api/monerium/orders/*', async (c, next) => bearerAuth({ token: c.env.ADMIN_TOKEN })(c, next));
 
 app.get('/api/monerium/orders', async (c) => {
   const orders = await listMoneriumOrders(c.env);
