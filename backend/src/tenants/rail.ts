@@ -222,14 +222,22 @@ export async function getTenantRail(env: Env, tenantId: string): Promise<TenantR
   if (!multiTenantEnabled(env)) return null;
   const row = await getTenantRailRow(env, tenantId);
   if (!row) return null;
+  return railFromStoredRow(env, row);
+}
+
+/// Decrypt a stored row into a rail, ignoring MULTI_TENANT_RAIL. Only the
+/// admin onboarding flow uses this directly (it must register webhooks and
+/// verify a tenant BEFORE the rail is switched on for it); everything on the
+/// money path goes through `getTenantRail`.
+export async function railFromStoredRow(env: Env, row: TenantRailRow): Promise<TenantRail | null> {
   try {
     const kek = await importKek(env.TENANT_SECRETS_KEK);
     return await railFromRow(env, row, async (field, blob) => {
       if (!blob) throw new Error(`missing ${field}`);
-      return decryptSecret(kek, tenantId, field, blob);
+      return decryptSecret(kek, row.tenant_id, field, blob);
     });
   } catch (e) {
-    console.error(`tenant ${tenantId} rail unusable: ${(e as Error).message}`);
+    console.error(`tenant ${row.tenant_id} rail unusable: ${(e as Error).message}`);
     return null;
   }
 }

@@ -7,7 +7,9 @@ import type { Env } from '../types';
 export interface TenantRow {
   id: string;
   name: string;
-  status: 'active' | 'suspended';
+  /// 'onboarding' (ADR 0017): created, rail not yet verified — behaves like
+  /// 'suspended' everywhere (no intents, every forward parks).
+  status: 'active' | 'suspended' | 'onboarding';
   /// JSON array of dynamic whitelist sources, e.g. ["wallet_registry"].
   allow_sources: string;
   /// SEPA collection leg — the Monerium-onboarded account this tenant's QRs

@@ -175,7 +175,7 @@ footer {
 
 interface ShellOptions {
   title: string;
-  tab: 'events' | 'orders' | 'forwards' | 'intents' | 'wallets' | 'sybil' | 'whitelist';
+  tab: 'events' | 'orders' | 'forwards' | 'intents' | 'wallets' | 'sybil' | 'whitelist' | 'tenants';
   body: string;
 }
 
@@ -289,6 +289,7 @@ function renderShell({ title, tab, body }: ShellOptions): string {
     : tab === 'wallets' ? 'Self-custody wallets'
     : tab === 'sybil' ? 'Sybil dashboard'
     : tab === 'whitelist' ? 'Payout whitelist'
+    : tab === 'tenants' ? 'Tenant onboarding'
     : 'Payment intents';
   return `<!doctype html>
 <html lang="hr">
@@ -319,6 +320,7 @@ ${TOAST_JS}
   ${t('wallets', 'Wallets', '/admin/wallets')}
   ${t('sybil', 'Sybil', '/admin/sybil')}
   ${t('whitelist', 'Whitelist', '/admin/whitelist')}
+  ${t('tenants', 'Tenanti', '/admin/tenants')}
 </nav>
 <main>${body}</main>
 <footer>
@@ -1594,5 +1596,183 @@ document.getElementById('alertTestBtn').onclick = async () => {
 document.getElementById('refresh').onclick = loadAll;
 document.getElementById('showRevoked').onchange = loadAddresses;
 tenantSel.onchange = loadAll;
+loadTenants();
+</script>`;
+
+/// Tenant onboarding (ADR 0017). Talks to /admin/api/tenants/* — secrets are
+/// write-only: the API never returns them, the form only shows "postavljeno".
+export function renderTenantsPage(): string {
+  const body = `
+<h1>Tenanti</h1>
+<p class="dim" style="margin-top:-.5rem;margin-bottom:1rem;font-size:.9rem">
+  Svaki tenant osim ITalka ima <strong>svoj</strong> Monerium račun, IBAN, prihvatni Safe,
+  router EOA i webhook (ADR 0017). Redoslijed: kreiraj → rail → router ključ → batch
+  <span class="mono">safe-tx/007</span> na Safeu tenanta → webhook → whitelist → verify → aktiviraj.
+  Promjena raila traži da tenant nije aktivan.
+</p>
+
+<h2>Novi tenant</h2>
+<div class="controls">
+  <input id="nId" placeholder="id (npr. zupa-sv-marko)" size="22" class="mono" />
+  <input id="nName" placeholder="naziv" size="26" />
+  <input id="nBen" placeholder="primatelj na nalogu (default = naziv)" size="30" />
+  <input id="nIban" placeholder="IBAN" size="26" class="mono" />
+  <input id="nBic" placeholder="BIC" size="11" class="mono" />
+  <button type="button" id="createBtn">+ Kreiraj</button>
+</div>
+
+<h2 style="margin-top:1.5rem">Tenant</h2>
+<div class="controls">
+  <select id="tSel"></select>
+  <span id="tStatus" class="mono"></span>
+  <button type="button" data-act="activate">Aktiviraj</button>
+  <button type="button" data-act="suspend">Suspendiraj</button>
+  <button type="button" data-act="resume">Nastavi</button>
+</div>
+
+<h2 style="margin-top:1.5rem">Rail</h2>
+<div class="table-wrap"><table><tbody id="railRows"><tr><td class="empty">—</td></tr></tbody></table></div>
+<div class="controls" style="flex-wrap:wrap;gap:.5rem;margin-top:.75rem">
+  <select id="rEnv"><option>production</option><option>sandbox</option></select>
+  <select id="rChain"><option>gnosis</option><option>chiado</option></select>
+  <input id="rClient" placeholder="Monerium client_id" size="38" class="mono" />
+  <input id="rSecret" placeholder="client_secret (prazno = zadrži)" size="30" type="password" />
+  <input id="rProfile" placeholder="profile_id" size="38" class="mono" />
+  <input id="rSafe" placeholder="prihvatni Safe 0x…" size="46" class="mono" />
+  <input id="rRoles" placeholder="Roles Modifier 0x…" size="46" class="mono" />
+  <input id="rRoleKey" placeholder="role_key 0x…(64)" size="46" class="mono" />
+  <input id="rEure" placeholder="EURe (samo chiado)" size="46" class="mono" />
+  <input id="rCap" placeholder="kapica u centima (strogo <)" size="24" />
+  <input id="rOutUrl" placeholder="outbound webhook https://… (opc.)" size="40" />
+  <input id="rOutSecret" placeholder="outbound secret (prazno = zadrži)" size="30" type="password" />
+  <button type="button" id="saveRail">Spremi rail</button>
+</div>
+<div class="controls" style="margin-top:.75rem">
+  <button type="button" id="routerBtn">Generiraj router EOA</button>
+  <button type="button" id="webhookBtn">Registriraj Monerium webhook</button>
+  <button type="button" id="verifyBtn">Verify</button>
+  <span id="actResult" class="mono"></span>
+</div>
+
+<h2 style="margin-top:1.5rem">Verify izvještaj</h2>
+<div class="table-wrap"><table>
+  <thead><tr><th>Provjera</th><th>OK</th><th>Detalj</th></tr></thead>
+  <tbody id="verifyRows"><tr><td colspan="3" class="empty">Još nije pokrenut.</td></tr></tbody>
+</table></div>
+${TENANTS_SCRIPT}`;
+  return renderShell({ title: 'Tenanti', tab: 'tenants', body });
+}
+
+const TENANTS_SCRIPT = `<script>
+const $t = (id) => document.getElementById(id);
+const escT = (s) => String(s==null?'':s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const say = (msg, ok) => { $t('actResult').textContent = msg; $t('actResult').style.color = ok ? '#1b8f3a' : '#c62828'; };
+
+async function api(method, path, body) {
+  const r = await fetch(path, { method, headers: body ? { 'content-type': 'application/json' } : {}, body: body ? JSON.stringify(body) : undefined });
+  let d = {};
+  try { d = await r.json(); } catch {}
+  return { ok: r.ok, status: r.status, d };
+}
+
+async function loadTenants(select) {
+  const { d } = await api('GET', '/admin/api/tenants');
+  $t('tSel').innerHTML = (d.tenants || []).map(t =>
+    '<option value="' + escT(t.id) + '">' + escT(t.id) + ' — ' + escT(t.name) + ' [' + escT(t.status) + ']</option>').join('');
+  if (select) $t('tSel').value = select;
+  await loadRail();
+}
+
+function row(k, v) { return '<tr><th style="text-align:left;width:14rem">' + escT(k) + '</th><td class="mono">' + v + '</td></tr>'; }
+
+async function loadRail() {
+  const id = $t('tSel').value;
+  if (!id) return;
+  const { d } = await api('GET', '/admin/api/tenants/' + encodeURIComponent(id) + '/rail');
+  $t('tStatus').textContent = d.legacy ? 'ITalk — rail iz env (nije ovdje)' : ('status: ' + (d.status || '?'));
+  const r = d.rail;
+  if (!r) { $t('railRows').innerHTML = '<tr><td class="empty">' + (d.legacy ? 'Zadani tenant koristi env.' : 'Rail još nije upisan.') + '</td></tr>'; $t('verifyRows').innerHTML = '<tr><td colspan="3" class="empty">—</td></tr>'; return; }
+  const yes = (b) => b ? '✅ postavljeno' : '❌ nedostaje';
+  $t('railRows').innerHTML = [
+    row('Monerium', escT(r.monerium_env) + ' · ' + escT(r.chain) + ' · client ' + escT(r.client_id) + ' · secret ' + yes(r.has_client_secret)),
+    row('Profil', escT(r.profile_id)),
+    row('Prihvatni Safe', escT(r.receiving_safe)),
+    row('Roles Modifier / uloga', escT(r.roles_modifier || '—') + ' · ' + escT(r.role_key || '—')),
+    row('Router EOA', escT(r.router_address || '—') + ' · ključ ' + yes(r.has_router_key)),
+    row('Webhook', yes(r.has_webhook_secret) + ' · pretplata ' + escT(r.webhook_subscription_id || '—')),
+    row('Outbound webhook', escT(r.outbound_webhook_url || 'nema (tenant nema merchant evente)')),
+    row('Kapica', r.max_forward_cents ? '&lt; ' + (r.max_forward_cents/100).toFixed(2) + ' EUR' : '❌ nije upisana'),
+    row('Verificiran', r.verified_at ? new Date(r.verified_at*1000).toLocaleString('hr-HR') : '❌ ne'),
+  ].join('');
+  $t('rEnv').value = r.monerium_env; $t('rChain').value = r.chain; $t('rClient').value = r.client_id || '';
+  $t('rProfile').value = r.profile_id || ''; $t('rSafe').value = r.receiving_safe || ''; $t('rRoles').value = r.roles_modifier || '';
+  $t('rRoleKey').value = r.role_key || ''; $t('rEure').value = r.eure_contract || ''; $t('rCap').value = r.max_forward_cents || '';
+  $t('rOutUrl').value = r.outbound_webhook_url || '';
+  renderVerify(r.verify_report && r.verify_report.checks);
+}
+
+function renderVerify(checks) {
+  if (!checks || !checks.length) { $t('verifyRows').innerHTML = '<tr><td colspan="3" class="empty">Još nije pokrenut.</td></tr>'; return; }
+  $t('verifyRows').innerHTML = checks.map(c => '<tr><td class="mono">' + escT(c.key) + '</td><td>' + (c.ok ? '✅' : '❌') + '</td><td class="mono">' + escT(c.detail) + '</td></tr>').join('');
+}
+
+$t('tSel').addEventListener('change', loadRail);
+
+$t('createBtn').addEventListener('click', async () => {
+  const body = { id: $t('nId').value, name: $t('nName').value, beneficiary_name: $t('nBen').value, iban: $t('nIban').value, bic: $t('nBic').value };
+  const { ok, d } = await api('POST', '/admin/api/tenants', body);
+  say(ok ? 'Kreiran ' + d.tenant_id + ' (onboarding)' : 'Greška: ' + d.error, ok);
+  if (ok) await loadTenants(d.tenant_id);
+});
+
+$t('saveRail').addEventListener('click', async () => {
+  const id = $t('tSel').value;
+  const body = {
+    monerium_env: $t('rEnv').value, chain: $t('rChain').value, client_id: $t('rClient').value,
+    client_secret: $t('rSecret').value, profile_id: $t('rProfile').value, receiving_safe: $t('rSafe').value,
+    roles_modifier: $t('rRoles').value, role_key: $t('rRoleKey').value, eure_contract: $t('rEure').value,
+    max_forward_cents: $t('rCap').value, outbound_webhook_url: $t('rOutUrl').value, outbound_webhook_secret: $t('rOutSecret').value,
+  };
+  const { ok, d } = await api('PUT', '/admin/api/tenants/' + encodeURIComponent(id) + '/rail', body);
+  $t('rSecret').value = ''; $t('rOutSecret').value = '';
+  say(ok ? 'Rail spremljen — verify treba ponoviti.' : 'Greška: ' + d.error, ok);
+  await loadRail();
+});
+
+$t('routerBtn').addEventListener('click', async () => {
+  const id = $t('tSel').value;
+  let res = await api('POST', '/admin/api/tenants/' + encodeURIComponent(id) + '/rail/router-key');
+  if (res.status === 409 && res.d.error === 'router_exists' && confirm('Router već postoji (' + res.d.router_address + '). Rotacija traži NOVI batch 007 na Safeu tenanta. Rotirati?')) {
+    res = await api('POST', '/admin/api/tenants/' + encodeURIComponent(id) + '/rail/router-key?rotate=1');
+  }
+  say(res.ok ? 'Router: ' + res.d.router_address + ' — upiši ga u batch 007' : 'Greška: ' + res.d.error, res.ok);
+  await loadRail();
+});
+
+$t('webhookBtn').addEventListener('click', async () => {
+  const id = $t('tSel').value;
+  const { ok, d } = await api('POST', '/admin/api/tenants/' + encodeURIComponent(id) + '/rail/webhook');
+  say(ok ? 'Webhook: ' + d.url + ' (' + d.subscription_id + ')' : 'Greška: ' + d.error + ' ' + (d.detail || ''), ok);
+  await loadRail();
+});
+
+$t('verifyBtn').addEventListener('click', async () => {
+  const id = $t('tSel').value;
+  say('Provjeravam…', true);
+  const { d } = await api('POST', '/admin/api/tenants/' + encodeURIComponent(id) + '/rail/verify');
+  renderVerify(d.checks);
+  say(d.ok ? 'Sve provjere prošle — tenant se može aktivirati.' : (d.error ? 'Greška: ' + d.error : 'Neke provjere nisu prošle.'), Boolean(d.ok));
+  await loadRail();
+});
+
+document.querySelectorAll('[data-act]').forEach((b) => b.addEventListener('click', async () => {
+  const id = $t('tSel').value;
+  const act = b.getAttribute('data-act');
+  if (!confirm(act + ' ' + id + '?')) return;
+  const { ok, d } = await api('POST', '/admin/api/tenants/' + encodeURIComponent(id) + '/' + act);
+  say(ok ? id + ' → ' + d.status : 'Greška: ' + d.error, ok);
+  await loadTenants(id);
+}));
+
 loadTenants();
 </script>`;

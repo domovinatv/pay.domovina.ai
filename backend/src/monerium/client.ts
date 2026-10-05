@@ -20,6 +20,16 @@ interface MoneriumAuthContext {
   [k: string]: unknown;
 }
 
+export interface MoneriumIban {
+  iban: string;
+  bic?: string;
+  profile?: string;
+  /// Address the IBAN mints to.
+  address?: string;
+  chain?: string;
+  [k: string]: unknown;
+}
+
 export interface MoneriumWebhookSubscription {
   id: string;
   url?: string;
@@ -138,6 +148,16 @@ export class MoneriumClient {
 
   async getOrder(orderId: string): Promise<MoneriumOrder> {
     return this.call<MoneriumOrder>(`/orders/${orderId}`);
+  }
+
+  /// IBANs of a profile and the address each one mints to
+  /// (`GET /ibans?profile=` → `{ ibans: [...] }`, SDK 4.2 `IBANsResponse`).
+  async listIbans(profileId: string): Promise<MoneriumIban[]> {
+    const res = await this.call<{ ibans?: MoneriumIban[] } | MoneriumIban[]>(
+      `/ibans?profile=${encodeURIComponent(profileId)}`,
+    );
+    if (Array.isArray(res)) return res;
+    return res.ibans ?? [];
   }
 
   async listWebhookSubscriptions(): Promise<MoneriumWebhookSubscription[]> {

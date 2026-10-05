@@ -55,7 +55,7 @@ export interface AuthorizeDeps {
   getCampaignById(
     campaignId: string,
   ): Promise<{ tenant_id: string; safe_address: string } | null>;
-  getTenantStatus(tenantId: string): Promise<'active' | 'suspended' | null>;
+  getTenantStatus(tenantId: string): Promise<'active' | 'suspended' | 'onboarding' | null>;
   isWhitelisted(tenantId: string, address: string): Promise<boolean>;
   /// MPT main-rail Safe. A memo pointing here is the "fund the Safe" no-op —
   /// no value leaves, so it needs binding but no payout permission.

@@ -43,6 +43,7 @@ import { deliverDue, makeOutboxDeps } from './intents/outbox';
 import { RECONCILE_INTERVAL_S, reconcileMoneriumOrders } from './monerium/reconcile';
 import { fetchOgPreview } from './og/preview';
 import { publishIntentChange } from './intents/stream';
+import { checkRouterGas } from './tenants/onboarding';
 import { renderCheckoutPage } from './checkout/page';
 import { getSepaDetails } from './tenants/db';
 import { defaultTenantId } from './tenants/whitelist';
@@ -508,6 +509,13 @@ export default {
 
     // Heavier housekeeping only on the 6-hourly cron.
     if (event.cron === '0 */6 * * *') {
+      // Tenant routers (ADR 0017) need xDAI for gas; alert before they run dry.
+      ctx.waitUntil(
+        checkRouterGas(env).then(
+          (n) => { if (n > 0) console.log(`cron: ${n} tenant router(s) low on gas`); },
+          (e) => console.error(`cron: router gas check failed: ${e}`),
+        ),
+      );
       ctx.waitUntil(
         refreshAllAccounts(env).then((n) =>
           console.log(`cron: inserted ${n} new transactions`),
