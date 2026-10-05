@@ -162,6 +162,8 @@ export async function recordMoneriumWebhookEvent(
       args.processingNote ?? null,
     )
     .run();
+  // 0 = another caller already holds the live forward for this order.
+  if ((res.meta?.changes ?? 0) === 0) return 0;
   return (res.meta?.last_row_id as number | undefined) ?? 0;
 }
 
@@ -253,6 +255,8 @@ export interface MoneriumForwardRow {
   updated_at: number;
 }
 
+/// Returns the new row id, or 0 when the live-forward latch refused the insert
+/// (an order may have at most one pending/submitted/confirmed forward).
 export async function insertForward(
   env: Env,
   args: {
@@ -268,11 +272,15 @@ export async function insertForward(
   },
 ): Promise<number> {
   const now = Math.floor(Date.now() / 1000);
+  // ON CONFLICT DO NOTHING (not INSERT OR IGNORE): only the live-forward
+  // latch (ux_forwards_live, migration 0016) may swallow the insert — a NOT
+  // NULL or other constraint failure must still throw.
   const res = await env.DB.prepare(
     `INSERT INTO monerium_forwards
        (order_id, target_address, amount_wei, amount_cents, sid, memo_prefix,
         tx_hash, status, error, attempts, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT DO NOTHING`,
   )
     .bind(
       args.orderId,
@@ -289,6 +297,8 @@ export async function insertForward(
       now,
     )
     .run();
+  // 0 = another caller already holds the live forward for this order.
+  if ((res.meta?.changes ?? 0) === 0) return 0;
   return (res.meta?.last_row_id as number | undefined) ?? 0;
 }
 

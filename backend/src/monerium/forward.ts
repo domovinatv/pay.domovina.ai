@@ -106,6 +106,8 @@ export async function maybeForward(
   deps: ForwardDeps,
   order: MoneriumOrder,
 ): Promise<void> {
+  // Cheap early exit for the common retry. NOT the guard — the atomic latch
+  // on insertForward is (check-then-act here would race, BW-02).
   const existing = await deps.getForwardByOrder(order.id);
   if (existing && (existing.status === 'submitted' || existing.status === 'confirmed')) {
     console.log(`forward ${order.id} already ${existing.status}, skipping`);
@@ -150,6 +152,10 @@ export async function handleForward(
       status: 'confirmed',
       error: 'self_target_noop',
     });
+    if (forwardId === 0) {
+      console.log(`forward ${order.id} self_noop already claimed by a concurrent delivery`);
+      return;
+    }
     if (routing.sid) {
       await deps.settleNonRoutedPaid({
         sid: routing.sid,
@@ -174,6 +180,12 @@ export async function handleForward(
     memoPrefix: routing.prefix,
     status: 'pending',
   });
+  // The INSERT is the decision (migration 0016 latch): a concurrent delivery
+  // that lost the race must not broadcast a second transfer.
+  if (forwardId === 0) {
+    console.log(`forward ${order.id} already claimed by a concurrent delivery, skipping`);
+    return;
+  }
   const result = await deps.forward({
     target: target as Address,
     amountWei,
