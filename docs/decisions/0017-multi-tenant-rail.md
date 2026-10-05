@@ -326,6 +326,18 @@ identičan JSON, nevaljan `Bearer` daje 401, `/api/monerium/orders` daje 401,
 `/t/:id` daje 404, CORS propušta `solardei.hr`, a SSE stream šalje snapshot.
 `MULTI_TENANT_RAIL` je i dalje `0` (korak 7 čeka prvog tenanta s KYB-om).
 
+**Produkcijska uplata nakon deploya (2026-10-05, Matija, 1,06 €):** sid
+`bvthehnqb8zp`, order `cbfd25f3-c101-11f1-bcdc-7a0bbc74b541`. Tok:
+`order.created` 21:14:49 → `payment.received` isporučen (200) →
+`order.updated processed` 21:14:55 → forward #65 → potvrđen 21:15:01 → intent
+`paid` (primljeno 106 centi) → `intent.paid` isporučen (200). Od zaprimanja
+do namire prošlo je ~12 s. `tenant_id = 'italk'` je na orderu, forwardu,
+eventima i outboxu. Zasun je pustio jedan forward s jednim pokušajem. On-chain
+tx `0x512c7ea7…7d83` (blok 48607194) je uspio i sadrži jedan EURe transfer od
+1,06 s ITalk Safea na Safe Lukavec, preko ITalkovog routera `0xd612…54cb` i
+modifiera `0x3303…762c`. SSE push se iz baze ne vidi (stream se ne
+perzistira) i nije zasebno provjeren u pregledniku.
+
 1. `npx wrangler login` na account `7dc7167b…`.
 2. **Pre-check za 0016** na produkciji (mora vratiti 0 redaka):
    `SELECT order_id, COUNT(*) FROM monerium_forwards WHERE status IN ('pending','submitted','confirmed') GROUP BY order_id HAVING COUNT(*) > 1;`
