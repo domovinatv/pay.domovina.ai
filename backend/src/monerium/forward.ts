@@ -21,6 +21,7 @@ import {
 import { writeAudit } from '../tenants/db';
 import type { TenantRail } from '../tenants/rail';
 import { sendAlert } from '../alerts';
+import { publishIntentChange } from '../intents/stream';
 
 /// The forward hop: EURe that Monerium minted into the MPT Safe is pushed on
 /// to the payee. Extracted out of index.ts so the fail-closed branches are
@@ -53,6 +54,8 @@ export interface ForwardDeps {
     target_address: string;
   }): Promise<'confirmed' | 'failed' | 'timeout'>;
   alert(text: string): Promise<void>;
+  /// Poke the intent's SSE stream (ADR 0017). Optional, fail-soft.
+  publish?(sid: string | null): Promise<void>;
   audit(entry: {
     tenantId: string | null;
     action: string;
@@ -85,6 +88,7 @@ export function makeForwardDeps(env: Env, rail: TenantRail): ForwardDeps {
     settleNonRoutedPaid: (args) => settleNonRoutedPaid(makeConfirmDeps(env), args),
     pollConfirmation: (fwd) => pollForwardConfirmation(makeConfirmDeps(env), fwd),
     alert: (text) => sendAlert(env, text),
+    publish: (sid) => publishIntentChange(env, sid),
     audit: (entry) => writeAudit(env, entry),
     emitBlocked: (args) => emitForwardBlockedWebhook(env, args),
   };
@@ -210,6 +214,7 @@ export async function handleForward(
       attempts: 1,
     });
     console.error(`forward ${order.id} FAILED: ${result.error}`);
+    await safely(deps.publish?.(routing.sid) ?? Promise.resolve());
     // Money is minted but parked in the MPT Safe and nothing retries a
     // failed broadcast automatically (Fable5 BW-04) — an operator must know.
     await safely(deps.alert(
@@ -227,6 +232,7 @@ export async function handleForward(
     attempts: 1,
   });
   console.log(`forward ${order.id} → ${target} tx=${result.txHash}`);
+  await safely(deps.publish?.(routing.sid) ?? Promise.resolve());
   // 'paid' + the merchant/campaign webhooks fire on ON-CHAIN CONFIRMATION, not
   // on broadcast — a forward that later reverts must never have told the
   // merchant "plaćeno". If this poll is evicted, the cron reconcile and the
@@ -242,6 +248,7 @@ export async function handleForward(
     memo_prefix: routing.prefix,
     target_address: target,
   });
+  await safely(deps.publish?.(routing.sid) ?? Promise.resolve());
   if (outcome === 'timeout') {
     console.log(`forward ${order.id} unconfirmed after poll window — cron reconcile will settle`);
   } else if (outcome === 'failed') {
@@ -316,6 +323,8 @@ async function park(
       `adresa iz memo-a: <code>${observed || '-'}</code>\n` +
       `tenant: <code>${tenantId ?? '-'}</code> · prefix: <code>${routing.prefix ?? '-'}</code>`,
   ));
+
+  await safely(deps.publish?.(routing.sid) ?? Promise.resolve());
 
   // Only worth telling the merchant when there is something to correlate on.
   if (routing.sid || routing.campaignId) {

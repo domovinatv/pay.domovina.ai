@@ -113,6 +113,7 @@ function harness(): { deps: WebhookDeps; rec: Rec; settle(): Promise<void> } {
     upsertOrder: async (o) => { rec.upserts.push(o.id); return true; },
     notifyLifecycle: async () => { rec.lifecycle++; },
     forward: async () => { rec.forwards++; },
+    publish: async () => {},
     alert: async (t) => { rec.alerts.push(t); },
     waitUntil: (p) => { pending.push(p); },
   };

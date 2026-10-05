@@ -6,15 +6,15 @@ import { generateSid } from './sid';
 import { buildEpcText } from './epc';
 import { computeStage, confirmForwardIfMined, loadStageContext } from './stage';
 import type { StageResult } from './stage';
+import { openIntentStream, sseEnabled } from './stream';
 import { resolveRequestTenant } from '../tenants/auth';
 import { defaultTenantId } from '../tenants/whitelist';
 import { getTenantRail, isLegacyTenant, multiTenantEnabled } from '../tenants/rail';
 import { getCampaign, getSepaDetails, isAddressWhitelisted, type SepaDetails } from '../tenants/db';
 
 /// Public, unauthenticated intent API. Mountable into the root Hono app
-/// via `app.route('/api/intents', intentApi)`. Phase 1 is polling-only;
-/// `/stream` is reserved for the Phase 2 SSE upgrade and currently 404s
-/// so EventSource clients fall back to polling cleanly.
+/// via `app.route('/api/intents', intentApi)`. Status is available by
+/// polling `/:sid` and, when INTENT_SSE=1, pushed on `/:sid/stream` (SSE).
 
 interface CreateIntentBody {
   target_address?: string;
@@ -177,10 +177,16 @@ export function buildIntentApi(): Hono<{ Bindings: Env }> {
     return c.json({ ...intentResponseJson(intent, origin, sepa), status });
   });
 
-  // Phase 2 SSE endpoint — currently absent. EventSource will receive a 404
-  // and the checkout page's JS falls back to polling automatically.
-  api.get('/:sid/stream', (c) => {
-    return c.json({ error: 'sse_not_yet_implemented_use_polling' }, 404);
+  // SSE (ADR 0017). Off → the historical 404, and EventSource clients fall
+  // back to polling `status_url`, whose shape is unchanged either way. The sid
+  // is the capability, exactly as for the polling endpoint.
+  api.get('/:sid/stream', async (c) => {
+    if (!sseEnabled(c.env)) {
+      return c.json({ error: 'sse_not_yet_implemented_use_polling' }, 404);
+    }
+    const sid = c.req.param('sid');
+    if (!SID_RE.test(sid)) return c.json({ error: 'intent_not_found' }, 404);
+    return openIntentStream(c.env, sid);
   });
 
   return api;

@@ -9,6 +9,7 @@ import {
   updateForward,
 } from '../monerium/db';
 import { getForwardStatus } from '../router/safe';
+import { publishIntentChange } from './stream';
 import { parseCampaignIdFromText, type SenderInfo } from '../monerium/sid';
 import type { PaymentIntentRow } from './db';
 import { getIntent, markIntentLate, markIntentPaid } from './db';
@@ -86,6 +87,9 @@ export interface ConfirmDeps {
   }): Promise<void>;
   listSubmittedForwards(olderThanUnix: number): Promise<MoneriumForwardRow[]>;
   sleep(ms: number): Promise<void>;
+  /// Poke the intent's SSE stream after settlement (ADR 0017). Optional and
+  /// fail-soft: the stream's own heartbeat re-read is the backstop.
+  publish?(sid: string): Promise<void>;
 }
 
 export function makeConfirmDeps(env: Env): ConfirmDeps {
@@ -102,6 +106,7 @@ export function makeConfirmDeps(env: Env): ConfirmDeps {
     emitCampaignContribution: (args) => emitCampaignContributionWebhook(env, args),
     listSubmittedForwards: (olderThan) => listSubmittedForwardsOlderThan(env, olderThan),
     sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+    publish: (sid) => publishIntentChange(env, sid),
   };
 }
 
@@ -138,6 +143,7 @@ export async function settleConfirmedForward(
       amountCents: fwd.amount_cents,
       sender,
     });
+    await deps.publish?.(fwd.sid);
   }
   // Permanent campaign QR (`cmp:`): one contribution per Monerium order.
   // Single-fire now rests on the atomic flip above (previously on
@@ -177,7 +183,9 @@ export async function settleNonRoutedPaid(
     sender: SenderInfo;
   },
 ): Promise<boolean> {
-  return flipPaidAndNotify(deps, { ...args, forwardTxHash: null });
+  const flipped = await flipPaidAndNotify(deps, { ...args, forwardTxHash: null });
+  await deps.publish?.(args.sid);
+  return flipped;
 }
 
 /// Primary confirmation path: poll the receipt right after broadcast, inside

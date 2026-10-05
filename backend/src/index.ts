@@ -42,6 +42,7 @@ import { scanOnchainDonations } from './intents/onchainIndexer';
 import { deliverDue, makeOutboxDeps } from './intents/outbox';
 import { RECONCILE_INTERVAL_S, reconcileMoneriumOrders } from './monerium/reconcile';
 import { fetchOgPreview } from './og/preview';
+import { publishIntentChange } from './intents/stream';
 import { renderCheckoutPage } from './checkout/page';
 import { getSepaDetails } from './tenants/db';
 import { defaultTenantId } from './tenants/whitelist';
@@ -443,6 +444,9 @@ h1{color:${color};margin:0 0 8px;font-size:18px}p{color:#444;margin:0;line-heigh
 <p style="margin-top:16px;color:#888;font-size:13px">Možeš zatvoriti ovaj prozor i vratiti se u app.</p></div>`;
 }
 
+// Durable Object class for SSE (wrangler.toml [[durable_objects.bindings]]).
+export { IntentStream } from './intents/stream';
+
 export default {
   fetch: app.fetch,
   scheduled: async (
@@ -512,9 +516,10 @@ export default {
       // Flip overdue pending intents to expired so the checkout page can
       // show a clear "istekao" state. Idempotent + cheap UPDATE.
       ctx.waitUntil(
-        sweepExpiredIntents(env).then((n) =>
-          console.log(`cron: expired ${n} pending intents`),
-        ),
+        sweepExpiredIntents(env).then(async (sids) => {
+          console.log(`cron: expired ${sids.length} pending intents`);
+          await Promise.all(sids.map((sid) => publishIntentChange(env, sid)));
+        }),
       );
     }
   },

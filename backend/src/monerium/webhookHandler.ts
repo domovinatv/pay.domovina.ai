@@ -12,6 +12,7 @@ import { makeForwardDeps, maybeForward, parseAmountCents } from './forward';
 import { notifyOrderLifecycle } from '../intents/lifecycle';
 import { sendAlert } from '../alerts';
 import type { TenantRail } from '../tenants/rail';
+import { publishIntentChange } from '../intents/stream';
 
 /// Inbound Monerium webhook, for ONE tenant's rail (ADR 0017). Extracted from
 /// index.ts so the attribution and fail-closed branches are unit-testable;
@@ -44,6 +45,8 @@ export interface WebhookDeps {
   upsertOrder(order: MoneriumOrder): Promise<boolean>;
   notifyLifecycle(order: MoneriumOrder): Promise<void>;
   forward(order: MoneriumOrder): Promise<void>;
+  /// Poke the intent's SSE stream (no-op while SSE is off).
+  publish(sid: string | null): Promise<void>;
   alert(text: string): Promise<void>;
   waitUntil(p: Promise<unknown>): void;
 }
@@ -62,6 +65,7 @@ export function makeWebhookDeps(
     upsertOrder: (order) => upsertMoneriumOrder(env, order, rail.tenantId),
     notifyLifecycle: (order) => notifyOrderLifecycle(env, order, rail.tenantId),
     forward: (order) => maybeForward(makeForwardDeps(env, rail), order),
+    publish: (sid) => publishIntentChange(env, sid),
     alert: (text) => sendAlert(env, text),
     waitUntil: (p) => ctx.waitUntil(p),
   };
@@ -183,6 +187,8 @@ export async function handleMoneriumWebhook(
       // `payment.rejected` if Monerium refuses. Settlement (`intent.paid`)
       // still waits for the confirmed on-chain forward below.
       deps.waitUntil(deps.notifyLifecycle(order));
+      // "Euro je stigao" reaches an open checkout the moment Monerium tells us.
+      deps.waitUntil(deps.publish(sid));
       // Auto-forward via Safe + Roles Modifier on incoming issue orders.
       //
       // Critical race-condition fix (2026-05-21): only forward AFTER Monerium

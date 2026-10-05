@@ -584,10 +584,12 @@ setInterval(() => {
   renderTimeline(latest.status);
 }, 1000);
 
-// Polling. Phase 2 will swap to EventSource('/api/intents/<sid>/stream')
-// and fall back to this on 404. Note: polling continues on 'expired' —
-// a late SEPA arrival after expiry still forwards, and the page should
-// honestly show it.
+// Status updates: SSE first (ADR 0017), polling as the fallback that never
+// goes away. The stream sends the same \`status\` object as GET /api/intents/<sid>.
+// Polling keeps running until the first SSE event arrives, and resumes on any
+// stream failure (404 while SSE is off, network drop, CLOSED). Note: polling
+// continues on 'expired' — a late SEPA arrival after expiry still forwards,
+// and the page should honestly show it.
 async function poll() {
   try {
     const r = await fetch('/api/intents/' + SID, { cache: 'no-store' });
@@ -610,13 +612,66 @@ async function poll() {
     applyState(flat);
     const stage = d.status ? d.status.stage : null;
     if (stage === 'settled' || stage === 'rejected') {
-      clearInterval(pollInterval);
+      stopPolling();
     }
   } catch {}
 }
 
+let pollInterval = null;
+function startPolling() {
+  if (pollInterval) return;
+  const st = latest.status ? latest.status.stage : null;
+  if (st === 'settled' || st === 'rejected') return;
+  pollInterval = setInterval(poll, 2000);
+}
+function stopPolling() {
+  if (pollInterval) clearInterval(pollInterval);
+  pollInterval = null;
+}
+
+function startStream() {
+  if (!('EventSource' in window)) return;
+  let es;
+  try {
+    es = new EventSource('/api/intents/' + SID + '/stream');
+  } catch {
+    return;
+  }
+  es.addEventListener('stage', (ev) => {
+    let p;
+    try { p = JSON.parse(ev.data); } catch { return; }
+    stopPolling();
+    serverElapsed = (p.status && p.status.elapsed_seconds) || serverElapsed;
+    lastSyncAt = Math.floor(Date.now() / 1000);
+    latest = Object.assign({}, latest, {
+      state: p.state,
+      status: p.status,
+      forward_tx_hash: (p.status && p.status.forward_tx_hash) || latest.forward_tx_hash,
+    });
+    applyState(latest);
+    const stage = p.status ? p.status.stage : null;
+    if (stage === 'settled' || stage === 'rejected' || stage === 'expired') {
+      // The server closes the stream on these; stop EventSource from
+      // reconnecting into the same terminal snapshot, refresh the full
+      // record once, and keep watching an expired intent by polling.
+      es.close();
+      poll();
+      if (stage === 'expired') startPolling();
+    }
+  });
+  es.onerror = () => {
+    // CLOSED = the server refused (404 while SSE is off) — poll from now on.
+    // CONNECTING = EventSource is retrying by itself; poll meanwhile.
+    startPolling();
+    if (es.readyState === 2) es.close();
+  };
+}
+
 const terminal = INITIAL.status && (INITIAL.status.stage === 'settled' || INITIAL.status.stage === 'rejected');
-let pollInterval = terminal ? null : setInterval(poll, 2000);
+if (!terminal) {
+  startPolling();
+  startStream();
+}
 
 // User gesture handler to unlock audio on first interaction.
 document.addEventListener('click', ensureAudio, { once: true });

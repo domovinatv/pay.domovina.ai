@@ -41,6 +41,16 @@ database_name = "pay_domovina"
 database_id = "70caf01f-e1fa-4f3d-a23f-ebb80356548d"
 migrations_dir = "migrations"
 
+# Durable Object: one SSE hub per payment-intent sid (ADR 0017,
+# src/intents/stream.ts). Inert while INTENT_SSE = "0" — nothing ever calls it.
+[[durable_objects.bindings]]
+name = "INTENT_STREAM"
+class_name = "IntentStream"
+
+[[migrations]]
+tag = "v1-intent-stream"
+new_sqlite_classes = ["IntentStream"]
+
 # KV — create with: wrangler kv namespace create TOKEN_CACHE
 [[kv_namespaces]]
 binding = "TOKEN_CACHE"
