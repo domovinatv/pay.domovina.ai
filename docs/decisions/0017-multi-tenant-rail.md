@@ -280,3 +280,66 @@ ionako unutar župe, pa je rizik njezin, ali proces povrata nije definiran.
 - **Nadbiskupija kao jedan tenant za sve župe:** župe su zasebne pravne
   osobe, pa je to opet „u ime trećeg" (§16).
 - **CORS po tenantu:** trošak bez sigurnosne koristi.
+
+## Implementacija (2026-10-05, grana `feat/multi-tenant-rail`)
+
+| Korak | Commit | Sadržaj |
+|---|---|---|
+| 0 | `8fe0c7d` | ovaj ADR |
+| 0b | `ec9d26f` (+`89703fe`) | migracija `0016_forward_latch.sql`: `insertForward` je odluka (Fable P0-2) |
+| 1 | `8b7a2f9` | `0017_tenant_rail.sql`, `tenants/secrets.ts`, `tenants/rail.ts`, `monerium/webhookHandler.ts`, ruta `/t/:id`, reconcile po tenantu |
+| 2 | `b454b0b` | `authorizeForward` (`tenant_mismatch`, `mint_address_mismatch`, `over_cap`), `RailSigner`, outbound po tenantu, `Bearer` bez tihog pada, `/api/monerium/orders` iza admina, `safe-tx/007` |
+| 3 | `cbbae04` | `intents/stream.ts` (DO `IntentStream`), checkout na EventSource |
+| 4 | `c187478` | `tenants/onboarding.ts`, `tenants/railAdmin.ts`, `/admin/tenants`, gas alert, origini solardei |
+
+Testovi: 124 → 248. ITalk testovi prolaze s **nepromijenjenim očekivanjima**;
+harnessi su dobili samo nova polja s vrijednostima za ITalk (`railTenantId:
+'italk'`, `requireMintAt: null`, `maxForwardCents: null`). Lokalni E2E
+(`wrangler dev` + lokalni D1) pokrio je SSE push (~50 ms nakon webhooka),
+atribuciju webhooka po tenantu i onboarding.
+
+### Što se mijenja za ITalk čim se deploya, i uz zastavice na `0`
+
+Sve ostalo ostaje isto. Ovo su namjerne promjene:
+
+- **Svaki poslan, a nevaljan tenant ključ** (`Authorization` ili `x-mpt-key`)
+  vraća `401 invalid_tenant_key`. Provjereno je da nijedan postojeći klijent
+  ne šalje `Authorization` na `/api/intents` (Flutter, wallet PWA, pinka SDK,
+  energy). Šalje ga samo solardei, i to s `pk_`.
+- **`GET /api/monerium/orders*` traži `ADMIN_TOKEN`.** Nijedan klijent ga ne
+  zove; admin UI čita kroz `/admin/api/*`.
+- **ITalk intent ili kampanja** na koju stigne novac s IBAN-a drugog tenanta
+  (i obrnuto) se parka s razlogom `tenant_mismatch`. Dok drugih tenanata
+  nema, to se ne može dogoditi.
+- **Forward je atomski zaključan po orderu** (0016). Drugi konkurentni
+  webhook više ne može poslati drugi transfer.
+
+## Rollout (tim redom; ništa od ovoga nije napravljeno)
+
+1. `npx wrangler login` na account `7dc7167b…`.
+2. **Pre-check za 0016** na produkciji (mora vratiti 0 redaka):
+   `SELECT order_id, COUNT(*) FROM monerium_forwards WHERE status IN ('pending','submitted','confirmed') GROUP BY order_id HAVING COUNT(*) > 1;`
+3. `openssl rand -base64 32 | npx wrangler secret put TENANT_SECRETS_KEK`.
+   KEK treba spremiti i izvan Cloudflarea: bez njega se svaki tenant mora
+   ponovno onboardati.
+4. `npm run db:migrate:prod` (0016 + 0017) **pa tek onda** `npm run deploy`.
+   Zastavice ostaju `MULTI_TENANT_RAIL = "0"` i `INTENT_SSE = "0"`.
+5. Provjera ITalka nakon deploya: energy `/beta/` stvara intent, postojeći
+   `GET /api/intents/<sid>` ima isti oblik, test uplata od 1 € ide do
+   `settled`.
+6. `INTENT_SSE = "1"` → deploy → checkout otvoren u pregledniku prima eventove.
+   Klijenti koji prelaze na SSE (energy `intent-panel`, solardei
+   `kampanje-klijent.ts`) moraju na terminalnoj fazi pozvati `es.close()`.
+   Inače EventSource ponovno otvara stream u isti terminalni snapshot.
+7. Prvi tenant: `MULTI_TENANT_RAIL = "1"` → deploy → `/admin/tenants`
+   onboarding po redu iz §Admin. Prije aktivacije: batch 007 simuliran na
+   forku i potpisan od tenanta, pa test uplata od 1 €. Sandbox varijanta
+   (`monerium_env = sandbox`, `chain = chiado`) prolazi isti put.
+
+### Za potrošače
+
+- **solardei** (`kampanje-klijent.ts`): novi kodovi greške
+  `tenant_rail_disabled` i `tenant_rail_not_configured` (403) danas padaju u
+  `nepoznato`. Preporuka je mapirati ih na `tenant`.
+- **energy** (`mpt-intent.ts`): bez promjene. I dalje ne šalje `pk_`, pa
+  ostaje na ITalku (§7 u energy docs/15).
