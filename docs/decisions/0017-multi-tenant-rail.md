@@ -314,7 +314,17 @@ Sve ostalo ostaje isto. Ovo su namjerne promjene:
 - **Forward je atomski zaključan po orderu** (0016). Drugi konkurentni
   webhook više ne može poslati drugi transfer.
 
-## Rollout (tim redom; ništa od ovoga nije napravljeno)
+## Rollout (tim redom)
+
+**Stanje 2026-10-05:** koraci 1–6 su gotovi. PR #58 je mergean (`9e11ba5`).
+Pre-check 0016 dao je 0 redaka, a u letu nije bilo pending intenata.
+`TENANT_SECRETS_KEK` je postavljen; kopija je u macOS Keychainu (servis
+`TENANT_SECRETS_KEK`, račun `pay-domovina-backend`). Migracije 0016 i 0017 su
+na produkciji. Deployane su verzije `2384d72b` (zastavice 0) i `1d8183d3`
+(`INTENT_SSE=1`, commit `b177450`). Smoke test: postojeći intenti imaju
+identičan JSON, nevaljan `Bearer` daje 401, `/api/monerium/orders` daje 401,
+`/t/:id` daje 404, CORS propušta `solardei.hr`, a SSE stream šalje snapshot.
+`MULTI_TENANT_RAIL` je i dalje `0` (korak 7 čeka prvog tenanta s KYB-om).
 
 1. `npx wrangler login` na account `7dc7167b…`.
 2. **Pre-check za 0016** na produkciji (mora vratiti 0 redaka):
