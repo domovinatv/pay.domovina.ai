@@ -107,7 +107,7 @@ INTENT_REQUIRE_TENANT_KEY = "0"
 #   INTENT_SSE        — "1" serves GET /api/intents/:sid/stream as SSE; "0"
 #                       keeps the historical 404 (clients poll).
 MULTI_TENANT_RAIL = "0"
-INTENT_SSE = "0"
+INTENT_SSE = "1"
 
 # MPT routing — Safe + Zodiac Roles Modifier on Gnosis chain (100).
 # All public; private signer key lives in ROUTER_PRIVATE_KEY secret below.
