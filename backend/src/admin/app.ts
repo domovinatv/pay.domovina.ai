@@ -10,7 +10,12 @@ import {
   listMoneriumWebhookEvents,
   getMoneriumOrder,
 } from '../monerium/db';
-import { listIntents } from '../intents/db';
+import { listIntents, listRerouteCandidates } from '../intents/db';
+import { checkReroute, handleForward, makeForwardDeps } from '../monerium/forward';
+import { STRAY_LOOKBACK_SECONDS } from '../monerium/strayResolver';
+import type { MoneriumOrder } from '../monerium/types';
+import { getTenantRail, isLegacyTenant, legacyRail, type TenantRail } from '../tenants/rail';
+import { defaultTenantId } from '../tenants/whitelist';
 import {
   countWallets,
   listPhoneBindingsForCredentials,
@@ -73,6 +78,38 @@ export function mountAdminUi(app: Hono<{ Bindings: Env }>): void {
     const status = c.req.query('status') || undefined;
     const { items, total } = await listForwards(c.env, { status, limit: 100 });
     return c.json({ items, total });
+  });
+  // Parked payment → intent (stray resolver, operator side). The picker lists
+  // the order tenant's unsettled intents around the payment time; the POST
+  // re-runs the normal forward path with the chosen sid, so the whitelist /
+  // tenant / cap gate decides exactly as for a memo-carried payment.
+  app.get('/admin/api/orders/:id/reroute-candidates', async (c) => {
+    const loaded = await loadParkedOrder(c.env, c.req.param('id'));
+    if ('error' in loaded) return c.json({ error: loaded.error }, 404);
+    const { order, row } = loaded;
+    const placed = row.placed_at ? Math.floor(Date.parse(row.placed_at) / 1000) : Math.floor(Date.now() / 1000);
+    const amountCents = Math.round(Number(row.amount) * 100);
+    const items = await listRerouteCandidates(c.env, {
+      tenantId: loaded.tenantId,
+      defaultTenantId: defaultTenantId(c.env),
+      amountCents,
+      createdFrom: placed - STRAY_LOOKBACK_SECONDS,
+      createdTo: placed + 3600,
+    });
+    return c.json({ order_id: order.id, amount_cents: amountCents, placed_at: row.placed_at, items });
+  });
+  app.post('/admin/api/orders/:id/reroute', async (c) => {
+    const body = await c.req.json<{ sid?: string }>().catch(() => ({} as { sid?: string }));
+    const sid = (body.sid ?? '').trim();
+    if (!sid) return c.json({ error: 'sid_required' }, 400);
+    const loaded = await loadParkedOrder(c.env, c.req.param('id'));
+    if ('error' in loaded) return c.json({ error: loaded.error }, 404);
+    const deps = makeForwardDeps(c.env, loaded.rail);
+    const refusal = await checkReroute(deps, loaded.order, sid);
+    if (refusal) return c.json({ error: refusal }, 409);
+    // The forward polls for confirmation (~75 s) — don't hold the request.
+    c.executionCtx.waitUntil(handleForward(deps, loaded.order, { sid }));
+    return c.json({ accepted: true, order_id: loaded.order.id, sid }, 202);
   });
   // Outbound merchant webhook outbox (migration 0015).
   app.get('/admin/api/outbox', async (c) => {
@@ -200,4 +237,25 @@ export function mountAdminUi(app: Hono<{ Bindings: Env }>): void {
     const wallets = await listWalletsSharingPhone(c.env, phoneHash);
     return c.json({ phone_hash: phoneHash, wallets });
   });
+}
+
+async function loadParkedOrder(
+  env: Env,
+  orderId: string,
+): Promise<
+  | { order: MoneriumOrder; row: NonNullable<Awaited<ReturnType<typeof getMoneriumOrder>>>; rail: TenantRail; tenantId: string }
+  | { error: string }
+> {
+  const row = await getMoneriumOrder(env, orderId);
+  if (!row) return { error: 'order_not_found' };
+  const tenantId = row.tenant_id ?? defaultTenantId(env);
+  const rail = isLegacyTenant(env, tenantId) ? legacyRail(env) : await getTenantRail(env, tenantId);
+  if (!rail) return { error: 'tenant_rail_not_found' };
+  let order: MoneriumOrder;
+  try {
+    order = JSON.parse(row.raw_json) as MoneriumOrder;
+  } catch {
+    return { error: 'order_raw_json_unparseable' };
+  }
+  return { order, row, rail, tenantId };
 }

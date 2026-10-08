@@ -54,6 +54,7 @@ history.
 | [0015](0015-runtime-brand-resolution-and-external-brand-repos.md) | Runtime brand resolution (hostname) + external repo for flagship brands | 2026-06-15 | ✅ Accepted (partial) | 🟢 Resolver shipped (`45b49d5`); `ship:multi` to prod paused; first external repo live (`edemokracija/novcanik-prototip`) |
 | [0016](0016-tenant-payout-whitelist.md) | Tenant payout whitelist: fail-closed forward rail (binding + whitelist, no more arbitrary SEPA-reference destinations) | 2026-08-01 | ✅ Accepted | 🟢 Backend shipped (migrations 0013/0014, `authorizeForward`, admin console, 62 new tests); on-chain Zodiac scoping (`safe-tx/006`) prepared but NOT executed |
 | [0017](0017-multi-tenant-rail.md) | Multi-tenant rail: Monerium account, webhook and signer per tenant (encrypted secrets in D1, per-tenant Roles + router EOA, SSE) | 2026-10-05 | ✅ Accepted | 🟢 Merged (#58) + deployed 2026-10-05: migrations 0016/0017, KEK set, `INTENT_SSE=1` live; `MULTI_TENANT_RAIL=0` until the first KYB'd tenant |
+| [0018](0018-stray-payment-resolver.md) | Uplate bez reference: povezivanje s intentom po tenantu, iznosu i vremenu (+ ručno preusmjeravanje u adminu) | 2026-10-08 | ✅ Accepted | 🟢 Grana `feat/stray-resolver`: resolver, zasun 0018, admin gumb; `client_ref` sljedeći PR |
 
 ---
 

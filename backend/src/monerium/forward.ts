@@ -3,7 +3,20 @@ import type { Address } from 'viem';
 import type { Env } from '../types';
 import type { MoneriumOrder } from './types';
 import { getForwardByOrder, insertForward, updateForward } from './db';
-import { extractRoutingFromOrder, extractSenderFromOrder, type SenderInfo } from './sid';
+import {
+  extractRoutingFromOrder,
+  extractSenderFromOrder,
+  type RoutingTarget,
+  type SenderInfo,
+} from './sid';
+import {
+  placedAtUnix,
+  resolveStray,
+  STRAY_CLOCK_SKEW_SECONDS,
+  STRAY_LOOKBACK_SECONDS,
+  type StrayCandidate,
+} from './strayResolver';
+import { findStrayCandidates } from '../intents/db';
 import { forwardViaSafe, type ForwardArgs, type ForwardResult } from '../router/safe';
 import {
   makeConfirmDeps,
@@ -19,6 +32,7 @@ import {
   type ParkReason,
 } from '../tenants/whitelist';
 import { writeAudit } from '../tenants/db';
+import { defaultTenantId } from '../tenants/whitelist';
 import type { TenantRail } from '../tenants/rail';
 import { sendAlert } from '../alerts';
 import { publishIntentChange } from '../intents/stream';
@@ -54,6 +68,16 @@ export interface ForwardDeps {
     target_address: string;
   }): Promise<'confirmed' | 'failed' | 'timeout'>;
   alert(text: string): Promise<void>;
+  /// Stray resolver (./strayResolver.ts): the rail tenant's unsettled intents
+  /// of exactly this amount created in [from, to]. Absent = resolver off —
+  /// reference-less payments park as before.
+  findStrayCandidates?(args: {
+    amountCents: number;
+    createdFrom: number;
+    createdTo: number;
+  }): Promise<StrayCandidate[]>;
+  /// Clock for the resolver window; defaults to Date.now().
+  nowUnix?(): number;
   /// Poke the intent's SSE stream (ADR 0017). Optional, fail-soft.
   publish?(sid: string | null): Promise<void>;
   audit(entry: {
@@ -88,6 +112,13 @@ export function makeForwardDeps(env: Env, rail: TenantRail): ForwardDeps {
     settleNonRoutedPaid: (args) => settleNonRoutedPaid(makeConfirmDeps(env), args),
     pollConfirmation: (fwd) => pollForwardConfirmation(makeConfirmDeps(env), fwd),
     alert: (text) => sendAlert(env, text),
+    findStrayCandidates: env.STRAY_RESOLVER === '1'
+      ? (args) => findStrayCandidates(env, {
+          ...args,
+          tenantId: rail.tenantId,
+          defaultTenantId: defaultTenantId(env),
+        })
+      : undefined,
     publish: (sid) => publishIntentChange(env, sid),
     audit: (entry) => writeAudit(env, entry),
     emitBlocked: (args) => emitForwardBlockedWebhook(env, args),
@@ -126,13 +157,64 @@ export async function maybeForward(
   await handleForward(deps, order);
 }
 
+/// How a forward found its intent: from the memo (null), by the stray
+/// resolver ('auto') or by an operator in the admin UI ('manual'). Stored in
+/// monerium_forwards.memo_prefix for the latter two.
+type ResolvedVia = 'auto' | 'manual';
+
 export async function handleForward(
   deps: ForwardDeps,
   order: MoneriumOrder,
+  /// Operator reroute of a parked order onto a chosen intent (admin UI).
+  manual?: { sid: string },
 ): Promise<void> {
-  const routing = extractRoutingFromOrder(order);
+  // What the payer actually sent. Parks always report THIS, not a resolved
+  // guess — a `forward.blocked` webhook must never name an intent the
+  // payment merely might have belonged to.
+  const memoRouting = extractRoutingFromOrder(order);
+  let routing = memoRouting;
   const sender = extractSenderFromOrder(order);
   const amountCents = parseAmountCents(order.amount);
+
+  // ---- Reference-less payment → find the intent it paid. ----
+  // The resolver only ever proposes an intent's own, tenant-authorised
+  // target; the synthesised routing then faces the same gate as a memo.
+  let claimSids: string[] | null = null;
+  let via: ResolvedVia | null = null;
+  let strayNote: string | null = null;
+  let ambiguousIntent = false;
+  if (manual) {
+    const intent = await deps.authorize.getIntentBySid(manual.sid);
+    if (intent) {
+      routing = resolvedRouting(intent.target_address, manual.sid);
+      claimSids = [manual.sid];
+      via = 'manual';
+    }
+  } else if (isStray(routing) && deps.findStrayCandidates && amountCents !== null) {
+    const now = deps.nowUnix?.() ?? Math.floor(Date.now() / 1000);
+    const placed = placedAtUnix(order.meta?.placedAt, now);
+    const candidates = await deps.findStrayCandidates({
+      amountCents,
+      createdFrom: placed - STRAY_LOOKBACK_SECONDS,
+      createdTo: placed + STRAY_CLOCK_SKEW_SECONDS,
+    });
+    const res = resolveStray(candidates, placed);
+    if (res.kind === 'match') {
+      routing = resolvedRouting(res.target, res.sids[0]);
+      claimSids = res.sids;
+      via = 'auto';
+      ambiguousIntent = res.ambiguousIntent;
+    } else if (res.kind === 'conflict') {
+      strayNote =
+        `kandidati s istim iznosom vode na RAZLIČITE adrese — ručno odabrati:\n` +
+        res.candidates
+          .slice(0, 5)
+          .map((c) => `• <code>${c.sid}</code> → <code>${c.target_address}</code> (${c.state})`)
+          .join('\n');
+    } else {
+      strayNote = 'nema otvorenog/nedavno isteklog intenta s tim iznosom (48 h)';
+    }
+  }
 
   // ---- Single authorisation gate. No forward path bypasses this. ----
   const decision = await authorizeForward(deps.authorize, routing, {
@@ -143,10 +225,13 @@ export async function handleForward(
   if (decision.action === 'park') {
     await park(deps, {
       order,
-      routing,
+      routing: memoRouting,
       amountCents,
       reason: decision.reason,
       tenantId: decision.tenantId,
+      note: strayNote ?? (via
+        ? `povezano s intentom <code>${routing.sid}</code> (${via}) → <code>${routing.target}</code>, ali gate odbio`
+        : null),
     });
     return;
   }
@@ -155,25 +240,28 @@ export async function handleForward(
   // where it should. `state=processed` means that mint is on-chain confirmed,
   // so 'paid' keys off it directly.
   if (decision.action === 'self_noop') {
-    const forwardId = await deps.insertForward({
+    const claimed = await claimForward(deps, order, routing, claimSids, via, {
       orderId: order.id,
       targetAddress: routing.target!,
       amountWei: '0',
       amountCents,
-      sid: routing.sid,
-      memoPrefix: routing.prefix,
       status: 'confirmed',
       error: 'self_target_noop',
     });
-    if (forwardId === 0) {
+    if (claimed.forwardId === 0) {
+      if (claimed.exhausted) {
+        await park(deps, { order, routing: memoRouting, amountCents, reason: 'no_routing_target',
+          tenantId: decision.tenantId, note: 'svi kandidati već preuzeti drugom uplatom' });
+        return;
+      }
       console.log(`forward ${order.id} self_noop already claimed by a concurrent delivery`);
       return;
     }
-    if (routing.sid) {
+    if (claimed.sid) {
       await deps.settleNonRoutedPaid({
-        sid: routing.sid,
+        sid: claimed.sid,
         orderId: order.id,
-        forwardId,
+        forwardId: claimed.forwardId,
         amountCents,
         sender,
       });
@@ -184,21 +272,28 @@ export async function handleForward(
   // ---- Authorised: move the money. ----
   const target = routing.target!;
   const amountWei = eurToWei(order.amount ?? '0');
-  const forwardId = await deps.insertForward({
+  const claimed = await claimForward(deps, order, routing, claimSids, via, {
     orderId: order.id,
     targetAddress: target,
     amountWei: amountWei.toString(),
     amountCents,
-    sid: routing.sid,
-    memoPrefix: routing.prefix,
     status: 'pending',
   });
   // The INSERT is the decision (migration 0016 latch): a concurrent delivery
   // that lost the race must not broadcast a second transfer.
-  if (forwardId === 0) {
+  if (claimed.forwardId === 0) {
+    if (claimed.exhausted) {
+      await park(deps, { order, routing: memoRouting, amountCents, reason: 'no_routing_target',
+        tenantId: decision.tenantId, note: 'svi kandidati već preuzeti drugom uplatom' });
+      return;
+    }
     console.log(`forward ${order.id} already claimed by a concurrent delivery, skipping`);
     return;
   }
+  const forwardId = claimed.forwardId;
+  // From here on the sid is the CLAIMED one — for a resolved stray it may be
+  // a later candidate than the one the gate was asked about (same target).
+  routing = { ...routing, sid: claimed.sid };
   const result = await deps.forward({
     target: target as Address,
     amountWei,
@@ -231,7 +326,18 @@ export async function handleForward(
     tx_hash: result.txHash!,
     attempts: 1,
   });
-  console.log(`forward ${order.id} → ${target} tx=${result.txHash}`);
+  console.log(`forward ${order.id} → ${target} tx=${result.txHash}${via ? ` (${via} sid=${routing.sid})` : ''}`);
+  if (via) {
+    await safely(deps.alert(
+      `🔀 <b>Uplata bez reference ${via === 'auto' ? 'automatski' : 'ručno'} povezana s intentom</b>\n` +
+        `order: <code>${order.id}</code> · iznos: <b>${order.amount} EUR</b>\n` +
+        `intent: <code>${routing.sid}</code> → <code>${target}</code>\n` +
+        `tx: <code>${result.txHash}</code>` +
+        (ambiguousIntent
+          ? `\n⚠️ više intenata s istim iznosom i istom adresom — novac je na pravom mjestu, pripisivanje intentu je procjena`
+          : ''),
+    ));
+  }
   await safely(deps.publish?.(routing.sid) ?? Promise.resolve());
   // 'paid' + the merchant/campaign webhooks fire on ON-CHAIN CONFIRMATION, not
   // on broadcast — a forward that later reverts must never have told the
@@ -272,9 +378,11 @@ async function park(
     amountCents: number | null;
     reason: ParkReason;
     tenantId: string | null;
+    /// Extra operator context for the alert (stray resolver outcome).
+    note?: string | null;
   },
 ): Promise<void> {
-  const { order, routing, amountCents, reason, tenantId } = args;
+  const { order, routing, amountCents, reason, tenantId, note } = args;
   const observed = routing.target ?? routing.diagnosticTarget ?? '';
 
   // 'no_routing_target' keeps its historical status ('failed') because it
@@ -321,7 +429,8 @@ async function park(
       `order: <code>${order.id}</code>\n` +
       `iznos: <b>${amountEur} EUR</b> (ostaje u Safe-u)\n` +
       `adresa iz memo-a: <code>${observed || '-'}</code>\n` +
-      `tenant: <code>${tenantId ?? '-'}</code> · prefix: <code>${routing.prefix ?? '-'}</code>`,
+      `tenant: <code>${tenantId ?? '-'}</code> · prefix: <code>${routing.prefix ?? '-'}</code>` +
+      (note ? `\n${note}` : ''),
   ));
 
   await safely(deps.publish?.(routing.sid) ?? Promise.resolve());
@@ -338,6 +447,78 @@ async function park(
       tenantId,
     }));
   }
+}
+
+/// No address, no sid, no campaign — nothing in the remittance to route on.
+/// (A bare 0x / gnosis: memo is NOT a stray: the payer named a destination we
+/// refuse, and guessing a different one would be worse than parking.)
+function isStray(r: RoutingTarget): boolean {
+  return !r.target && !r.diagnosticTarget && !r.sid && !r.campaignId;
+}
+
+function resolvedRouting(target: string, sid: string): RoutingTarget {
+  const t = target.toLowerCase();
+  return { target: t, diagnosticTarget: t, sid, campaignId: null, prefix: 'mpt' };
+}
+
+/// Insert the forward row = take the latch. Memo-carried forwards insert once
+/// under their own sid. Resolved ones walk the candidate list: the per-intent
+/// latch (migration 0018) makes a concurrent stray that already took an intent
+/// push this one to the next candidate.
+async function claimForward(
+  deps: ForwardDeps,
+  order: MoneriumOrder,
+  routing: RoutingTarget,
+  claimSids: string[] | null,
+  via: ResolvedVia | null,
+  row: Omit<Parameters<ForwardDeps['insertForward']>[0], 'sid' | 'memoPrefix'>,
+): Promise<{ forwardId: number; sid: string | null; exhausted: boolean }> {
+  if (!claimSids || !via) {
+    const id = await deps.insertForward({ ...row, sid: routing.sid, memoPrefix: routing.prefix });
+    return { forwardId: id, sid: routing.sid, exhausted: false };
+  }
+  for (const sid of claimSids) {
+    const id = await deps.insertForward({ ...row, sid, memoPrefix: via });
+    if (id !== 0) return { forwardId: id, sid, exhausted: false };
+    // Lost a latch — which one? The order latch means another delivery of
+    // THIS order owns it: stop. Otherwise the intent was taken: next one.
+    const existing = await deps.getForwardByOrder(order.id);
+    if (existing && LIVE.has(existing.status)) return { forwardId: 0, sid: null, exhausted: false };
+  }
+  return { forwardId: 0, sid: null, exhausted: true };
+}
+
+const LIVE = new Set(['pending', 'submitted', 'confirmed']);
+
+/// Operator reroute (admin UI): push a PARKED order onto the intent the
+/// operator picked. Refuses when the order already has a live forward. The
+/// pick still goes through `authorizeForward` — the operator chooses among
+/// tenant-authorised intents, never a free address.
+export type RerouteRefusal = 'already_forwarded' | 'unknown_sid' | 'not_processed';
+
+export async function checkReroute(
+  deps: ForwardDeps,
+  order: MoneriumOrder,
+  sid: string,
+): Promise<RerouteRefusal | null> {
+  if (order.kind !== 'issue' || (order.state ?? order.meta?.state) !== 'processed') {
+    return 'not_processed';
+  }
+  const existing = await deps.getForwardByOrder(order.id);
+  if (existing && LIVE.has(existing.status)) return 'already_forwarded';
+  if (!(await deps.authorize.getIntentBySid(sid))) return 'unknown_sid';
+  return null;
+}
+
+export async function rerouteParkedOrder(
+  deps: ForwardDeps,
+  order: MoneriumOrder,
+  sid: string,
+): Promise<'ok' | RerouteRefusal> {
+  const refusal = await checkReroute(deps, order, sid);
+  if (refusal) return refusal;
+  await handleForward(deps, order, { sid });
+  return 'ok';
 }
 
 async function safely(p: Promise<unknown>): Promise<void> {

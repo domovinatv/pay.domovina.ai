@@ -203,3 +203,68 @@ export async function findIntentBySid(
   if (!sid) return null;
   return getIntent(env, sid);
 }
+
+/// Intents a reference-less payment could have paid (stray resolver,
+/// ../monerium/strayResolver.ts): same tenant, exact amount, created inside
+/// the look-back window, not yet settled and not already claimed by a live
+/// forward. Intents from before tenants existed (tenant_id NULL) count as the
+/// default tenant's, exactly like the forward gate treats them.
+export async function findStrayCandidates(
+  env: Env,
+  args: {
+    tenantId: string;
+    defaultTenantId: string;
+    amountCents: number;
+    createdFrom: number;
+    createdTo: number;
+  },
+): Promise<Array<Pick<PaymentIntentRow, 'sid' | 'target_address' | 'state' | 'created_at' | 'expires_at'>>> {
+  const res = await env.DB.prepare(
+    `SELECT i.sid, i.target_address, i.state, i.created_at, i.expires_at
+       FROM payment_intents i
+      WHERE COALESCE(i.tenant_id, ?) = ?
+        AND i.amount_cents = ?
+        AND i.created_at BETWEEN ? AND ?
+        AND (i.state = 'pending' OR (i.state = 'expired' AND i.monerium_order_id IS NULL))
+        AND NOT EXISTS (
+          SELECT 1 FROM monerium_forwards f
+           WHERE f.sid = i.sid
+             AND f.status IN ('pending', 'submitted', 'confirmed'))
+      ORDER BY i.created_at DESC
+      LIMIT 20`,
+  )
+    .bind(args.defaultTenantId, args.tenantId, args.amountCents, args.createdFrom, args.createdTo)
+    .all<Pick<PaymentIntentRow, 'sid' | 'target_address' | 'state' | 'created_at' | 'expires_at'>>();
+  return res.results;
+}
+
+/// Admin reroute picker: unsettled intents of one tenant created in a window
+/// around a parked payment, ANY amount — the operator may know the payer
+/// typed a wrong sum. Exact-amount matches sort first, then newest.
+export async function listRerouteCandidates(
+  env: Env,
+  args: {
+    tenantId: string;
+    defaultTenantId: string;
+    amountCents: number;
+    createdFrom: number;
+    createdTo: number;
+  },
+): Promise<Array<Pick<PaymentIntentRow, 'sid' | 'target_address' | 'amount_cents' | 'state' | 'created_at' | 'expires_at' | 'label'>>> {
+  const res = await env.DB.prepare(
+    `SELECT i.sid, i.target_address, i.amount_cents, i.state, i.created_at, i.expires_at, i.label
+       FROM payment_intents i
+      WHERE COALESCE(i.tenant_id, ?) = ?
+        AND i.created_at BETWEEN ? AND ?
+        AND (i.state = 'pending' OR (i.state = 'expired' AND i.monerium_order_id IS NULL))
+        AND NOT EXISTS (
+          SELECT 1 FROM monerium_forwards f
+           WHERE f.sid = i.sid
+             AND f.status IN ('pending', 'submitted', 'confirmed'))
+      ORDER BY (i.amount_cents = ?) DESC, i.created_at DESC
+      LIMIT 30`,
+  )
+    .bind(args.defaultTenantId, args.tenantId, args.createdFrom, args.createdTo, args.amountCents)
+    .all<Pick<PaymentIntentRow, 'sid' | 'target_address' | 'amount_cents' | 'state' | 'created_at' | 'expires_at' | 'label'>>();
+  return res.results;
+}

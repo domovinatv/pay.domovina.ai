@@ -720,8 +720,15 @@ async function load() {
     tbody.innerHTML = '<tr><td colspan="9" class="empty">Nema forwards.</td></tr>';
     return;
   }
+  // Orders that already have a live forward can't be rerouted again.
+  const live = new Set(data.items
+    .filter(f => f.status === "pending" || f.status === "submitted" || f.status === "confirmed")
+    .map(f => f.order_id));
   let html = "";
   for (const f of data.items) {
+    const parked = (f.status === "failed" || f.status === "blocked") && !live.has(f.order_id);
+    const via = f.memo_prefix === "auto" ? ' <span class="pill warn" title="uplata bez reference, povezana po iznosu i vremenu">auto</span>'
+      : f.memo_prefix === "manual" ? ' <span class="pill warn" title="ručno preusmjereno iz admina">ručno</span>' : "";
     const pill = f.status === "confirmed" ? "ok"
       : (f.status === "failed" || f.status === "blocked") ? "bad" : "warn";
     const txCell = f.tx_hash
@@ -732,15 +739,72 @@ async function load() {
       + '<td>'+esc(fmt(f.created_at))+'</td>'
       + '<td><span class="pill '+pill+'">'+esc(f.status)+'</span></td>'
       + '<td class="mono dim">'+esc(short(f.order_id,10))+'</td>'
-      + '<td class="mono">'+esc(f.sid||"—")+'</td>'
+      + '<td class="mono">'+esc(f.sid||"—")+via+'</td>'
       + '<td class="mono"><a href="https://gnosisscan.io/address/'+esc(f.target_address)+'" target="_blank" rel="noopener">'+esc(short(f.target_address,10))+'</a></td>'
       + '<td class="amount">'+esc(eur(f.amount_cents))+'</td>'
       + '<td>'+txCell+'</td>'
-      + '<td class="dim">'+esc(f.error||"")+'</td>'
-      + '</tr>';
+      + '<td class="dim">'+esc(f.error||"")
+        + (parked ? ' <button type="button" class="reroute" data-order="'+esc(f.order_id)+'">Preusmjeri…</button>' : '')
+        + '</td>'
+      + '</tr>'
+      + (parked ? '<tr class="reroute-row" id="rr-'+esc(f.order_id)+'" style="display:none"><td colspan="9"></td></tr>' : '');
   }
   tbody.innerHTML = html;
 }
+
+// Parked payment → pick the intent it paid. Candidates come from the order's
+// tenant; the server re-runs the normal forward gate on the pick.
+document.getElementById("rows").addEventListener("click", async (e) => {
+  const btn = e.target.closest("button");
+  if (!btn) return;
+  if (btn.classList.contains("reroute")) {
+    const orderId = btn.dataset.order;
+    const row = document.getElementById("rr-"+orderId);
+    const cell = row.firstElementChild;
+    if (row.style.display !== "none") { row.style.display = "none"; return; }
+    row.style.display = "";
+    cell.innerHTML = '<span class="dim">Tražim intente…</span>';
+    try {
+      const r = await fetch("/admin/api/orders/"+encodeURIComponent(orderId)+"/reroute-candidates", {credentials:"same-origin"});
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.error || ("HTTP "+r.status));
+      if (!d.items.length) { cell.innerHTML = '<span class="dim">Nema otvorenih ni nedavno isteklih intenata tog tenanta (48 h).</span>'; return; }
+      let h = '<div class="dim" style="margin-bottom:.4rem">Uplata '+esc(eur(d.amount_cents))+' · '+esc(d.placed_at||"")+' — odaberi intent (isti iznos prvi):</div><table><tbody>';
+      for (const i of d.items) {
+        const same = i.amount_cents === d.amount_cents;
+        h += '<tr>'
+          + '<td class="mono">'+esc(i.sid)+'</td>'
+          + '<td class="amount">'+(same ? '<b>'+esc(eur(i.amount_cents))+'</b>' : '<span class="pill warn">'+esc(eur(i.amount_cents))+'</span>')+'</td>'
+          + '<td>'+esc(i.state)+' · '+esc(fmt(i.created_at))+'</td>'
+          + '<td class="mono">'+esc(short(i.target_address,10))+'</td>'
+          + '<td class="dim">'+esc(i.label||"")+'</td>'
+          + '<td><button type="button" class="reroute-go" data-order="'+esc(orderId)+'" data-sid="'+esc(i.sid)+'">Preusmjeri</button></td>'
+          + '</tr>';
+      }
+      cell.innerHTML = h + '</tbody></table>';
+    } catch (err) {
+      cell.innerHTML = '<span class="dim">Greška: '+esc(err.message)+'</span>';
+    }
+  } else if (btn.classList.contains("reroute-go")) {
+    // Two-step: first click arms, second click sends.
+    if (!btn.dataset.armed) { btn.dataset.armed = "1"; btn.textContent = "Potvrdi → "+btn.dataset.sid; return; }
+    btn.disabled = true;
+    btn.textContent = "Šaljem…";
+    try {
+      const r = await fetch("/admin/api/orders/"+encodeURIComponent(btn.dataset.order)+"/reroute", {
+        method: "POST", credentials: "same-origin",
+        headers: {"content-type": "application/json"},
+        body: JSON.stringify({sid: btn.dataset.sid}),
+      });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(d.error || ("HTTP "+r.status));
+      btn.textContent = "Poslano ✓";
+      setTimeout(load, 4000);
+    } catch (err) {
+      btn.textContent = "Greška: "+err.message;
+    }
+  }
+});
 document.getElementById("status").addEventListener("change", e => { status = e.target.value; load(); });
 document.getElementById("refresh").addEventListener("click", load);
 document.getElementById("auto").addEventListener("click", e => {
