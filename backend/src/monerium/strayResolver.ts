@@ -46,9 +46,20 @@ export const STRAY_LOOKBACK_SECONDS = 48 * 3600;
 /// Clock skew allowance between Monerium's placedAt and our created_at.
 export const STRAY_CLOCK_SKEW_SECONDS = 120;
 
-/// Rank candidates and decide. Ranking: an intent still open when the money
-/// was placed beats an expired one; then the most recently created one (the
-/// payer's latest checkout is the likeliest one they acted on).
+/// Rank candidates and decide, in two tiers:
+///   1. intents still OPEN when the money was placed. If any exist, they alone
+///      decide — an open checkout is a far stronger signal than one that
+///      expired hours earlier. They must agree on the destination.
+///   2. only when nothing was open: every expired candidate in the lookback
+///      window, which must likewise agree.
+/// Within the deciding tier: most recently created first (the payer's latest
+/// checkout is the likeliest one they acted on). Expired candidates never join
+/// an open tier's claim list — a loser of a concurrent claim parks rather than
+/// fall back to a checkout that was already over.
+///
+/// 2026-10-08 (order a30abad7…): two OPEN 1,00 € intents for Rab, plus one for
+/// Lukavec that had expired ~4 h earlier. The single-tier rule saw two payees
+/// and parked; the payer had acted on the Rab checkout opened 41 s before.
 export function resolveStray(
   candidates: StrayCandidate[],
   placedAtUnix: number,
@@ -56,16 +67,13 @@ export function resolveStray(
   const live = candidates.filter((c) => c.state === 'pending' || c.state === 'expired');
   if (live.length === 0) return { kind: 'none' };
 
-  const targets = new Set(live.map((c) => c.target_address.toLowerCase()));
-  if (targets.size > 1) return { kind: 'conflict', candidates: live };
+  const open = live.filter((c) => c.expires_at >= placedAtUnix);
+  const tier = open.length > 0 ? open : live;
 
-  const openAtPlacement = (c: StrayCandidate) => c.expires_at >= placedAtUnix;
-  const ranked = [...live].sort((a, b) => {
-    const oa = openAtPlacement(a) ? 1 : 0;
-    const ob = openAtPlacement(b) ? 1 : 0;
-    if (oa !== ob) return ob - oa;
-    return b.created_at - a.created_at;
-  });
+  const targets = new Set(tier.map((c) => c.target_address.toLowerCase()));
+  if (targets.size > 1) return { kind: 'conflict', candidates: tier };
+
+  const ranked = [...tier].sort((a, b) => b.created_at - a.created_at);
   return {
     kind: 'match',
     target: ranked[0].target_address.toLowerCase(),

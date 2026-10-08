@@ -39,12 +39,17 @@ proslijedi sam.
    **točno** isti `amount_cents` i biti kreirani u prozoru
    `[placedAt − 48 h, placedAt + 2 min]`. Moraju biti `pending` ili `expired`
    bez namire, i ne smiju već imati živi forward.
-3. **Odluka:**
-   - svi kandidati vode na istu adresu → forward;
-   - kandidati vode na različite adrese → park, a alert ispisuje kandidate;
+3. **Odluka, u dva sloja** (dopuna 2026-10-09):
+   - ako je u trenutku uplate bio **otvoren** barem jedan kandidat
+     (`expires_at ≥ placedAt`), odlučuju **samo otvoreni**; istekli se ne gledaju;
+   - ako nijedan nije bio otvoren, odlučuju svi istekli iz prozora;
+   - kandidati sloja koji odlučuje vode na istu adresu → forward;
+   - vode na različite adrese → park, a alert ispisuje kandidate tog sloja;
    - nema kandidata → park.
-4. **Redoslijed za pripisivanje:** prvo intent koji je bio otvoren u trenutku
-   uplate, zatim najnoviji. Forward uzima prvi nezauzeti kandidat.
+4. **Redoslijed za pripisivanje:** najnoviji intent sloja koji odlučuje prvi.
+   Forward uzima prvi nezauzeti kandidat. Istekli kandidati ne ulaze u popis
+   kad odlučuju otvoreni — gubitnik istovremenog preuzimanja se parkira, ne
+   pada na checkout koji je već bio gotov.
 5. **Gate se ne zaobilazi.** Iz kandidata se sastavi `mpt:` routing (adresa i sid
    intenta) i on prolazi isti `authorizeForward` kao memo: tenant, whitelist,
    kapica i mint adresa.
@@ -63,6 +68,19 @@ proslijedi sam.
    pokreće isti forward put s odabranim sid-om, pa i tu odlučuje gate.
 10. **Prekidač:** `STRAY_RESOLVER = "1"` u `wrangler.toml`. Vrijednost `"0"`
     vraća staro ponašanje; ručni gumb radi neovisno o prekidaču.
+
+### Dopuna 2026-10-09: zašto dva sloja
+
+Produkcija 8. 10. (order `a30abad7…`, forward #78, 1,00 €): dva **otvorena**
+intenta za Rab (jedan kreiran 41 s prije uplate) i jedan za Lukavec **istekao
+~4 h ranije**. Jednoslojno pravilo vidjelo je dvije adrese i parkiralo. Otvoren
+checkout je puno jači signal od onog isteklog prije nekoliko sati, a zadani
+iznos od 1 € na energy.domovina.ai čini takve sudare čestima. Replay je u
+`test/strayResolver.test.ts`.
+
+Rizik: platitelj koji kasno plati po **isteklom** QR-u dok je za istu svotu
+otvoren tuđi checkout za drugu elektranu. Ista vrsta greške kao u Poznatim
+ograničenjima — pogrešna namjena unutar tenanta, nikad tuđi novac.
 
 ## Zašto je to sigurno
 
