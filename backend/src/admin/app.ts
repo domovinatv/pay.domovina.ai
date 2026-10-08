@@ -24,7 +24,8 @@ import {
 } from '../wallets/db';
 import { publicWalletView } from '../wallets/api';
 import { mountTenantAdmin } from '../tenants/admin';
-import { mountAdminAuth } from './auth/mount';
+import { adminSession, mountAdminAuth } from './auth/mount';
+import { makeOffRailDeps, markResolvedOffRail } from '../monerium/offrail';
 import {
   renderEventDetailPage,
   renderEventsPage,
@@ -96,6 +97,16 @@ export function mountAdminUi(app: Hono<{ Bindings: Env }>): void {
     // The forward polls for confirmation (~75 s) — don't hold the request.
     c.executionCtx.waitUntil(handleForward(deps, loaded.order, { sid }));
     return c.json({ accepted: true, order_id: loaded.order.id, sid }, 202);
+  });
+  // Parked order whose money was moved by hand outside the rail (2/3 owners).
+  // The tx is verified on-chain; afterwards the order can never be rerouted.
+  app.post('/admin/api/orders/:id/resolved-offrail', async (c) => {
+    const body = await c.req.json<{ tx_hash?: string }>().catch(() => ({} as { tx_hash?: string }));
+    const loaded = await loadParkedOrder(c.env, c.req.param('id'));
+    if ('error' in loaded) return c.json({ error: loaded.error }, 404);
+    const actor = adminSession(c)?.email ?? 'admin';
+    const r = await markResolvedOffRail(makeOffRailDeps(c.env, loaded.rail), loaded.order, body.tx_hash ?? '', actor);
+    return r.ok ? c.json(r) : c.json(r, r.error === 'bad_tx_hash' ? 400 : 409);
   });
   // Outbound merchant webhook outbox (migration 0015).
   app.get('/admin/api/outbox', async (c) => {

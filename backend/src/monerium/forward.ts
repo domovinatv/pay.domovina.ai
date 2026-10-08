@@ -150,7 +150,8 @@ export async function maybeForward(
   // Cheap early exit for the common retry. NOT the guard — the atomic latch
   // on insertForward is (check-then-act here would race, BW-02).
   const existing = await deps.getForwardByOrder(order.id);
-  if (existing && (existing.status === 'submitted' || existing.status === 'confirmed')) {
+  if (existing && (existing.status === 'submitted' || existing.status === 'confirmed'
+    || existing.status === 'resolved_offrail')) {
     console.log(`forward ${order.id} already ${existing.status}, skipping`);
     return;
   }
@@ -494,7 +495,7 @@ const LIVE = new Set(['pending', 'submitted', 'confirmed']);
 /// operator picked. Refuses when the order already has a live forward. The
 /// pick still goes through `authorizeForward` — the operator chooses among
 /// tenant-authorised intents, never a free address.
-export type RerouteRefusal = 'already_forwarded' | 'unknown_sid' | 'not_processed';
+export type RerouteRefusal = 'already_forwarded' | 'resolved_offrail' | 'unknown_sid' | 'not_processed';
 
 export async function checkReroute(
   deps: ForwardDeps,
@@ -506,6 +507,9 @@ export async function checkReroute(
   }
   const existing = await deps.getForwardByOrder(order.id);
   if (existing && LIVE.has(existing.status)) return 'already_forwarded';
+  // Paid out by hand outside the rail: forwarding again would pay twice, out
+  // of whatever other payments happen to be sitting in the Safe.
+  if (existing?.status === 'resolved_offrail') return 'resolved_offrail';
   if (!(await deps.authorize.getIntentBySid(sid))) return 'unknown_sid';
   return null;
 }

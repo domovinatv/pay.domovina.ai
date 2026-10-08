@@ -693,6 +693,7 @@ export function renderForwardsPage(): string {
     <option value="confirmed">confirmed</option>
     <option value="failed">failed</option>
     <option value="blocked">blocked (whitelist)</option>
+    <option value="resolved_offrail">resolved_offrail (ručno)</option>
   </select>
   <button type="button" id="refresh">↻ Osvježi</button>
   <button type="button" id="auto">Auto: OFF</button>
@@ -745,15 +746,18 @@ async function load() {
     return;
   }
   // Orders that already have a live forward can't be rerouted again.
+  // …and neither can one that was paid out by hand outside the rail.
   const live = new Set(data.items
-    .filter(f => f.status === "pending" || f.status === "submitted" || f.status === "confirmed")
+    .filter(f => f.status === "pending" || f.status === "submitted" || f.status === "confirmed"
+      || f.status === "resolved_offrail")
     .map(f => f.order_id));
   let html = "";
   for (const f of data.items) {
     const parked = (f.status === "failed" || f.status === "blocked") && !live.has(f.order_id);
     const via = f.memo_prefix === "auto" ? ' <span class="pill warn" title="uplata bez reference, povezana po iznosu i vremenu">auto</span>'
-      : f.memo_prefix === "manual" ? ' <span class="pill warn" title="ručno preusmjereno iz admina">ručno</span>' : "";
-    const pill = f.status === "confirmed" ? "ok"
+      : f.memo_prefix === "manual" ? ' <span class="pill warn" title="ručno preusmjereno iz admina">ručno</span>'
+      : f.memo_prefix === "offrail" ? ' <span class="pill" title="novac pomaknut ručno izvan raila (2/3 vlasnici)">izvan raila</span>' : "";
+    const pill = (f.status === "confirmed" || f.status === "resolved_offrail") ? "ok"
       : (f.status === "failed" || f.status === "blocked") ? "bad" : "warn";
     const txCell = f.tx_hash
       ? '<a class="mono" href="https://gnosisscan.io/tx/'+esc(f.tx_hash)+'" target="_blank" rel="noopener">'+esc(short(f.tx_hash,10))+'</a>'
@@ -768,7 +772,8 @@ async function load() {
       + '<td class="amount">'+esc(eur(f.amount_cents))+'</td>'
       + '<td>'+txCell+'</td>'
       + '<td class="dim">'+esc(f.error||"")
-        + (parked ? ' <button type="button" class="reroute" data-order="'+esc(f.order_id)+'">Preusmjeri…</button>' : '')
+        + (parked ? ' <button type="button" class="reroute" data-order="'+esc(f.order_id)+'">Preusmjeri…</button>'
+          + ' <button type="button" class="offrail" data-order="'+esc(f.order_id)+'">Riješeno ručno…</button>' : '')
         + '</td>'
       + '</tr>'
       + (parked ? '<tr class="reroute-row" id="rr-'+esc(f.order_id)+'" style="display:none"><td colspan="9"></td></tr>' : '');
@@ -781,12 +786,48 @@ async function load() {
 document.getElementById("rows").addEventListener("click", async (e) => {
   const btn = e.target.closest("button");
   if (!btn) return;
+  if (btn.classList.contains("offrail")) {
+    // Novac je već pomaknut ručno (2/3 vlasnici): upiši tx, server ga provjeri on-chain.
+    const orderId = btn.dataset.order;
+    const row = document.getElementById("rr-"+orderId);
+    const cell = row.firstElementChild;
+    if (row.style.display !== "none" && cell.dataset.mode === "offrail") { row.style.display = "none"; return; }
+    row.style.display = "";
+    cell.dataset.mode = "offrail";
+    cell.innerHTML = '<div class="dim" style="margin-bottom:.4rem">Tx hash ručnog transfera iz Safe-a (provjerava se na chainu; order se nakon toga više ne može preusmjeriti):</div>'
+      + '<input type="text" class="mono offrail-tx" placeholder="0x…64 hex" style="width:40rem;max-width:100%" /> '
+      + '<button type="button" class="offrail-go" data-order="'+esc(orderId)+'">Označi riješenim</button> '
+      + '<span class="offrail-msg dim"></span>';
+    return;
+  }
+  if (btn.classList.contains("offrail-go")) {
+    const cell = btn.closest("td");
+    const msg = cell.querySelector(".offrail-msg");
+    if (!btn.dataset.armed) { btn.dataset.armed = "1"; btn.textContent = "Potvrdi"; return; }
+    btn.disabled = true;
+    try {
+      const r = await fetch("/admin/api/orders/"+encodeURIComponent(btn.dataset.order)+"/resolved-offrail", {
+        method: "POST", credentials: "same-origin",
+        headers: {"content-type": "application/json"},
+        body: JSON.stringify({tx_hash: cell.querySelector(".offrail-tx").value.trim()}),
+      });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(d.error || ("HTTP "+r.status));
+      msg.textContent = "Označeno ✓ → " + d.to;
+      setTimeout(load, 2500);
+    } catch (err) {
+      msg.textContent = "Greška: " + err.message;
+      btn.disabled = false; delete btn.dataset.armed; btn.textContent = "Označi riješenim";
+    }
+    return;
+  }
   if (btn.classList.contains("reroute")) {
     const orderId = btn.dataset.order;
     const row = document.getElementById("rr-"+orderId);
     const cell = row.firstElementChild;
-    if (row.style.display !== "none") { row.style.display = "none"; return; }
+    if (row.style.display !== "none" && cell.dataset.mode === "reroute") { row.style.display = "none"; return; }
     row.style.display = "";
+    cell.dataset.mode = "reroute";
     cell.innerHTML = '<span class="dim">Tražim intente…</span>';
     try {
       const r = await fetch("/admin/api/orders/"+encodeURIComponent(orderId)+"/reroute-candidates", {credentials:"same-origin"});
