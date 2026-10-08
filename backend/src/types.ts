@@ -73,6 +73,7 @@ export interface Env {
   MULTI_TENANT_RAIL: string;          // "1" → tenant rails live; anything else → only the default tenant
   TENANT_SECRETS_KEK: string;         // SECRET — base64 of 32 bytes; AES-GCM key for tenant_rail *_enc columns
   INTENT_SSE: string;                 // "1" → GET /api/intents/:sid/stream serves SSE; else 404 as before
+  STRAY_RESOLVER?: string;            // "1" → reference-less payments are matched to an intent by amount + time (src/monerium/strayResolver.ts)
   /// Durable Object namespace holding one SSE hub per sid (src/intents/stream.ts).
   /// Optional so environments without the binding (tests, old deploys) keep
   /// the 404 + polling behaviour.
