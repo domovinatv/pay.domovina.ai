@@ -171,6 +171,21 @@ sequenceDiagram
 Od uplate do `paid` prošlo je ~12 s, od `processed` ~6,5 s, isto kao uplata s
 referencom. Detektor krađe (ADR 0019 faza 0) nije alarmirao.
 
+## Produkcija 2026-10-09: rano „zaprimljeno“ (#65)
+
+Order `9e691f01…` (Lukavec, 1,00 €, opis prazan, intent `szdmvyd3r536`):
+
+| Δ od `placedAt` (22:57:21 UTC) | događaj |
+|---|---|
+| 0 s | `order.created` → `previewStraySid` → `sid_resolved=szdmvyd3r536`, SSE „zaprimljeno“ |
+| +7 s | `processed` → forward #81 `auto` na **isti** sid |
+| +13 s | potvrđeno → intent `paid` |
+
+Platitelj je „zaprimljeno“ vidio ~5 s nakon „Send“ u Revolutu; to je vrijeme
+prije `placedAt` (Revolut + SEPA Instant), ne rail. Prije #63 isti tip uplate se
+8. 10. parkirao (order `a30abad7…`, forward #78: istekli 1 € intent za drugi
+Safe u prozoru) — zato dva sloja u §Odluka 3.
+
 ## Rukovanje parkiranim uplatama
 
 Parkirani order koji su 2/3 vlasnika isplatili **ručno mimo raila** rail i
