@@ -3,11 +3,13 @@ export interface Env {
   TOKEN_CACHE: KVNamespace;
 
   ADMIN_TOKEN: string;
-  /// Basic Auth credentials gating the branded /admin HTML dashboard.
-  /// If either is empty the /admin tree returns 503 so we never accidentally
-  /// expose the webhook audit log unauthenticated.
-  MONERIUM_ADMIN_USER: string;
-  MONERIUM_ADMIN_PASS: string;
+  /// /admin prijava (src/admin/auth/mount.ts): e-mailovi koji smiju u admin,
+  /// Cloudflare Access tim i AUD aplikacije koja štiti /admin/sso, i jedini
+  /// host na kojem admin radi (rpID passkeya = hostname).
+  ADMIN_EMAILS?: string;
+  ACCESS_TEAM_DOMAIN?: string;
+  ACCESS_AUD?: string;
+  ADMIN_HOST?: string;
   ALLOWED_ORIGINS: string;
   BANKING_PROVIDER: string; // "enable_banking" | "gocardless"
 

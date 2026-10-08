@@ -190,7 +190,8 @@ curl -u "$ADMIN_USER:$ADMIN_PASS" -X POST \
   -d '{"address":"0x…","label":"kampanjski Safe X"}'
 
 # "bi li ova adresa danas prošla i zašto"
-curl -u … https://mpt.domovina.ai/admin/api/tenants/italk/check/0x…
+# od 2026-10-08 s prijavljenom admin sesijom (docs/admin-auth.md):
+# fetch('/admin/api/tenants/italk/check/0x…').then((r) => r.json())
 ```
 
 Svaka izmjena piše red u `tenant_audit_log` (akter = Basic Auth korisnik).

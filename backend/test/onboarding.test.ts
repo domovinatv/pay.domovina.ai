@@ -146,6 +146,8 @@ it('builds the per-tenant webhook URL', () => {
 
 describe('admin routes', () => {
   function fakeEnv(rows: Record<string, unknown>): { env: Env; sql: string[] } {
+    // Valid admin session for the cookie below (src/admin/auth/session.ts).
+    rows = { 'FROM admin_sessions': { email: 'ops@domovina.ai', method: 'access', expires_at: '2999-01-01T00:00:00Z' }, ...rows };
     const sql: string[] = [];
     const exec = (q: string) => ({
       first: async () => {
@@ -159,12 +161,11 @@ describe('admin routes', () => {
       DB: { prepare: (q: string) => { sql.push(q); return { bind: () => exec(q), ...exec(q) }; } },
       ALLOWED_ORIGINS: 'https://mpt.domovina.ai',
       DEFAULT_TENANT_ID: 'italk',
-      MONERIUM_ADMIN_USER: 'u',
-      MONERIUM_ADMIN_PASS: 'p',
+      ADMIN_EMAILS: 'ops@domovina.ai',
     } as unknown as Env;
     return { env, sql };
   }
-  const auth = { authorization: 'Basic ' + btoa('u:p'), 'content-type': 'application/json' };
+  const auth = { cookie: '__Host-mpt_admin=test-token', origin: 'https://mpt.domovina.ai', 'content-type': 'application/json' };
   const ctx = { waitUntil: () => {}, passThroughOnException: () => {} } as unknown as ExecutionContext;
   const call = (env: Env, method: string, path: string, body?: unknown) =>
     worker.fetch(new Request('https://mpt.domovina.ai' + path, { method, headers: auth, body: body ? JSON.stringify(body) : undefined }), env, ctx);
@@ -196,7 +197,9 @@ describe('admin routes', () => {
 
   it('requires admin auth', async () => {
     const { env } = fakeEnv({});
-    const res = await worker.fetch(new Request('https://mpt.domovina.ai/admin/api/tenants', { method: 'POST', body: '{}' }), env, ctx);
+    const res = await worker.fetch(new Request('https://mpt.domovina.ai/admin/api/tenants', {
+      method: 'POST', body: '{}', headers: { origin: 'https://mpt.domovina.ai' },
+    }), env, ctx);
     expect(res.status).toBe(401);
   });
 });

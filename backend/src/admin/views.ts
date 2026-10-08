@@ -163,6 +163,17 @@ footer {
   margin: 2rem 0 0; padding: 1rem 1.5rem; border-top: 1px solid var(--border);
   color: var(--muted); font-size: .82rem; text-align: center;
 }
+tr[data-href] { cursor: pointer; }
+nav.tabs form.logout { margin-left: auto; display: flex; align-items: center; gap: .5rem; font-size: .8rem; }
+nav.tabs form.logout button { font: inherit; padding: .3rem .7rem; border: 1px solid var(--border); background: #fff; color: var(--navy); border-radius: 6px; cursor: pointer; }
+main.login { max-width: 26rem; margin: 3rem auto; }
+main.login button, a.button {
+  display: inline-block; width: 100%; text-align: center; padding: .75rem 1rem; border-radius: 8px;
+  border: none; background: var(--navy); color: #fff; font-weight: 700; font-size: 1rem; cursor: pointer; text-decoration: none;
+}
+a.button.secondary { background: #fff; color: var(--navy); border: 1px solid var(--navy); }
+.msg { padding: .6rem .8rem; border-radius: 8px; background: var(--surface); margin: .8rem 0; }
+.msg.bad { background: #FEECEB; color: var(--danger); }
 @media (max-width: 720px) {
   header { padding: .7rem 1rem; }
   nav.tabs { padding: 0 1rem; }
@@ -175,8 +186,10 @@ footer {
 
 interface ShellOptions {
   title: string;
-  tab: 'events' | 'orders' | 'forwards' | 'intents' | 'wallets' | 'sybil' | 'whitelist' | 'tenants';
+  tab: 'events' | 'orders' | 'forwards' | 'intents' | 'wallets' | 'sybil' | 'whitelist' | 'tenants' | 'passkeys';
   body: string;
+  /// E-mail prijavljenog admina; prikazuje se uz odjavu.
+  email?: string;
 }
 
 /// Shared CSS + JS injected once per page: snackbar/toast notification
@@ -276,11 +289,16 @@ window.MPTToast = (function() {
   }
   // Unlock audio on first user interaction (browser autoplay policy).
   document.addEventListener('click', ensureAudio, { once: true });
+  // Klikabilni retci (CSP ne dopušta inline onclick): <tr data-href="…">.
+  document.addEventListener('click', (e) => {
+    const tr = e.target.closest && e.target.closest('tr[data-href]');
+    if (tr) window.location.href = tr.dataset.href;
+  });
   return { show: show };
 })();
 </script>`;
 
-function renderShell({ title, tab, body }: ShellOptions): string {
+function renderShell({ title, tab, body, email }: ShellOptions): string {
   const t = (key: ShellOptions['tab'], label: string, href: string) =>
     `<a href="${href}" class="${tab === key ? 'active' : ''}">${label}</a>`;
   const badgeLabel = tab === 'events' ? 'Webhook audit'
@@ -290,6 +308,7 @@ function renderShell({ title, tab, body }: ShellOptions): string {
     : tab === 'sybil' ? 'Sybil dashboard'
     : tab === 'whitelist' ? 'Payout whitelist'
     : tab === 'tenants' ? 'Tenant onboarding'
+    : tab === 'passkeys' ? 'Passkeyi'
     : 'Payment intents';
   return `<!doctype html>
 <html lang="hr">
@@ -321,6 +340,11 @@ ${TOAST_JS}
   ${t('sybil', 'Sybil', '/admin/sybil')}
   ${t('whitelist', 'Whitelist', '/admin/whitelist')}
   ${t('tenants', 'Tenanti', '/admin/tenants')}
+  ${t('passkeys', 'Passkeyi', '/admin/passkeys')}
+  <form method="post" action="/admin/logout" class="logout">
+    ${email ? `<span class="dim">${escapeHtml(email)}</span>` : ''}
+    <button type="submit">Odjava</button>
+  </form>
 </nav>
 <main>${body}</main>
 <footer>
@@ -436,7 +460,7 @@ async function load() {
       const sidCell = it.sid_extracted
         ? '<span class="mono">' + esc(it.sid_extracted) + '</span>'
         : '<span class="dim">—</span>';
-      html += '<tr onclick="window.location=\\'/admin/events/' + it.id + '\\'">' +
+      html += '<tr data-href="/admin/events/' + it.id + '">' +
         '<td class="dim mono">#' + it.id + '</td>' +
         '<td>' + esc(fmt(it.received_at)) + '</td>' +
         '<td class="mono">' + esc(it.event_type || "—") + '</td>' +
@@ -596,7 +620,7 @@ async function load() {
   for (const o of items) {
     const statePill = o.state === "processed" ? "ok" : o.state === "rejected" ? "bad" : "warn";
     const memo = (o.memo || o.reference_number || "").slice(0, 80);
-    html += '<tr onclick="window.location=\\'/admin/orders/' + encodeURIComponent(o.id) + '\\'">' +
+    html += '<tr data-href="/admin/orders/' + encodeURIComponent(o.id) + '">' +
       '<td>' + esc(fmt(o.placed_at)) + '</td>' +
       '<td class="mono">' + esc(o.kind) + '</td>' +
       '<td><span class="pill ' + statePill + '">' + esc(o.state) + '</span></td>' +
@@ -1237,7 +1261,7 @@ async function loadClusters() {
   for (const c of data.clusters) {
     const fb = new Date(c.first_bound_at * 1000).toISOString();
     const lv = new Date(c.latest_verified_at * 1000).toISOString();
-    html += '<tr style="cursor:pointer" onclick="drill(\\'' + esc(c.phone_hash) + '\\')">' +
+    html += '<tr style="cursor:pointer" data-drill="' + esc(c.phone_hash) + '">' +
       '<td class="mono">' + esc(shortHash(c.phone_hash)) + '</td>' +
       '<td><span class="pill warn">' + c.wallet_count + '</span></td>' +
       '<td class="mono dim">' + esc(fmt(fb)) + '</td>' +
@@ -1246,6 +1270,12 @@ async function loadClusters() {
   }
   tbody.innerHTML = html;
 }
+
+// CSP bez inline handlera: klik na red klastera ide preko delegiranog listenera.
+document.addEventListener('click', (e) => {
+  const tr = e.target.closest && e.target.closest('tr[data-drill]');
+  if (tr) drill(tr.dataset.drill);
+});
 
 async function drill(phoneHash) {
   const res = await fetch('/admin/api/sybil/phone/' + encodeURIComponent(phoneHash));
@@ -1840,3 +1870,75 @@ document.querySelectorAll('[data-act]').forEach((b) => b.addEventListener('click
 
 loadTenants();
 </script>`;
+
+// ---- Prijava i passkeyi (preneseno iz bank-push-gateway views.tsx) ----------
+
+export function renderLoginPage(opts: { next: string; error?: string; accessConfigured: boolean }): string {
+  const next = escapeHtml(opts.next);
+  return `<!doctype html>
+<html lang="hr">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Prijava — MPT Admin</title>
+<meta name="robots" content="noindex,nofollow" />
+<meta name="theme-color" content="#002F6C" />
+${BASE_STYLE}
+</head>
+<body>
+<div class="tricolor"><span class="red"></span><span style="background:#FFFFFF"></span><span class="navy"></span></div>
+<header>
+  <div class="brand">
+    ${HEADER_LOGO_SVG}
+    <div class="word">MPT · <span class="accent">Mint Pay Transfer</span></div>
+  </div>
+</header>
+<main class="login">
+  <h1>Prijava</h1>
+  ${opts.error ? `<div class="msg bad">${escapeHtml(opts.error)}</div>` : ''}
+  <div id="msg" class="msg" hidden></div>
+  <p><button id="passkey-login" type="button" data-next="${next}">Prijava passkeyem</button></p>
+  ${opts.accessConfigured
+    ? `<p><a class="button secondary" href="/admin/sso?next=${encodeURIComponent(opts.next)}">Prijava preko Cloudflare Accessa (OTP na e-mail)</a></p>`
+    : '<p class="dim">Cloudflare Access nije konfiguriran.</p>'}
+  <p class="dim">Prvi passkey se upisuje nakon prijave preko Accessa (Passkeyi → Dodaj passkey).</p>
+</main>
+<script src="/admin/static/passkey.js"></script>
+</body>
+</html>`;
+}
+
+export function renderPasskeysPage(opts: {
+  email: string;
+  passkeys: Array<{ id: string; label: string; created_at: string; last_used_at: string | null }>;
+}): string {
+  const rows = opts.passkeys.length === 0
+    ? '<tr><td colspan="4" class="empty">Još nema passkeya. Dodaj prvi ispod.</td></tr>'
+    : opts.passkeys.map((p) => `<tr>
+        <td>${escapeHtml(p.label)}</td>
+        <td class="mono">${escapeHtml(p.created_at)}</td>
+        <td class="mono">${escapeHtml(p.last_used_at ?? '—')}</td>
+        <td><form method="post" action="/admin/passkeys/${encodeURIComponent(p.id)}/delete">
+          <button type="submit">Ukloni</button></form></td>
+      </tr>`).join('');
+  const body = `
+<h1>Passkeyi za ${escapeHtml(opts.email)}</h1>
+<div id="msg" class="msg" hidden></div>
+<div class="table-wrap">
+  <table>
+    <thead><tr><th>Oznaka</th><th>Upisan</th><th>Zadnja uporaba</th><th></th></tr></thead>
+    <tbody>${rows}</tbody>
+  </table>
+</div>
+<h2>Dodaj passkey</h2>
+<form id="passkey-register" class="controls">
+  <label>Oznaka uređaja
+    <input type="text" name="label" placeholder="npr. MacBook / Apple Passwords" maxlength="80" required />
+  </label>
+  <button type="submit">Dodaj passkey</button>
+</form>
+<p class="dim">Passkey vrijedi samo za ovu domenu. Access ostaje drugi put ulaska i služi za oporavak
+ako izgubiš sve passkeye.</p>
+<script src="/admin/static/passkey.js"></script>`;
+  return renderShell({ title: 'Passkeyi', tab: 'passkeys', body, email: opts.email });
+}

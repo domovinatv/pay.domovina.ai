@@ -115,6 +115,18 @@ INTENT_SSE = "1"
 # at the same whitelisted destination. "0": park as no_routing_target (old).
 STRAY_RESOLVER = "1"
 
+# /admin prijava (src/admin/auth/mount.ts, docs/admin-auth.md) — isti model kao
+# bank-push-gateway: Cloudflare Access (OTP na e-mail) na /admin/sso ili passkey.
+# Nisu tajne. Oduzimanje pristupa: makni e-mail odavde (djeluje odmah, i na
+# postojeće sesije) i iz Access politike.
+#   ADMIN_HOST         — jedini host admina; drugi host preusmjerava (passkey rpID = hostname)
+#   ACCESS_TEAM_DOMAIN — Zero Trust tim
+#   ACCESS_AUD         — AUD Access aplikacije koja štiti ADMIN_HOST/admin/sso
+ADMIN_EMAILS = "stepanic.matija@gmail.com,ms@ff.hr"
+ADMIN_HOST = "mpt.domovina.ai"
+ACCESS_TEAM_DOMAIN = "domovina.cloudflareaccess.com"
+ACCESS_AUD = "c1e0493deb2d777529744e4ff5d74cebae4fe070a0dae77fdda73e81d01a6bb2"
+
 # MPT routing — Safe + Zodiac Roles Modifier on Gnosis chain (100).
 # All public; private signer key lives in ROUTER_PRIVATE_KEY secret below.
 GNOSIS_RPC_URL = "https://rpc.gnosischain.com"
@@ -141,8 +153,6 @@ MULTISEND_ADDRESS = "0x9641d764fc13c8B624c04430C7356C1C7C8102e2"
 
 # Secrets — set via `wrangler secret put`:
 #   ADMIN_TOKEN                     # bearer token for /api/*/admin JSON endpoints
-#   MONERIUM_ADMIN_USER             # Basic Auth user for /admin HTML dashboard
-#   MONERIUM_ADMIN_PASS             # Basic Auth pass for /admin HTML dashboard
 #   ENABLE_BANKING_APPLICATION_ID   # UUID from EnableBanking dashboard
 #   ENABLE_BANKING_PRIVATE_KEY      # full PEM PKCS8 (preserve newlines)
 #   GOCARDLESS_SECRET_ID            # only needed if BANKING_PROVIDER=gocardless
