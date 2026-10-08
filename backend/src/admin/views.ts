@@ -74,7 +74,7 @@ nav.tabs a {
 }
 nav.tabs a.active { color: var(--navy); border-bottom-color: var(--red); }
 nav.tabs a:hover:not(.active) { color: var(--navy); }
-main { padding: 1.5rem; max-width: 96rem; margin: 0 auto; }
+main { padding: 1.5rem; }
 h1 { font-size: 1.45rem; margin: 0 0 1rem; }
 .stats { display: flex; gap: .75rem; flex-wrap: wrap; margin-bottom: 1rem; }
 .stat {
@@ -158,6 +158,20 @@ tbody tr:last-child td { border-bottom: 0; }
   font-size: .8rem; color: var(--muted); text-transform: uppercase;
   letter-spacing: .05em; font-weight: 700; margin: 1.25rem 0 .45rem;
 }
+.nowrap { white-space: nowrap; }
+/* Napomena: duga greška (npr. viem revert) ne smije rastegnuti tablicu —
+   tri retka, puni tekst u title i na klik. */
+td.note { min-width: 16rem; max-width: 34rem; }
+td.note .err {
+  overflow-wrap: anywhere; white-space: pre-wrap;
+  display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;
+}
+td.note .err.open { display: block; -webkit-line-clamp: unset; }
+td.note .actions { display: flex; gap: .4rem; flex-wrap: wrap; margin-top: .35rem; }
+td.note .actions button, .reroute-row button { white-space: nowrap; }
+.reroute-row > td { background: var(--surface); }
+.reroute-row table { width: auto; }
+.reroute-row td { white-space: nowrap; padding: .35rem .8rem; }
 .back-link { display: inline-block; margin-bottom: .75rem; font-size: .9rem; }
 footer {
   margin: 2rem 0 0; padding: 1rem 1.5rem; border-top: 1px solid var(--border);
@@ -764,16 +778,17 @@ async function load() {
       : '<span class="dim">—</span>';
     html += '<tr>'
       + '<td class="dim mono">#'+f.id+'</td>'
-      + '<td>'+esc(fmt(f.created_at))+'</td>'
+      + '<td class="nowrap">'+esc(fmt(f.created_at))+'</td>'
       + '<td><span class="pill '+pill+'">'+esc(f.status)+'</span></td>'
       + '<td class="mono dim">'+esc(short(f.order_id,10))+'</td>'
       + '<td class="mono">'+esc(f.sid||"—")+via+'</td>'
       + '<td class="mono"><a href="https://gnosisscan.io/address/'+esc(f.target_address)+'" target="_blank" rel="noopener">'+esc(short(f.target_address,10))+'</a></td>'
       + '<td class="amount">'+esc(eur(f.amount_cents))+'</td>'
       + '<td>'+txCell+'</td>'
-      + '<td class="dim">'+esc(f.error||"")
-        + (parked ? ' <button type="button" class="reroute" data-order="'+esc(f.order_id)+'">Preusmjeri…</button>'
-          + ' <button type="button" class="offrail" data-order="'+esc(f.order_id)+'">Riješeno ručno…</button>' : '')
+      + '<td class="dim note">'
+        + (f.error ? '<div class="err" title="'+esc(f.error)+'">'+esc(f.error)+'</div>' : '')
+        + (parked ? '<div class="actions"><button type="button" class="reroute" data-order="'+esc(f.order_id)+'">Preusmjeri…</button>'
+          + '<button type="button" class="offrail" data-order="'+esc(f.order_id)+'">Riješeno ručno…</button></div>' : '')
         + '</td>'
       + '</tr>'
       + (parked ? '<tr class="reroute-row" id="rr-'+esc(f.order_id)+'" style="display:none"><td colspan="9"></td></tr>' : '');
@@ -784,6 +799,8 @@ async function load() {
 // Parked payment → pick the intent it paid. Candidates come from the order's
 // tenant; the server re-runs the normal forward gate on the pick.
 document.getElementById("rows").addEventListener("click", async (e) => {
+  const err = e.target.closest(".err");
+  if (err) { err.classList.toggle("open"); return; }
   const btn = e.target.closest("button");
   if (!btn) return;
   if (btn.classList.contains("offrail")) {
