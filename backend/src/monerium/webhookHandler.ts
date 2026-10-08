@@ -8,7 +8,7 @@ import {
   upsertMoneriumOrder,
 } from './db';
 import { extractSessionId } from './sid';
-import { makeForwardDeps, maybeForward, parseAmountCents } from './forward';
+import { makeForwardDeps, maybeForward, parseAmountCents, previewStraySid } from './forward';
 import { notifyOrderLifecycle } from '../intents/lifecycle';
 import { sendAlert } from '../alerts';
 import type { TenantRail } from '../tenants/rail';
@@ -31,6 +31,7 @@ export interface WebhookRecord {
   payload: string;
   headersJson: string;
   sidExtracted: string | null;
+  sidResolved: string | null;
   amountCents: number | null;
   currency: string | null;
   processingNote: string | null;
@@ -45,6 +46,9 @@ export interface WebhookDeps {
   upsertOrder(order: MoneriumOrder): Promise<boolean>;
   notifyLifecycle(order: MoneriumOrder): Promise<void>;
   forward(order: MoneriumOrder): Promise<void>;
+  /// Stray resolver, read-only: the intent a reference-less order most
+  /// plausibly paid, or null. Lights "received" early; never moves value.
+  previewStray(order: MoneriumOrder): Promise<string | null>;
   /// Poke the intent's SSE stream (no-op while SSE is off).
   publish(sid: string | null): Promise<void>;
   alert(text: string): Promise<void>;
@@ -65,6 +69,7 @@ export function makeWebhookDeps(
     upsertOrder: (order) => upsertMoneriumOrder(env, order, rail.tenantId),
     notifyLifecycle: (order) => notifyOrderLifecycle(env, order, rail.tenantId),
     forward: (order) => maybeForward(makeForwardDeps(env, rail), order),
+    previewStray: (order) => previewStraySid(makeForwardDeps(env, rail), order),
     publish: (sid) => publishIntentChange(env, sid),
     alert: (text) => sendAlert(env, text),
     waitUntil: (p) => ctx.waitUntil(p),
@@ -116,6 +121,17 @@ export async function handleMoneriumWebhook(
   else if (eventType === 'subscription.created') processingNote = 'subscription_ack';
   else if (!order) processingNote = 'no_order_in_payload';
   else if (wrongProfile) processingNote = 'profile_mismatch';
+  // Reference-less payment: guess its intent NOW (read-only) so the open
+  // checkout flips to "received" ~1 s after Send, not at settlement ~15 s.
+  // Only for a verified order of this tenant; a failure just skips the hint.
+  let sidResolved: string | null = null;
+  if (verify.ok && order && !wrongProfile && !sid) {
+    try {
+      sidResolved = await deps.previewStray(order);
+    } catch (e) {
+      console.error(`stray preview failed for order ${order.id}: ${(e as Error).message}`);
+    }
+  }
   await deps.recordEvent({
     orderId: order?.id ?? null,
     eventType,
@@ -123,6 +139,7 @@ export async function handleMoneriumWebhook(
     payload: rawBody,
     headersJson: JSON.stringify(headersObj),
     sidExtracted: sid,
+    sidResolved,
     amountCents,
     currency: order?.currency ?? null,
     processingNote,
@@ -188,7 +205,7 @@ export async function handleMoneriumWebhook(
       // still waits for the confirmed on-chain forward below.
       deps.waitUntil(deps.notifyLifecycle(order));
       // "Euro je stigao" reaches an open checkout the moment Monerium tells us.
-      deps.waitUntil(deps.publish(sid));
+      deps.waitUntil(deps.publish(sid ?? sidResolved));
       // Auto-forward via Safe + Roles Modifier on incoming issue orders.
       //
       // Critical race-condition fix (2026-05-21): only forward AFTER Monerium

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { eurToWei, handleForward, rerouteParkedOrder, type ForwardDeps } from '../src/monerium/forward';
+import { eurToWei, handleForward, previewStraySid, rerouteParkedOrder, type ForwardDeps } from '../src/monerium/forward';
 import {
   placedAtUnix,
   resolveStray,
@@ -383,5 +383,41 @@ describe('rerouteParkedOrder — operator pick', () => {
     expect(await rerouteParkedOrder(deps, order('', '1.02'), 'z232pb646itg')).toBe('ok');
     expect(rec.forwards).toHaveLength(0);
     expect(rec.inserts[0]).toMatchObject({ status: 'blocked' });
+  });
+});
+
+// order.created preview (ADR 0018 dopuna 2026-10-09): same rule, read-only.
+describe('previewStraySid', () => {
+  const RAB = '0x7ca5e2dcd81aa54bc2f8ee16a1d313734d314f05';
+  const order = (over: Partial<MoneriumOrder> = {}) => ({
+    id: '0270cc5d', kind: 'issue', state: 'pending', amount: '1', currency: 'eur', memo: '',
+    meta: { placedAt: '2026-10-08T22:31:31.234504193Z' }, ...over,
+  }) as MoneriumOrder;
+  const rows: StrayCandidate[] = [
+    { sid: '9g8a69f775qd', target_address: RAB, state: 'pending', created_at: 1791498602, expires_at: 1791499502 },
+    { sid: 'wk2bynhqjam3', target_address: PAYEE, state: 'expired', created_at: 1791479367, expires_at: 1791480267 },
+  ];
+  const calls: unknown[] = [];
+  const deps = { findStrayCandidates: async (a: unknown) => { calls.push(a); return rows; } };
+
+  it('replay 2026-10-08 22:31:31 → the open Rab checkout, window around placedAt', async () => {
+    expect(await previewStraySid(deps, order())).toBe('9g8a69f775qd');
+    expect(calls.at(-1)).toEqual({
+      amountCents: 100,
+      createdFrom: 1791498691 - STRAY_LOOKBACK_SECONDS,
+      createdTo: 1791498691 + 120,
+    });
+  });
+
+  it('memo with a destination, a redeem, a rejected order or resolver off → null', async () => {
+    expect(await previewStraySid(deps, order({ memo: 'mpt:0x7ca5e2dcd81aa54bc2f8ee16a1d313734d314f05?sid=abc' }))).toBeNull();
+    expect(await previewStraySid(deps, order({ kind: 'redeem' }))).toBeNull();
+    expect(await previewStraySid(deps, order({ state: 'rejected' }))).toBeNull();
+    expect(await previewStraySid({}, order())).toBeNull();
+  });
+
+  it('conflict → null (checkout keeps waiting)', async () => {
+    const both = { findStrayCandidates: async () => [rows[0], { ...rows[0], sid: 'zz', target_address: PAYEE }] };
+    expect(await previewStraySid(both, order())).toBeNull();
   });
 });
