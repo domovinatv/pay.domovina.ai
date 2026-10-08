@@ -29,6 +29,7 @@ history.
 - ⏳ **Planned** — accepted but no implementation yet.
 - 🔬 **Research direction** — design accepted as direction; concrete
   primitive selection or benchmarking still open.
+- 📝 **Proposed** — written up, not yet accepted.
 - ➖ **Superseded** — replaced by a later ADR.
 
 ---
@@ -55,6 +56,7 @@ history.
 | [0016](0016-tenant-payout-whitelist.md) | Tenant payout whitelist: fail-closed forward rail (binding + whitelist, no more arbitrary SEPA-reference destinations) | 2026-08-01 | ✅ Accepted | 🟢 Backend shipped (migrations 0013/0014, `authorizeForward`, admin console, 62 new tests); on-chain Zodiac scoping (`safe-tx/006`) prepared but NOT executed |
 | [0017](0017-multi-tenant-rail.md) | Multi-tenant rail: Monerium account, webhook and signer per tenant (encrypted secrets in D1, per-tenant Roles + router EOA, SSE) | 2026-10-05 | ✅ Accepted | 🟢 Merged (#58) + deployed 2026-10-05: migrations 0016/0017, KEK set, `INTENT_SSE=1` live; `MULTI_TENANT_RAIL=0` until the first KYB'd tenant |
 | [0018](0018-stray-payment-resolver.md) | Uplate bez reference: povezivanje s intentom po tenantu, iznosu i vremenu (+ ručno preusmjeravanje u adminu) | 2026-10-08 | ✅ Accepted | 🟢 Grana `feat/stray-resolver`: resolver, zasun 0018, admin gumb; `client_ref` sljedeći PR |
+| [0019](0019-off-cloud-forward-signer.md) | Forward potpisuje M-of-N kvorum Android uređaja (StrongBox P-256 → signer Safe kao član Roles), Cloudflare samo orkestrira i plaća gas; kapica na iznos odbijena | 2026-10-08 | 📝 Proposed | ⏳ Faza 0 (detektor krađe) i faza 1 (spike) sljedeće |
 
 ---
 

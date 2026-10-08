@@ -1,5 +1,10 @@
 # Batch 006 — on-chain scoping of `EUReForwarder` (PRIPREMLJENO, NIJE IZVRŠENO)
 
+> **2026-10-08: varijanta s kapicom i allowanceom ODBIJENA u
+> [ADR 0019](../../docs/decisions/0019-off-cloud-forward-signer.md)** jer
+> fragmentira legitimne uplate. Ključ se umjesto toga seli iz clouda u M-of-N
+> kvorum Android uređaja.
+
 > Status: **template only.** Ništa nije potpisano ni poslano on-chain. Ovaj
 > dokument postoji da odluka bude donesena svjesno, a ne da se batch potpiše
 > "jer postoji". Pročitaj §Verifikacija prije nego išta uploadaš u Safe.
