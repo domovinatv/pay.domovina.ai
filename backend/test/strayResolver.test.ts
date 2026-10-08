@@ -53,6 +53,27 @@ describe('resolveStray — replay of 2026-10-07', () => {
   });
 });
 
+// Production, 2026-10-08 (tenant italk, order a30abad7…, forward #78): parked
+// as a conflict under the single-tier rule. Rab = RAB, Lukavec = PAYEE.
+describe('resolveStray — replay of 2026-10-08', () => {
+  const RAB = '0x7ca5e2dcd81aa54bc2f8ee16a1d313734d314f05';
+  const placed = 1791494242;
+  const rows: StrayCandidate[] = [
+    { sid: 'fyihzkvy9yyq', target_address: RAB, state: 'pending', created_at: 1791494201, expires_at: 1791495101 },
+    { sid: 'dw52xejucz4z', target_address: RAB, state: 'pending', created_at: 1791493780, expires_at: 1791494680 },
+    { sid: 'wk2bynhqjam3', target_address: PAYEE, state: 'expired', created_at: 1791479367, expires_at: 1791480267 },
+  ];
+
+  it('two open Rab checkouts + one Lukavec expired 4 h earlier → Rab, newest open first', () => {
+    expect(resolveStray(rows, placed)).toEqual({
+      kind: 'match',
+      target: RAB,
+      sids: ['fyihzkvy9yyq', 'dw52xejucz4z'],
+      ambiguousIntent: true,
+    });
+  });
+});
+
 describe('resolveStray — decisions', () => {
   it('candidates pointing at different payees → conflict, nothing moves', () => {
     const res = resolveStray(
@@ -78,7 +99,7 @@ describe('resolveStray — decisions', () => {
     expect(res.kind).toBe('match');
   });
 
-  it('an intent still open at placement beats a newer expired one', () => {
+  it('an intent still open at placement beats a newer expired one; expired never joins the claim list', () => {
     const res = resolveStray(
       [
         cand('open', '2026-10-07T20:00:00Z', '2026-10-07T21:00:00Z', { state: 'pending' }),
@@ -86,7 +107,42 @@ describe('resolveStray — decisions', () => {
       ],
       t('2026-10-07T20:30:00Z'),
     );
-    expect(res).toMatchObject({ kind: 'match', sids: ['open', 'newer'] });
+    expect(res).toEqual({ kind: 'match', target: PAYEE, sids: ['open'], ambiguousIntent: false });
+  });
+
+  it('open intents agreeing on a payee win over an expired one for another payee', () => {
+    const res = resolveStray(
+      [
+        cand('open', '2026-10-07T20:20:00Z', '2026-10-07T20:35:00Z', { state: 'pending' }),
+        cand('old', '2026-10-07T16:00:00Z', '2026-10-07T16:15:00Z', { target_address: OTHER }),
+      ],
+      t('2026-10-07T20:21:00Z'),
+    );
+    expect(res).toMatchObject({ kind: 'match', target: PAYEE, sids: ['open'] });
+  });
+
+  it('open intents for different payees → conflict, even if expired ones agree', () => {
+    const res = resolveStray(
+      [
+        cand('a', '2026-10-07T20:20:00Z', '2026-10-07T20:35:00Z', { state: 'pending' }),
+        cand('b', '2026-10-07T20:21:00Z', '2026-10-07T20:36:00Z', { state: 'pending', target_address: OTHER }),
+        cand('old', '2026-10-07T16:00:00Z', '2026-10-07T16:15:00Z'),
+      ],
+      t('2026-10-07T20:22:00Z'),
+    );
+    expect(res).toMatchObject({ kind: 'conflict' });
+    if (res.kind === 'conflict') expect(res.candidates.map((c) => c.sid).sort()).toEqual(['a', 'b']);
+  });
+
+  it('nothing open → expired candidates decide as before, and must agree', () => {
+    const res = resolveStray(
+      [
+        cand('a', '2026-10-07T16:00:00Z', '2026-10-07T16:15:00Z'),
+        cand('b', '2026-10-07T17:00:00Z', '2026-10-07T17:15:00Z', { target_address: OTHER }),
+      ],
+      t('2026-10-07T20:00:00Z'),
+    );
+    expect(res.kind).toBe('conflict');
   });
 
   it('no candidates → none; a paid row is never a candidate', () => {
