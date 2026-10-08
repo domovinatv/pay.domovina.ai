@@ -78,10 +78,20 @@ kamo bi ga poslao bilo koji od kandidata.
 
 - **Trajni QR kampanje (`cmp:`, iznos upisuje platitelj).** Ako Revolut ispusti
   i taj memo, a slučajno postoji intent istog tenanta s točno tim iznosom i
-  drugom adresom, resolver će uplatu poslati na tu adresu. Adresa je tenantova i
-  na whitelisti, ali je pogrešna namjena. Rizik raste s brojem kampanja po
-  tenantu. Ublažavanje: ako se pojavi, isključiti `STRAY_RESOLVER` za tenanta
-  (za sada je prekidač globalan) ili uvesti učenje platitelja (sljedeći korak).
+  drugom adresom, resolver će uplatu poslati na tu adresu. Šteta je ograničena
+  na pogrešnu namjenu **unutar istog tenanta**, nikad na tuđi novac:
+  - kandidati dolaze samo iz tenanta čiji je Monerium račun (IBAN) primio
+    uplatu, a ADR 0017 daje svakom tenantu vlastiti Monerium račun, rail,
+    relayer i 1..N namjenskih Safe-ova;
+  - odredište mora biti na whitelisti tog tenanta, dakle jedan od njegovih
+    Safe-ova;
+  - tenant može naknadno ručno prebaciti novac između svojih Safe-ova. To vrijedi
+    za Safe-ove koje tenant kontrolira; Safe s vanjskim vlasnikom (npr. 1/1
+    passkey Safe kampanje) treba potpis tog vlasnika.
+
+  Zato je to prihvatljiv rizik, a ne razlog za isključivanje resolvera. Ako se
+  počne događati, rješenje je učenje platitelja (sljedeći korak), ne gašenje
+  `STRAY_RESOLVER`.
 - **Krivo upisan iznos** se ne povezuje automatski. Za to služi ručni gumb.
 - **Memo sa sid-om, ali bez adrese** se i dalje parkira. Tu je sid jači signal
   od iznosa, pa je to kandidat za zasebnu odluku.
