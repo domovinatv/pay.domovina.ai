@@ -260,7 +260,9 @@ export interface MoneriumForwardRow {
   /// 'blocked' = the tenant payout whitelist refused this destination, so no
   /// TX was ever built. Distinct from 'failed' (broadcast/RPC/chain error) so
   /// an operator can tell a policy refusal from an infrastructure problem.
-  status: 'pending' | 'submitted' | 'confirmed' | 'failed' | 'blocked';
+  /// 'resolved_offrail': the money was moved by hand (2/3 Safe owners) outside
+  /// the rail; tx_hash points at that transfer. Final — never forwarded again.
+  status: 'pending' | 'submitted' | 'confirmed' | 'failed' | 'blocked' | 'resolved_offrail';
   error: string | null;
   attempts: number;
   created_at: number;
