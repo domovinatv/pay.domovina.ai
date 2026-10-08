@@ -145,6 +145,8 @@ export async function recordMoneriumWebhookEvent(
     payload: string;
     headersJson?: string;
     sidExtracted?: string | null;
+    /// Stray resolver's read-only pick for a reference-less order (0021).
+    sidResolved?: string | null;
     amountCents?: number | null;
     currency?: string | null;
     processingNote?: string | null;
@@ -157,8 +159,8 @@ export async function recordMoneriumWebhookEvent(
     `INSERT INTO monerium_webhook_events
        (order_id, event_type, signature_ok, payload, received_at,
         headers_json, sid_extracted, amount_cents, currency, processing_note,
-        tenant_id)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        tenant_id, sid_resolved)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   )
     .bind(
       args.orderId,
@@ -172,6 +174,7 @@ export async function recordMoneriumWebhookEvent(
       args.currency ?? null,
       args.processingNote ?? null,
       args.tenantId ?? null,
+      args.sidResolved ?? null,
     )
     .run();
   return (res.meta?.last_row_id as number | undefined) ?? 0;

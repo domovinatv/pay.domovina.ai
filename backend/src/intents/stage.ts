@@ -280,7 +280,9 @@ function stageEnteredAt(args: {
 /// D1 lookups feeding computeStage. Order resolution: the direct FK on a
 /// paid intent, else the newest signature-verified webhook event whose
 /// extracted sid matches — this is what makes `received_processing` visible
-/// BEFORE the forward/paid flip links the tables.
+/// BEFORE the forward/paid flip links the tables. A reference-less order
+/// matches through `sid_resolved`, the stray resolver's read-only pick on
+/// order.created (migration 0021).
 export async function loadStageContext(
   env: Env,
   intent: PaymentIntentRow,
@@ -298,10 +300,11 @@ export async function loadStageContext(
       `SELECT o.* FROM monerium_orders o
         WHERE o.id = (
           SELECT order_id FROM monerium_webhook_events
-           WHERE sid_extracted = ? AND order_id IS NOT NULL AND signature_ok = 1
+           WHERE (sid_extracted = ? OR sid_resolved = ?)
+             AND order_id IS NOT NULL AND signature_ok = 1
            ORDER BY id DESC LIMIT 1)`,
     )
-      .bind(intent.sid)
+      .bind(intent.sid, intent.sid)
       .first<MoneriumOrderRow>();
     order = row ?? null;
   }

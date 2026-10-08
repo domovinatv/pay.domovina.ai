@@ -95,10 +95,12 @@ interface Rec {
   lifecycle: number;
   forwards: number;
   alerts: string[];
+  previews: string[];
+  published: (string | null)[];
 }
 
-function harness(): { deps: WebhookDeps; rec: Rec; settle(): Promise<void> } {
-  const rec: Rec = { records: [], claims: [], upserts: [], lifecycle: 0, forwards: 0, alerts: [] };
+function harness(preview: string | null | Error = null): { deps: WebhookDeps; rec: Rec; settle(): Promise<void> } {
+  const rec: Rec = { records: [], claims: [], upserts: [], lifecycle: 0, forwards: 0, alerts: [], previews: [], published: [] };
   const pending: Promise<unknown>[] = [];
   const claimed = new Set<string>();
   const deps: WebhookDeps = {
@@ -113,7 +115,12 @@ function harness(): { deps: WebhookDeps; rec: Rec; settle(): Promise<void> } {
     upsertOrder: async (o) => { rec.upserts.push(o.id); return true; },
     notifyLifecycle: async () => { rec.lifecycle++; },
     forward: async () => { rec.forwards++; },
-    publish: async () => {},
+    previewStray: async (o) => {
+      rec.previews.push(o.id);
+      if (preview instanceof Error) throw preview;
+      return preview;
+    },
+    publish: async (sid) => { rec.published.push(sid); },
     alert: async (t) => { rec.alerts.push(t); },
     waitUntil: (p) => { pending.push(p); },
   };
@@ -239,5 +246,62 @@ describe('legacy (ITalk) webhook — behaviour unchanged', () => {
     expect((await handleMoneriumWebhook(deps, italk, d.body, d.headers)).status).toBe(500);
     expect((await handleMoneriumWebhook(deps, italk, d.body, d.headers)).status).toBe(200);
     expect(rec.upserts).toEqual(['ord-1']);
+  });
+});
+
+// ADR 0018 dopuna 2026-10-09: order.created of a reference-less payment
+// lights "received" on the intent the resolver would pick (~1 s after Send).
+describe('early received for reference-less payments', () => {
+  const created = (over: Partial<MoneriumOrder> = {}) =>
+    processedOrder({ state: 'pending', memo: '', ...over });
+
+  it('order.created without memo → read-only pick recorded and published, nothing forwarded', async () => {
+    const { deps, rec, settle } = harness('9g8a69f775qd');
+    const d = await delivery(SECRET_ITALK, { type: 'order.created', data: created() });
+    expect((await handleMoneriumWebhook(deps, italk, d.body, d.headers)).status).toBe(200);
+    await settle();
+    expect(rec.previews).toEqual(['ord-1']);
+    expect(rec.records[0]).toMatchObject({ sidExtracted: null, sidResolved: '9g8a69f775qd' });
+    expect(rec.published).toEqual(['9g8a69f775qd']);
+    expect(rec.forwards).toBe(0);
+  });
+
+  it('memo with a sid → no preview; the memo sid is what gets published', async () => {
+    const { deps, rec, settle } = harness('other');
+    const d = await delivery(SECRET_ITALK, { type: 'order.created', data: created({ memo: 'mpt:0x2222222222222222222222222222222222222222?sid=abc123def456' }) });
+    await handleMoneriumWebhook(deps, italk, d.body, d.headers);
+    await settle();
+    expect(rec.previews).toEqual([]);
+    expect(rec.records[0]).toMatchObject({ sidExtracted: 'abc123def456', sidResolved: null });
+    expect(rec.published).toEqual(['abc123def456']);
+  });
+
+  it('no unambiguous pick → sid_resolved stays null, publish is a no-op poke', async () => {
+    const { deps, rec, settle } = harness(null);
+    const d = await delivery(SECRET_ITALK, { type: 'order.created', data: created() });
+    await handleMoneriumWebhook(deps, italk, d.body, d.headers);
+    await settle();
+    expect(rec.records[0].sidResolved).toBeNull();
+    expect(rec.published).toEqual([null]);
+  });
+
+  it('preview failure never fails the webhook', async () => {
+    const { deps, rec, settle } = harness(new Error('d1 down'));
+    const d = await delivery(SECRET_ITALK, { type: 'order.created', data: created() });
+    expect((await handleMoneriumWebhook(deps, italk, d.body, d.headers)).status).toBe(200);
+    await settle();
+    expect(rec.records[0].sidResolved).toBeNull();
+    expect(rec.upserts).toEqual(['ord-1']);
+  });
+
+  it('bad signature or foreign profile → resolver never consulted', async () => {
+    const a = harness('x');
+    const d1 = await delivery(SECRET_B, { type: 'order.created', data: created() });
+    await handleMoneriumWebhook(a.deps, rail(), d1.body, d1.headers);
+    expect(a.rec.previews).toEqual([]);
+    const b = harness('x');
+    const d2 = await delivery(SECRET_A, { type: 'order.created', data: created({ profile: 'prof-b' }) });
+    await handleMoneriumWebhook(b.deps, rail(), d2.body, d2.headers);
+    expect(b.rec.previews).toEqual([]);
   });
 });

@@ -450,6 +450,35 @@ async function park(
   }
 }
 
+/// Read-only preview of the stray resolver for the checkout timeline: which
+/// intent would a reference-less order most plausibly settle? Runs on
+/// `order.created` (~1 s after the payer taps Send) so the open checkout can
+/// show "received" right away instead of after the forward (~15 s).
+///
+/// Never moves value and never claims: the forward still resolves on
+/// `processed` with the same rule. The two can disagree only if candidates
+/// change in between (a new intent opened or another stray claimed one) —
+/// then the preview lit "received" on a sibling intent of the SAME payee.
+/// Conflict / none → null, and the checkout simply waits as before.
+export async function previewStraySid(
+  deps: Pick<ForwardDeps, 'findStrayCandidates' | 'nowUnix'>,
+  order: MoneriumOrder,
+): Promise<string | null> {
+  if (order.kind !== 'issue' || order.state === 'rejected' || !deps.findStrayCandidates) return null;
+  if (!isStray(extractRoutingFromOrder(order))) return null;
+  const amountCents = parseAmountCents(order.amount);
+  if (amountCents === null) return null;
+  const now = deps.nowUnix?.() ?? Math.floor(Date.now() / 1000);
+  const placed = placedAtUnix(order.meta?.placedAt, now);
+  const candidates = await deps.findStrayCandidates({
+    amountCents,
+    createdFrom: placed - STRAY_LOOKBACK_SECONDS,
+    createdTo: placed + STRAY_CLOCK_SKEW_SECONDS,
+  });
+  const res = resolveStray(candidates, placed);
+  return res.kind === 'match' ? res.sids[0] : null;
+}
+
 /// No address, no sid, no campaign — nothing in the remittance to route on.
 /// (A bare 0x / gnosis: memo is NOT a stray: the payer named a destination we
 /// refuse, and guessing a different one would be worse than parking.)

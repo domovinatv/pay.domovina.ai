@@ -189,9 +189,17 @@ parkirane uplate bez rješenja.
 
 ## Otvoreno
 
-- **Bez međukoraka „zaprimljeno“.** Rani stage (`received_processing`) veže
-  se uz sid iz reference (`monerium_webhook_events.sid_extracted`), pa ga
-  zalutala uplata preskače. Panel ide ravno s „čeka uplatu“ na „plaćeno“.
+- ~~**Bez međukoraka „zaprimljeno“.**~~ **Riješeno 2026-10-09** (migracija
+  0021): na `order.created` bez reference webhook pokrene resolver **samo za
+  čitanje** (`previewStraySid`) i odabrani sid zapiše u
+  `monerium_webhook_events.sid_resolved`, odvojeno od `sid_extracted` („što je
+  pisalo u opisu“). `loadStageContext` traži order po oba stupca i SSE se
+  javlja odmah, pa checkout pokaže „zaprimljeno“ ~1 s nakon Send umjesto
+  „plaćeno“ tek na ~15 s. Ništa se ne miče na tu vrijednost: forward i dalje
+  odlučuje na `processed` istim pravilom. Mogu se razići samo ako se kandidati
+  promijene između `created` i `processed` (~8 s) — tada je „zaprimljeno“
+  upaljeno na intentu **iste** adrese. Sukob ili nijedan kandidat → ništa se
+  ne pali, checkout čeka kao prije.
 - **energy.domovina.ai nakon isteka.** `isTerminal()` u `lib/mpt-intent.ts`
   tretira `expired` kao kraj i zatvara stream. Backend zakašnjelu namiru
   prikazuje kao `settled` (`stage.ts`: order postoji, forward potvrđen), ali
