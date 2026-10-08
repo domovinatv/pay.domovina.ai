@@ -1,5 +1,4 @@
 import { Hono } from 'hono';
-import { basicAuth } from 'hono/basic-auth';
 
 import type { Env } from '../types';
 import { resendWebhook } from '../intents/outbox';
@@ -25,6 +24,7 @@ import {
 } from '../wallets/db';
 import { publicWalletView } from '../wallets/api';
 import { mountTenantAdmin } from '../tenants/admin';
+import { mountAdminAuth } from './auth/mount';
 import {
   renderEventDetailPage,
   renderEventsPage,
@@ -38,26 +38,12 @@ import {
 
 /// Mounts the branded `/admin` HTML dashboard on the given app.
 ///
-/// Auth model: Hono's basicAuth middleware. Credentials are
-/// `MONERIUM_ADMIN_USER` / `MONERIUM_ADMIN_PASS` secrets. If either is
-/// missing the entire /admin tree returns 503 — we never want to expose the
-/// webhook audit log unauthenticated (it contains IBANs, wallet addresses,
-/// and HMAC failure debug info).
-///
-/// JSON endpoints under `/admin/api/*` are gated by the same Basic Auth so
-/// the dashboard's fetch() calls inherit the browser's cached credentials.
+/// Auth: Cloudflare Access (OTP na e-mail, /admin/sso) ili passkey → sesija u
+/// kolačiću (./auth/mount.ts, isti model kao bank-push-gateway). Sve pod
+/// /admin, uključujući /admin/api/*, traži tu sesiju; promjene traže i isti
+/// Origin. Dashboard fetch() pozivi nose kolačić same-origin.
 export function mountAdminUi(app: Hono<{ Bindings: Env }>): void {
-  app.use('/admin/*', async (c, next) => {
-    const user = c.env.MONERIUM_ADMIN_USER;
-    const pass = c.env.MONERIUM_ADMIN_PASS;
-    if (!user || !pass) {
-      return c.text('admin not configured (set MONERIUM_ADMIN_USER + PASS)', 503);
-    }
-    return basicAuth({ username: user, password: pass, realm: 'DOMOVINA Monerium admin' })(c, next);
-  });
-  // Some browsers cache the Basic Auth even after explicit logout — short-
-  // circuit unauthenticated requests at the root too, so a typo'd URL on a
-  // shared machine doesn't leak via cached creds from a different realm.
+  mountAdminAuth(app);
   app.get('/admin', (c) => c.html(renderEventsPage()));
   app.get('/admin/', (c) => c.html(renderEventsPage()));
   app.get('/admin/events/:id', async (c) => {

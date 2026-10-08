@@ -215,7 +215,8 @@ Curl protiv `api.telegram.org` dokazuje samo da kredencijali rade *negdje* — n
 i da su ispravno sletjeli u Workerove secrete. Za to postoji:
 
 ```bash
-curl -s -u "$ADMIN_USER:$ADMIN_PASS" -X POST https://mpt.domovina.ai/admin/api/alert-test
+# (od 2026-10-08 admin traži sesiju, v. docs/admin-auth.md) — u konzoli na /admin:
+# await fetch('/admin/api/alert-test', { method: 'POST' }).then((r) => r.json())
 ```
 
 ili gumb **🔔 Pošalji test alert** na `/admin/whitelist`. Odgovori:
