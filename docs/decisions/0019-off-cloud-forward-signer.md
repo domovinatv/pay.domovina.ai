@@ -213,7 +213,7 @@ izvršavanje onoga što server vrati.
 
 | # | Što | Napomena |
 |---|---|---|
-| 0 | Detektor krađe: cron čita `Transfer` evente iz MPT Safe-a i alarmira svaki bez `monerium_forwards` reda (`outflowWatch.ts`). Povijest do bloka ~48,65M: 66 naših, 0 kroz rolu mimo raila, 2 ℹ️ (CowSwap dopuna, ručni 2/3 povrat) | ✅ grana `feat/outflow-watch` |
+| 0 | Detektor krađe: cron čita `Transfer` evente iz MPT Safe-a i alarmira svaki bez `monerium_forwards` reda (`outflowWatch.ts`). Povijest do bloka ~48,65M: 66 naših, 0 kroz rolu mimo raila, 2 ℹ️ (CowSwap dopuna, ručni 2/3 povrat) | ✅ #60, deployano 2026-10-08; kursor od bloka 48652939, ručni i auto forwardi istog dana prepoznati kao naši |
 | 1 | Spike: StrongBox P-256 → WebAuthn omotnica → `SafeWebAuthnSignerProxy.isValidSignature` na Gnosis forku, mjerenje gasa za 2/3 i 11/21 | potvrđuje §2 |
 | 2 | Ugovori: signer Safe 2/3, `ForwardLedger`, `PayoutRegistry`; Roles proširenje (`ledger.consume`) | 2/3 ljudi potpisuju batch |
 | 3 | Android aplikacija: foreground service, push + pull, politika §3, upis uređaja s attestationom | |

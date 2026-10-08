@@ -109,8 +109,75 @@ intent „živ“.
 
 | Stavka | Status |
 |---|---|
-| Resolver + gate + zasun (migracija 0018) | ✅ grana `feat/stray-resolver` |
-| Admin „Preusmjeri…“ | ✅ grana `feat/stray-resolver` |
+| Resolver + gate + zasun (migracija 0018) | ✅ #59, deployano 2026-10-08 |
+| Admin „Preusmjeri…“ | ✅ #59 |
 | Replay 7. 10. u testovima (`test/strayResolver.test.ts`) | ✅ |
-| Migracija 0018 na produkciji | ⏳ |
+| Status `resolved_offrail` + „Riješeno ručno…“ (§Rukovanje parkiranim uplatama) | ✅ #62, deployano 2026-10-08 |
 | `client_ref` + učenje platitelja | ⏳ |
+| energy.domovina.ai panel nakon `expired` | ⏳ (§Otvoreno) |
+
+## Produkcija 2026-10-08
+
+**Ručno preusmjeravanje 7. 10.** (admin, sesija s passkeyem, `memo_prefix='manual'`):
+
+| Uplata | Intent | Forward | Tx |
+|---|---|---|---|
+| #68 1,02 € | `z232pb646itg` | 72 | `0x3f9499a2…` |
+| #70 1,00 € | `sqbwkeratgmm` | 73 | `0xa6fb18bb…` |
+| #71 1,00 € | `nycwuw2m6u4t` | 74 | `0x858b1256…` |
+
+Lista kandidata u adminu dala je isti redoslijed kao replay test: za #71 je
+`sqbwkeratgmm` već bio preuzet, pa je prvi kandidat bio `nycwuw2m6u4t`. Sva
+tri intenta su istekla prije uplate, pa je namira zapisana kao zakašnjela
+(`payment.late`). MPT Safe nakon toga: 0 EURe. Između forwarda čekala se
+potvrda na chainu, jer sve potpisuje isti router EOA, a nonce manager je
+otvoren (Fable 5.1 review, P0-5).
+
+**Prvi automatski stray** (energy.domovina.ai/beta/lukavec, Revolut iOS
+ispustio referencu):
+
+```mermaid
+sequenceDiagram
+  participant P as Platitelj (Revolut)
+  participant M as Monerium
+  participant W as Worker (resolver)
+  participant G as Gnosis
+  Note over W: 15:45:10 intent v8nueq24ssp5, 1,05 €
+  P->>M: 15:45:41 SEPA, memo prazan
+  M->>W: 15:45:46 order processed
+  W->>W: 15:45:47 jedan kandidat → claim (auto)
+  W->>G: transfer na 0x4f7f…0173
+  G-->>W: 15:45:53 potvrđeno → intent paid
+```
+
+Od uplate do `paid` prošlo je ~12 s, od `processed` ~6,5 s, isto kao uplata s
+referencom. Detektor krađe (ADR 0019 faza 0) nije alarmirao.
+
+## Rukovanje parkiranim uplatama
+
+Parkirani order koji su 2/3 vlasnika isplatili **ručno mimo raila** rail i
+dalje vidi kao „novac u Safe-u“. Order `39e395a9…` (21. 5., isplaćen
+transferom `0xa2a877b8…` iz safe-tx/003) nudio je „Preusmjeri…“. Klik bi
+platio drugi put, tuđim novcem koji je u tom trenutku u Safe-u. Zato:
+
+- status `resolved_offrail` s tx hashom ručnog transfera; server prije upisa
+  provjeri tx na chainu (uspješan, EURe izlaz iz Safe-a raila);
+- jedan tx zatvara samo jedan order;
+- `checkReroute` ga odbija, a ponovno isporučen webhook ga preskače.
+
+**Pravilo:** svaki ručni 2/3 transfer koji rješava parkiranu uplatu odmah se
+upisuje kroz „Riješeno ručno…“. Na dan uvođenja u bazi nije bilo nijedne
+parkirane uplate bez rješenja.
+
+## Otvoreno
+
+- **Bez međukoraka „zaprimljeno“.** Rani stage (`received_processing`) veže
+  se uz sid iz reference (`monerium_webhook_events.sid_extracted`), pa ga
+  zalutala uplata preskače. Panel ide ravno s „čeka uplatu“ na „plaćeno“.
+- **energy.domovina.ai nakon isteka.** `isTerminal()` u `lib/mpt-intent.ts`
+  tretira `expired` kao kraj i zatvara stream. Backend zakašnjelu namiru
+  prikazuje kao `settled` (`stage.ts`: order postoji, forward potvrđen), ali
+  panel je vidi tek nakon osvježavanja. Popravak: nakon `expired` povremeno
+  dohvatiti status još neko vrijeme (npr. 48 h dok je tab otvoren).
+- **Dvije istovremene uplate istog iznosa** od različitih ljudi: rješava ih
+  `client_ref` (§Sljedeći korak).
