@@ -44,6 +44,7 @@ import { RECONCILE_INTERVAL_S, reconcileMoneriumOrders } from './monerium/reconc
 import { fetchOgPreview } from './og/preview';
 import { publishIntentChange } from './intents/stream';
 import { checkRouterGas } from './tenants/onboarding';
+import { watchAllRailOutflows } from './monerium/outflowWatch';
 import { renderCheckoutPage } from './checkout/page';
 import { getSepaDetails } from './tenants/db';
 import { defaultTenantId } from './tenants/whitelist';
@@ -476,6 +477,15 @@ export default {
           }
         },
         (e) => console.error(`cron: forward reconcile failed: ${e}`),
+      ),
+    );
+
+    // Theft detector (ADR 0019 phase 0): every EURe leaving a rail Safe must
+    // be one of our own forwards. Cursor-based, cheap when nothing moved.
+    ctx.waitUntil(
+      watchAllRailOutflows(env).then(
+        (n) => { if (n > 0) console.warn(`cron: outflow watch flagged ${n} transfer(s)`); },
+        (e) => console.error(`cron: outflow watch failed: ${e}`),
       ),
     );
 

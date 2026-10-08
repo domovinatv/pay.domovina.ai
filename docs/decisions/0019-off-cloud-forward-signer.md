@@ -159,6 +159,41 @@ Svaki tenant ima svoj MPT Safe + Roles (ADR 0017). Zadano je isti signer Safe
 (DOMOVINA mreža uređaja) član role svakog tenanta. Tenant može kasnije
 dobiti vlastiti kvorum uređaja bez promjene ugovora.
 
+### 8. Android aplikacija: jednostavna, bez ovisnosti, uvijek budna
+
+Polazište su dvije postojeće aplikacije na namjenskim telefonima
+(pregled 2026-10-08):
+
+- **`bank-push-gateway`** je predložak: nula ovisnosti (kod se može pročitati u
+  cijelosti), Views bez Composea, jedan modul, SQLite red s 2xx/4xx/ostalo
+  semantikom, HMAC potpis zahtjeva, `allowBackup=false` i backup/device
+  transfer isključeni, release samo HTTPS.
+- **`httpsms`** daje mehanizme za buđenje: FCM data-only poruka koja nosi
+  najviše id posla, nakon čega uređaj **povuče** posao. Uz to: receiveri za
+  BOOT_COMPLETED / LOCKED_BOOT_COMPLETED / MY_PACKAGE_REPLACED /
+  USER_UNLOCKED, hvatanje odbijenog pokretanja foreground servicea,
+  WorkManager kao rezerva i serverski watchdog (propušten heartbeat → FCM
+  ping → alert).
+
+Odluke za signer:
+
+| Tema | Odluka |
+|---|---|
+| Servis | foreground service tipa `remoteMessaging` (provjereno u httpsms, smije se pokrenuti s boota), START_STICKY, petlja svakih 60 s kao rezerva za push, WorkManager periodični backstop. **Ne** `dataSync`: na Androidu 15 ograničen je na ~6 h dnevno i ne smije se pokretati s boota |
+| Push | FCM **high priority**, data-only, bez sadržaja osim id-a; jedina Firebase ovisnost je Messaging (bez Analyticsa i Crashlyticsa) |
+| Baterija | izuzeće od optimizacije baterije i status na ekranu; OEM postavke (Motorola, Xiaomi, Samsung) se dokumentiraju po modelu |
+| Ključevi | **dva** StrongBox P-256 ključa: `sign` (Safe potpis, §2) i `auth` (potpis HTTP zahtjeva prema Workeru). Nijedan secret nije u SharedPreferences. Ključevi **bez** `setUserAuthenticationRequired` i `setUnlockedDeviceRequired`, inače zaključan telefon ne može potpisati |
+| Auth zahtjeva | potpis `auth` ključem nad metodom, putanjom, id-om posla, timestampom i jednokratnim nonceom; Worker troši nonce tek nakon provjere potpisa |
+| Upis | QR s jednokratnim kodom (10 min) + Google Key Attestation lanac za oba ključa; operater potvrđuje u adminu, zatim kvorum potpisuje `addOwnerWithThreshold` |
+| Heartbeat | verzija aplikacije, vrijeme zadnjeg potpisa, broj odbijenih poslova, baterija, punjenje, mreža; watchdog na Workeru alarmira nakon 15 min tišine |
+| Distribucija | sideload, ali **release ključ** (nikad debug); Worker uz attestation provjerava digest certifikata kojim je aplikacija potpisana. Nema exportanih komponenti, nema debug ulaza (intent extras) u releaseu |
+| Restart | nakon nestanka struje telefon je offline dok ga netko ne otključa (credential-encrypted storage). Prihvaćeno: zaključan ekran štiti uređaj, kvorum podnosi ispad, heartbeat alarmira |
+
+Što se iz tih projekata **ne preuzima**: secreti u običnim prefs, logiranje
+ili prikaz ključa, release potpisan debug ključem, debug build u produkciji,
+replay prozor bez noncea, cleartext i nezaštićeni listener te slijepo
+izvršavanje onoga što server vrati.
+
 ## Odbijeno
 
 - **Kapica po transferu i rolling allowance (batch 006, varijanta s
@@ -178,7 +213,7 @@ dobiti vlastiti kvorum uređaja bez promjene ugovora.
 
 | # | Što | Napomena |
 |---|---|---|
-| 0 | Detektor krađe: cron čita `Transfer` evente iz MPT Safe-a i alarmira svaki bez `monerium_forwards` reda | neovisno, odmah |
+| 0 | Detektor krađe: cron čita `Transfer` evente iz MPT Safe-a i alarmira svaki bez `monerium_forwards` reda (`outflowWatch.ts`). Povijest do bloka ~48,65M: 66 naših, 0 kroz rolu mimo raila, 2 ℹ️ (CowSwap dopuna, ručni 2/3 povrat) | ✅ grana `feat/outflow-watch` |
 | 1 | Spike: StrongBox P-256 → WebAuthn omotnica → `SafeWebAuthnSignerProxy.isValidSignature` na Gnosis forku, mjerenje gasa za 2/3 i 11/21 | potvrđuje §2 |
 | 2 | Ugovori: signer Safe 2/3, `ForwardLedger`, `PayoutRegistry`; Roles proširenje (`ledger.consume`) | 2/3 ljudi potpisuju batch |
 | 3 | Android aplikacija: foreground service, push + pull, politika §3, upis uređaja s attestationom | |
