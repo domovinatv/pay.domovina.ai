@@ -125,7 +125,7 @@ STRAY_RESOLVER = "1"
 ADMIN_EMAILS = "stepanic.matija@gmail.com,ms@ff.hr"
 ADMIN_HOST = "mpt.domovina.ai"
 ACCESS_TEAM_DOMAIN = "domovina.cloudflareaccess.com"
-ACCESS_AUD = ""
+ACCESS_AUD = "c1e0493deb2d777529744e4ff5d74cebae4fe070a0dae77fdda73e81d01a6bb2"
 
 # MPT routing — Safe + Zodiac Roles Modifier on Gnosis chain (100).
 # All public; private signer key lives in ROUTER_PRIVATE_KEY secret below.
