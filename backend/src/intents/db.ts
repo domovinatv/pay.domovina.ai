@@ -151,6 +151,8 @@ export interface ListIntentsFilter {
   state?: 'pending' | 'paid' | 'expired';
   sid?: string;
   targetAddress?: string;
+  /// Tenant filter; NULL tenant_id rows count as the default tenant.
+  tenant?: { sql: string; args: unknown[] };
 }
 
 export async function listIntents(
@@ -165,6 +167,7 @@ export async function listIntents(
     where.push('target_address = ?');
     args.push(filter.targetAddress.toLowerCase());
   }
+  if (filter.tenant) { where.push(filter.tenant.sql); args.push(...filter.tenant.args); }
   const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
   const limit = Math.min(Math.max(filter.limit ?? 50, 1), 200);
   const offset = Math.max(filter.offset ?? 0, 0);

@@ -25,6 +25,7 @@ import {
 import { publicWalletView } from '../wallets/api';
 import { mountTenantAdmin } from '../tenants/admin';
 import { adminSession, mountAdminAuth } from './auth/mount';
+import { loadTenantTags, tenantWhere } from './tenantTags';
 import { makeOffRailDeps, markResolvedOffRail } from '../monerium/offrail';
 import {
   renderEventDetailPage,
@@ -52,7 +53,8 @@ export function mountAdminUi(app: Hono<{ Bindings: Env }>): void {
     if (!Number.isFinite(id)) return c.text('bad id', 400);
     const ev = await getMoneriumWebhookEvent(c.env, id);
     if (!ev) return c.text('event not found', 404);
-    return c.html(renderEventDetailPage(ev));
+    const tags = await loadTenantTags(c.env);
+    return c.html(renderEventDetailPage(ev, tags.resolve(ev.tenant_id)));
   });
   app.get('/admin/orders', (c) => c.html(renderOrdersPage()));
   app.get('/admin/orders/:id', async (c) => {
@@ -131,13 +133,20 @@ export function mountAdminUi(app: Hono<{ Bindings: Env }>): void {
     const state = (validStates as readonly string[]).includes(stateParam ?? '')
       ? (stateParam as typeof validStates[number])
       : undefined;
+    const tags = await loadTenantTags(c.env);
+    const tenant = c.req.query('tenant') || undefined;
     const { items, total } = await listIntents(c.env, {
       state,
       sid: c.req.query('sid') || undefined,
       targetAddress: c.req.query('target_address') || undefined,
+      tenant: tenant ? tenantWhere(tenant, tags.defaultId) : undefined,
       limit: 100,
     });
-    return c.json({ items, total });
+    return c.json({
+      items: items.map((it) => ({ ...it, ...tags.resolve(it.tenant_id) })),
+      total,
+      tenants: tags.list,
+    });
   });
 
   // JSON endpoints powering the dashboard (same Basic Auth gate).
@@ -146,7 +155,10 @@ export function mountAdminUi(app: Hono<{ Bindings: Env }>): void {
     const offset = Number(c.req.query('offset') ?? '0');
     const sigParam = c.req.query('sig');
     const sid = c.req.query('sid') || undefined;
+    const tags = await loadTenantTags(c.env);
+    const tenant = c.req.query('tenant') || undefined;
     const filter = {
+      tenant: tenant ? tenantWhere(tenant, tags.defaultId) : undefined,
       limit,
       offset,
       sid,
@@ -170,8 +182,9 @@ export function mountAdminUi(app: Hono<{ Bindings: Env }>): void {
       distinct_sids: number;
     }>();
     return c.json({
-      items,
+      items: items.map((it) => ({ ...it, ...tags.resolve(it.tenant_id) })),
       total,
+      tenants: tags.list,
       total_all: stats?.total_all ?? 0,
       sig_ok_count: stats?.sig_ok_count ?? 0,
       sig_fail_count: stats?.sig_fail_count ?? 0,

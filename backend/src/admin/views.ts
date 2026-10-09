@@ -132,6 +132,11 @@ tbody tr:last-child td { border-bottom: 0; }
 .pill.bad { background: #F8E2E0; color: var(--danger); }
 .pill.warn { background: #FDF1E0; color: var(--warning); }
 .pill.neutral { background: var(--surface); color: var(--muted); border: 1px solid var(--border); }
+.pill.env-production { background: #E0F1E5; color: var(--success); }
+.pill.env-sandbox { background: #FDF1E0; color: var(--warning); border: 1px dashed var(--warning); }
+.pill.env-unknown { background: var(--surface); color: var(--muted); border: 1px solid var(--border); }
+.tenant-cell { white-space: nowrap; }
+.tenant-cell .tname { display: block; font-size: .76rem; color: var(--muted); }
 .pager {
   display: flex; justify-content: space-between; align-items: center;
   margin-top: 1rem; gap: 1rem; flex-wrap: wrap;
@@ -370,6 +375,33 @@ ${TOAST_JS}
 </html>`;
 }
 
+const TENANT_JS = `
+const envPill = function(e) {
+  const v = e || "unknown";
+  const label = v === "production" ? "prod" : v;
+  return '<span class="pill env-' + esc(v) + '" title="Monerium ' + esc(v) + '">' + esc(label) + '</span>';
+};
+const tenantCell = function(it) {
+  return '<span class="tenant-cell"><span class="mono">' + esc(it.tenant_id || "—") + '</span>' +
+    (it.tenant_name ? '<span class="tname">' + esc(it.tenant_name) + '</span>' : '') + '</span>';
+};
+// Fills the tenant <select> once from the API's tenant list, keeping the choice.
+const fillTenants = function(list) {
+  const sel = document.getElementById("tenant");
+  if (!sel || !list || sel.dataset.filled) return;
+  sel.dataset.filled = "1";
+  for (const t of list) {
+    const o = document.createElement("option");
+    o.value = t.tenant_id;
+    o.textContent = t.tenant_id + (t.tenant_name ? " — " + t.tenant_name : "") + " · " + (t.monerium_env === "production" ? "prod" : t.monerium_env);
+    sel.appendChild(o);
+  }
+};
+const explorer = function(chain) {
+  return chain === "chiado" ? "https://gnosis-chiado.blockscout.com" : "https://gnosisscan.io";
+};
+`;
+
 export function renderEventsPage(): string {
   const body = `
 <h1>Webhook eventi</h1>
@@ -381,6 +413,8 @@ export function renderEventsPage(): string {
     <option value="1">OK</option>
     <option value="0">FAIL</option>
   </select>
+  <label for="tenant">Tenant:</label>
+  <select id="tenant"><option value="">Svi</option></select>
   <label for="sid">SID:</label>
   <input id="sid" placeholder="filtriraj po sid…" style="width:14rem" />
   <label for="size">Po stranici:</label>
@@ -396,6 +430,8 @@ export function renderEventsPage(): string {
       <tr>
         <th>#</th>
         <th>Primljeno</th>
+        <th>Tenant</th>
+        <th>Monerium</th>
         <th>Tip</th>
         <th>Iznos</th>
         <th>Order</th>
@@ -420,7 +456,7 @@ ${EVENTS_SCRIPT}`;
 }
 
 const EVENTS_SCRIPT = `<script>
-let offset = 0, limit = 25, sig = "", sid = "";
+let offset = 0, limit = 25, sig = "", sid = "", tenant = "";
 let autoTimer = null;
 
 const fmt = function(unix) {
@@ -437,23 +473,26 @@ const money = function(cents, ccy) {
   const v = (cents / 100).toFixed(2);
   return v + " " + (ccy ? ccy.toUpperCase() : "");
 };
+${TENANT_JS}
 
 async function load() {
   const tbody = document.getElementById("rows");
-  tbody.innerHTML = '<tr><td colspan="8" class="empty">Učitavam…</td></tr>';
+  tbody.innerHTML = '<tr><td colspan="10" class="empty">Učitavam…</td></tr>';
   const q = new URLSearchParams({ limit: String(limit), offset: String(offset) });
   if (sig) q.set("sig", sig);
   if (sid) q.set("sid", sid);
+  if (tenant) q.set("tenant", tenant);
   let data;
   try {
     const r = await fetch("/admin/api/events?" + q.toString(), { credentials: "same-origin" });
     if (!r.ok) throw new Error("HTTP " + r.status);
     data = await r.json();
   } catch (e) {
-    tbody.innerHTML = '<tr><td colspan="8" class="empty">Greška: ' + esc(e.message) + '</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="10" class="empty">Greška: ' + esc(e.message) + '</td></tr>';
     return;
   }
 
+  fillTenants(data.tenants);
   document.getElementById("stats").innerHTML =
     '<div class="stat"><div class="label">Ukupno</div><div class="value">' + data.total_all + '</div></div>' +
     '<div class="stat ok"><div class="label">Sig OK</div><div class="value">' + data.sig_ok_count + '</div></div>' +
@@ -461,7 +500,7 @@ async function load() {
     '<div class="stat"><div class="label">Različitih SID</div><div class="value">' + data.distinct_sids + '</div></div>';
 
   if (data.items.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="8" class="empty">Nema eventova.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="10" class="empty">Nema eventova.</td></tr>';
   } else {
     let html = "";
     for (const it of data.items) {
@@ -477,6 +516,8 @@ async function load() {
       html += '<tr data-href="/admin/events/' + it.id + '">' +
         '<td class="dim mono">#' + it.id + '</td>' +
         '<td>' + esc(fmt(it.received_at)) + '</td>' +
+        '<td>' + tenantCell(it) + '</td>' +
+        '<td>' + envPill(it.monerium_env) + '</td>' +
         '<td class="mono">' + esc(it.event_type || "—") + '</td>' +
         '<td class="amount">' + esc(money(it.amount_cents, it.currency)) + '</td>' +
         '<td>' + orderCell + '</td>' +
@@ -505,6 +546,9 @@ document.getElementById("sid").addEventListener("input", function(e) {
   sid = e.target.value.trim(); offset = 0;
   clearTimeout(window._sidTimer);
   window._sidTimer = setTimeout(load, 250);
+});
+document.getElementById("tenant").addEventListener("change", function(e) {
+  tenant = e.target.value; offset = 0; load();
 });
 document.getElementById("size").addEventListener("change", function(e) {
   limit = Number(e.target.value) || 25; offset = 0; load();
@@ -537,7 +581,11 @@ export function renderEventDetailPage(ev: {
   processing_note: string | null;
   payload: string;
   headers_json: string | null;
-}): string {
+}, tag?: { tenant_id: string; tenant_name: string | null; monerium_env: string }): string {
+  const tenantRow = tag
+    ? `<dt>Tenant</dt><dd><span class="mono">${escapeHtml(tag.tenant_id)}</span>${tag.tenant_name ? ` <span class="dim">— ${escapeHtml(tag.tenant_name)}</span>` : ''}</dd>
+  <dt>Monerium</dt><dd><span class="pill env-${escapeHtml(tag.monerium_env)}">${escapeHtml(tag.monerium_env)}</span></dd>`
+    : '';
   const sigPill = ev.signature_ok
     ? '<span class="pill ok">OK</span>'
     : '<span class="pill bad">FAIL</span>';
@@ -560,6 +608,7 @@ export function renderEventDetailPage(ev: {
 <h1>Event #${ev.id}</h1>
 <dl class="detail-grid">
   <dt>Primljeno</dt><dd>${escapeHtml(receivedAt)}</dd>
+  ${tenantRow}
   <dt>Tip</dt><dd class="mono">${escapeHtml(ev.event_type ?? '—')}</dd>
   <dt>Signature</dt><dd>${sigPill}</dd>
   <dt>Iznos</dt><dd>${escapeHtml(amount)}</dd>
@@ -915,6 +964,8 @@ export function renderIntentsPage(): string {
     <option value="paid">paid</option>
     <option value="expired">expired</option>
   </select>
+  <label for="tenant">Tenant:</label>
+  <select id="tenant"><option value="">Svi</option></select>
   <label for="search">Pretraga:</label>
   <input id="search" placeholder="sid ili 0x adresa…" style="width:14rem" />
   <button type="button" id="refresh">↻ Osvježi</button>
@@ -1029,6 +1080,8 @@ export function renderIntentsPage(): string {
     <thead>
       <tr>
         <th>Stvoreno</th>
+        <th>Tenant</th>
+        <th>Monerium</th>
         <th>Stanje</th>
         <th>Iznos</th>
         <th>SID</th>
@@ -1047,7 +1100,7 @@ ${INTENTS_SCRIPT}`;
 }
 
 const INTENTS_SCRIPT = `<script>
-let state = '', search = '', autoTimer = null;
+let state = '', search = '', tenant = '', autoTimer = null;
 // Snapshot of last-seen state per sid — used to detect transitions
 // (pending → paid, pending → expired) and fire toast notifications.
 // Only populated after the first load to avoid spamming on page open.
@@ -1056,6 +1109,7 @@ const fmtUnix = (u) => u ? new Date(u*1000).toLocaleString('hr-HR', {dateStyle:'
 const esc = (s) => String(s==null?'':s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const short = (s,n=10) => s ? s.slice(0,n)+'…' : '—';
 const eur = (cents) => cents==null ? '—' : (cents/100).toFixed(2)+' EUR';
+${TENANT_JS}
 
 function diffAndToast(items) {
   if (lastSeen === null) return; // first load: skip toast, just establish baseline
@@ -1095,22 +1149,24 @@ function diffAndToast(items) {
 
 async function load() {
   const tbody = document.getElementById('rows');
-  if (lastSeen === null) tbody.innerHTML = '<tr><td colspan="9" class="empty">Učitavam…</td></tr>';
+  if (lastSeen === null) tbody.innerHTML = '<tr><td colspan="11" class="empty">Učitavam…</td></tr>';
   const q = new URLSearchParams();
   if (state) q.set('state', state);
   if (search) {
     if (search.startsWith('0x')) q.set('target_address', search);
     else q.set('sid', search);
   }
+  if (tenant) q.set('tenant', tenant);
   let data;
   try {
     const r = await fetch('/admin/api/intents?'+q.toString(), {credentials:'same-origin'});
     if (!r.ok) throw new Error('HTTP '+r.status);
     data = await r.json();
   } catch (e) {
-    tbody.innerHTML = '<tr><td colspan="9" class="empty">Greška: '+esc(e.message)+'</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="11" class="empty">Greška: '+esc(e.message)+'</td></tr>';
     return;
   }
+  fillTenants(data.tenants);
   // Toast on transitions BEFORE replacing lastSeen.
   diffAndToast(data.items);
   // Rebuild lastSeen for the next diff.
@@ -1119,19 +1175,22 @@ async function load() {
   lastSeen = next;
 
   if (data.items.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="9" class="empty">Nema intentova.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="11" class="empty">Nema intentova.</td></tr>';
     return;
   }
   let html = '';
   for (const it of data.items) {
     const pill = it.state === 'paid' ? 'ok' : it.state === 'expired' ? 'bad' : 'warn';
     const checkoutLink = '<a href="/checkout/'+esc(it.sid)+'" target="_blank" rel="noopener" class="mono">'+esc(it.sid)+'</a>';
-    const targetCell = '<a href="https://gnosisscan.io/address/'+esc(it.target_address)+'" target="_blank" rel="noopener" class="mono dim">'+esc(short(it.target_address,10))+'</a>';
+    const ex = explorer(it.chain);
+    const targetCell = '<a href="'+ex+'/address/'+esc(it.target_address)+'" target="_blank" rel="noopener" class="mono dim">'+esc(short(it.target_address,10))+'</a>';
     const txCell = it.forward_tx_hash
-      ? '<a class="mono" href="https://gnosisscan.io/tx/'+esc(it.forward_tx_hash)+'" target="_blank" rel="noopener">'+esc(short(it.forward_tx_hash,10))+'</a>'
+      ? '<a class="mono" href="'+ex+'/tx/'+esc(it.forward_tx_hash)+'" target="_blank" rel="noopener">'+esc(short(it.forward_tx_hash,10))+'</a>'
       : '<span class="dim">—</span>';
     html += '<tr>'
       + '<td>'+esc(fmtUnix(it.created_at))+'</td>'
+      + '<td>'+tenantCell(it)+'</td>'
+      + '<td>'+envPill(it.monerium_env)+'</td>'
       + '<td><span class="pill '+pill+'">'+esc(it.state)+'</span></td>'
       + '<td class="amount">'+esc(eur(it.amount_cents))+'</td>'
       + '<td>'+checkoutLink+'</td>'
@@ -1150,6 +1209,7 @@ document.getElementById('search').addEventListener('input', e => {
   clearTimeout(window._intSearchTimer);
   window._intSearchTimer = setTimeout(load, 250);
 });
+document.getElementById('tenant').addEventListener('change', e => { tenant = e.target.value; lastSeen = null; load(); });
 document.getElementById('refresh').addEventListener('click', load);
 const autoBtn = document.getElementById('auto');
 function toggleAuto(on) {

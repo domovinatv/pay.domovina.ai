@@ -192,6 +192,10 @@ export interface MoneriumEventRow {
   amount_cents: number | null;
   currency: string | null;
   processing_note: string | null;
+  /// ADR 0017. NULL on rows written before migration 0017 (all ITalk).
+  tenant_id: string | null;
+  /// Migration 0021.
+  sid_resolved?: string | null;
 }
 
 export interface ListEventsFilter {
@@ -200,6 +204,8 @@ export interface ListEventsFilter {
   sid?: string;
   signatureOk?: boolean;
   eventType?: string;
+  /// Tenant filter; NULL tenant_id rows count as the default tenant.
+  tenant?: { sql: string; args: unknown[] };
 }
 
 export async function listMoneriumWebhookEvents(
@@ -219,6 +225,10 @@ export async function listMoneriumWebhookEvents(
   if (filter.eventType) {
     where.push('event_type = ?');
     args.push(filter.eventType);
+  }
+  if (filter.tenant) {
+    where.push(filter.tenant.sql);
+    args.push(...filter.tenant.args);
   }
   const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
   const limit = Math.min(Math.max(filter.limit ?? 25, 1), 200);
