@@ -9,6 +9,10 @@ preuzet iz dokumentacije ili memorije bez provjere u kodu.
 
 Deliverable za Opus 5.5 je **`implementation-plan.md`**. Ovaj INDEX je karta.
 
+> **Nastavak (2026-10-09):** `../2026-10-fable51-r2/` pregledava što je Opus
+> napravio nakon ovog reviewa (ADR 0017/0018/0019 f0, admin prijava, Shopify) i
+> nosi stanje svih P0/P1 odavde (§C u `rail-multi-tenant-stray.md`).
+
 ## Ground checks (izvršeno 2026-10-02, zeleno)
 
 | Provjera | Rezultat |

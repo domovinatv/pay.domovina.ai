@@ -1,5 +1,8 @@
 # Implementacijski plan za Opus 5.5 (Fable 5.1 review, 2026-10-02)
 
+> **2026-10-09:** stanje svakog zadatka odavde + novi nalazi nad Opusovim radom
+> su u `../2026-10-fable51-r2/implementation-plan.md` (P0-1 BW-01 tamo postaje P0-2).
+
 Glavni deliverable. Svaki zadatak je pisan da se može dati Opusu kao
 **samostalan prompt**: što, gdje, kako, test koji dokazuje, i što se ne smije
 dirati. Nalazi po ID-u su u `backend-money-rail.md`, `wallet-crypto-relayer.md`,
