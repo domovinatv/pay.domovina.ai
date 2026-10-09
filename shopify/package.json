@@ -1,0 +1,11 @@
+{
+  "name": "mpt-shopify-app",
+  "private": true,
+  "version": "0.1.0",
+  "scripts": {
+    "shopify": "shopify",
+    "deploy": "./scripts/deploy-app.sh",
+    "dev": "shopify app dev"
+  },
+  "workspaces": ["extensions/*"]
+}

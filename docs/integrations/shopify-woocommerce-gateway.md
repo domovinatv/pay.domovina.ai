@@ -5,6 +5,16 @@ the integration path for MPT (Mint Pay Transfer) as a checkout payment method
 on Shopify and WooCommerce shops. Companion to
 [per-event-safe-rail.md](../product-vision/per-event-safe-rail.md)._
 
+> **Update 2026-10-09:** put B (Tier 1, ručni način plaćanja) je implementiran u
+> [`shopify/`](../../shopify/README.md): worker `mpt-shopify.domovina.ai`, Thank-you i
+> Order status UI extension s nativnim `s-qr-code` te `orderMarkAsPaid` tek na on-chain
+> potvrdu. Ispravci ovog dokumenta: (1) Thank-you i Order status extensioni rade na svim
+> planovima, pa QR ne treba linkati iz teksta uputa; (2) payment app (Tier 2/3) smije
+> koristiti **samo** Payments Apps API, a appovi koji „register transactions through the
+> Shopify API“ mimo checkouta su zabranjeni u App Storeu, pa se put B distribuira kao
+> custom ili unlisted app; (3) Payments Partner program prema dokumentaciji opet prima
+> prijave, uz godišnju naknadu i periodične compliance reviewe.
+
 ## 1. TL;DR
 
 - **Shopify MVP (1–2 days/merchant)**: use Shopify's built-in **Manual

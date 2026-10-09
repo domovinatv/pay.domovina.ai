@@ -1,0 +1,38 @@
+{
+  "pay": {
+    "heading": "Pay with a QR code",
+    "instructions": "Open your banking app (or Revolut), choose scan-to-pay and scan the code. The amount of {{amount}} and the payment reference are pre-filled — just confirm.",
+    "qrLabel": "SEPA payment QR code",
+    "amount": "Amount",
+    "beneficiary": "Beneficiary",
+    "reference": "Payment reference",
+    "referenceWarning": "If you pay manually, enter the payment reference exactly as shown — it is how we match your order.",
+    "openPage": "Open payment page",
+    "autoRefresh": "This updates by itself as soon as the payment arrives."
+  },
+  "received": {
+    "heading": "Payment received",
+    "body": "Your bank has sent the money. Confirmation usually follows within seconds.",
+    "review": "Your bank has sent the money. A first payment from a new account may be reviewed, usually for a few minutes and rarely for a few hours. No need to pay again."
+  },
+  "paid": {
+    "heading": "Paid",
+    "body": "We received {{amount}}. Thank you!"
+  },
+  "underpaid": {
+    "heading": "A smaller amount arrived",
+    "body": "Your payment arrived but is less than the order total. The merchant will contact you."
+  },
+  "rejected": {
+    "heading": "Payment failed",
+    "body": "The payment was rejected and the money is being returned to your account. Contact the merchant to try again."
+  },
+  "expired": {
+    "heading": "This QR code has expired",
+    "body": "The payment window for this order has closed. Contact the merchant if you still want it."
+  },
+  "unavailable": {
+    "heading": "QR payment is not available right now",
+    "body": "We cannot issue a QR code for this order. Contact the merchant for other ways to pay."
+  }
+}
