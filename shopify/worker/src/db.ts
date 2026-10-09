@@ -9,6 +9,7 @@ export async function getShop(env: Env, shop: string): Promise<ShopRow | null> {
 export async function saveInstall(
   env: Env,
   shop: string,
+  clientId: string,
   t: {
     accessEnc: string;
     accessExpiresAt: number | null;
@@ -19,10 +20,11 @@ export async function saveInstall(
 ): Promise<void> {
   const ts = now();
   await env.DB.prepare(
-    `INSERT INTO shops (shop, access_token_enc, access_expires_at, refresh_token_enc, refresh_expires_at,
+    `INSERT INTO shops (shop, client_id, access_token_enc, access_expires_at, refresh_token_enc, refresh_expires_at,
                         scope, installed_at, uninstalled_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)
      ON CONFLICT(shop) DO UPDATE SET
+       client_id = excluded.client_id,
        access_token_enc = excluded.access_token_enc,
        access_expires_at = excluded.access_expires_at,
        refresh_token_enc = excluded.refresh_token_enc,
@@ -31,7 +33,7 @@ export async function saveInstall(
        uninstalled_at = NULL,
        updated_at = excluded.updated_at`,
   )
-    .bind(shop, t.accessEnc, t.accessExpiresAt, t.refreshEnc, t.refreshExpiresAt, t.scope, ts, ts)
+    .bind(shop, clientId, t.accessEnc, t.accessExpiresAt, t.refreshEnc, t.refreshExpiresAt, t.scope, ts, ts)
     .run();
 }
 
@@ -107,19 +109,20 @@ export async function listOrdersToSync(env: Env, limit: number): Promise<OrderRo
   return res.results ?? [];
 }
 
-export async function createOAuthState(env: Env, shop: string): Promise<string> {
+export async function createOAuthState(env: Env, shop: string, clientId: string): Promise<string> {
   const state = crypto.randomUUID();
   await env.DB.batch([
     env.DB.prepare('DELETE FROM oauth_states WHERE created_at < ?').bind(now() - 600),
-    env.DB.prepare('INSERT INTO oauth_states (state, shop, created_at) VALUES (?, ?, ?)').bind(state, shop, now()),
+    env.DB.prepare('INSERT INTO oauth_states (state, shop, client_id, created_at) VALUES (?, ?, ?, ?)').bind(state, shop, clientId, now()),
   ]);
   return state;
 }
 
 /// One-shot: a state is valid once, for the shop it was issued to, for 10 min.
-export async function consumeOAuthState(env: Env, state: string, shop: string): Promise<boolean> {
-  const row = await env.DB.prepare('DELETE FROM oauth_states WHERE state = ? RETURNING shop, created_at')
+/// Returns the client id of the app that started the install, or null.
+export async function consumeOAuthState(env: Env, state: string, shop: string): Promise<string | null> {
+  const row = await env.DB.prepare('DELETE FROM oauth_states WHERE state = ? RETURNING shop, client_id, created_at')
     .bind(state)
-    .first<{ shop: string; created_at: number }>();
-  return !!row && row.shop === shop && row.created_at > now() - 600;
+    .first<{ shop: string; client_id: string; created_at: number }>();
+  return row && row.shop === shop && row.created_at > now() - 600 ? row.client_id : null;
 }

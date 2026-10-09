@@ -1,3 +1,4 @@
+import { type AppCreds, appByClientId, appsForShop } from './apps';
 import { decryptSecret, encryptSecret } from './crypto';
 import { getShop, now, saveInstall } from './db';
 import type { Env } from './types';
@@ -19,14 +20,14 @@ interface TokenResponse {
 
 /// Authorization-code grant. `expiring=1` asks for an expiring offline token
 /// with a refresh token — required for new public apps; harmless otherwise.
-export async function exchangeCode(env: Env, shop: string, code: string): Promise<void> {
+export async function exchangeCode(env: Env, app: AppCreds, shop: string, code: string): Promise<void> {
   const res = await tokenRequest(shop, {
-    client_id: env.SHOPIFY_API_KEY,
-    client_secret: env.SHOPIFY_API_SECRET,
+    client_id: app.clientId,
+    client_secret: app.secret,
     code,
     expiring: '1',
   });
-  await storeTokens(env, shop, res);
+  await storeTokens(env, app.clientId, shop, res);
 }
 
 async function tokenRequest(shop: string, body: Record<string, string>): Promise<TokenResponse> {
@@ -39,9 +40,9 @@ async function tokenRequest(shop: string, body: Record<string, string>): Promise
   return res.json<TokenResponse>();
 }
 
-async function storeTokens(env: Env, shop: string, t: TokenResponse): Promise<void> {
+async function storeTokens(env: Env, clientId: string, shop: string, t: TokenResponse): Promise<void> {
   const ts = now();
-  await saveInstall(env, shop, {
+  await saveInstall(env, shop, clientId, {
     accessEnc: await encryptSecret(env.TOKEN_KEK, t.access_token),
     accessExpiresAt: t.expires_in ? ts + t.expires_in : null,
     refreshEnc: t.refresh_token ? await encryptSecret(env.TOKEN_KEK, t.refresh_token) : null,
@@ -58,13 +59,16 @@ export async function accessToken(env: Env, shop: string): Promise<string> {
     return decryptSecret(env.TOKEN_KEK, row.access_token_enc);
   }
   if (!row.refresh_token_enc) throw new Error('access_token_expired_without_refresh_token');
+  // The refresh token belongs to the app that installed the shop.
+  const app = row.client_id ? await appByClientId(env, row.client_id) : ((await appsForShop(env, shop))[0] ?? null);
+  if (!app) throw new Error('shopify_app_not_registered');
   const refreshed = await tokenRequest(shop, {
-    client_id: env.SHOPIFY_API_KEY,
-    client_secret: env.SHOPIFY_API_SECRET,
+    client_id: app.clientId,
+    client_secret: app.secret,
     grant_type: 'refresh_token',
     refresh_token: await decryptSecret(env.TOKEN_KEK, row.refresh_token_enc),
   });
-  await storeTokens(env, shop, refreshed);
+  await storeTokens(env, app.clientId, shop, refreshed);
   return refreshed.access_token;
 }
 

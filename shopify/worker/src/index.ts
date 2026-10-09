@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
-import { jwtVerify } from 'jose';
+import { decodeJwt, jwtVerify } from 'jose';
 
+import { CLIENT_ID_RE, appByClientId, appServesShop, appsForShop, deleteApp, listApps, matchApp, sharedApp, upsertApp } from './apps';
 import {
   decryptSecret,
   encryptSecret,
@@ -38,11 +39,12 @@ const app = new Hono<{ Bindings: Env }>();
 app.get('/', async (c) => {
   const url = new URL(c.req.url);
   const shop = url.searchParams.get('shop') ?? '';
-  if (!SHOP_RE.test(shop) || !(await verifyShopifyQueryHmac(url.searchParams, c.env.SHOPIFY_API_SECRET))) {
-    return c.html(page('MPT za Shopify', '<p>Instalirajte aplikaciju iz Shopify admina.</p>'));
-  }
+  const signedBy = SHOP_RE.test(shop) ? await installApp(c.env, shop, url.searchParams) : null;
+  if (!signedBy) return c.html(page('MPT za Shopify', '<p>Instalirajte aplikaciju iz Shopify admina.</p>'));
   const row = await getShop(c.env, shop);
-  if (!row?.access_token_enc) return c.redirect(`/auth?${url.searchParams.toString()}`);
+  // Not installed yet, or installed through a different app (e.g. the shared
+  // one before the merchant got their own): run OAuth for the app that opened us.
+  if (!row?.access_token_enc || row.client_id !== signedBy.clientId) return c.redirect(`/auth?${url.searchParams.toString()}`);
   const ready = row.active === 1 && !!row.target_address && !!row.mpt_api_key_enc;
   return c.html(
     page(
@@ -60,11 +62,13 @@ app.get('/auth', async (c) => {
   const shop = url.searchParams.get('shop') ?? '';
   if (!SHOP_RE.test(shop)) return c.text('invalid shop', 400);
   // Shopify's own install redirect is HMAC-signed; refuse unsigned starts so a
-  // third party cannot bounce merchants through our OAuth flow.
-  if (!(await verifyShopifyQueryHmac(url.searchParams, c.env.SHOPIFY_API_SECRET))) return c.text('invalid hmac', 401);
-  const state = await createOAuthState(c.env, shop);
+  // third party cannot bounce merchants through our OAuth flow. The secret that
+  // verifies tells us which of our apps is being installed.
+  const app = await installApp(c.env, shop, url.searchParams);
+  if (!app) return c.text('invalid hmac', 401);
+  const state = await createOAuthState(c.env, shop, app.clientId);
   const authorize = new URL(`https://${shop}/admin/oauth/authorize`);
-  authorize.searchParams.set('client_id', c.env.SHOPIFY_API_KEY);
+  authorize.searchParams.set('client_id', app.clientId);
   authorize.searchParams.set('scope', c.env.SHOPIFY_SCOPES);
   authorize.searchParams.set('redirect_uri', `${c.env.APP_URL}/auth/callback`);
   authorize.searchParams.set('state', state);
@@ -77,22 +81,32 @@ app.get('/auth/callback', async (c) => {
   const code = url.searchParams.get('code') ?? '';
   const state = url.searchParams.get('state') ?? '';
   if (!SHOP_RE.test(shop) || !code) return c.text('invalid callback', 400);
-  if (!(await consumeOAuthState(c.env, state, shop))) return c.text('invalid state', 401);
-  if (!(await verifyShopifyQueryHmac(url.searchParams, c.env.SHOPIFY_API_SECRET))) return c.text('invalid hmac', 401);
-  await exchangeCode(c.env, shop, code);
-  return c.redirect(`https://${shop}/admin/apps/${c.env.SHOPIFY_API_KEY}`);
+  const clientId = await consumeOAuthState(c.env, state, shop);
+  if (!clientId) return c.text('invalid state', 401);
+  const app = await appByClientId(c.env, clientId);
+  if (!app || !appServesShop(app, shop)) return c.text('unknown app', 401);
+  if (!(await verifyShopifyQueryHmac(url.searchParams, app.secret))) return c.text('invalid hmac', 401);
+  await exchangeCode(c.env, app, shop, code);
+  return c.redirect(`https://${shop}/admin/apps/${app.clientId}`);
 });
+
+/// Which of our apps signed this install/admin query for `shop`, if any.
+function installApp(env: Env, shop: string, params: URLSearchParams) {
+  return appsForShop(env, shop).then((apps) => matchApp(apps, (secret) => verifyShopifyQueryHmac(params, secret)));
+}
 
 // ── Shopify webhooks (declared in shopify.app.toml) ─────────────────────────
 
 app.post('/webhooks/shopify', async (c) => {
   const raw = await c.req.text();
-  if (!(await verifyShopifyWebhook(raw, c.req.header('x-shopify-hmac-sha256') ?? null, c.env.SHOPIFY_API_SECRET))) {
-    return c.text('invalid hmac', 401);
-  }
   const topic = c.req.header('x-shopify-topic') ?? '';
   const shop = c.req.header('x-shopify-shop-domain') ?? '';
   if (!SHOP_RE.test(shop)) return c.text('invalid shop', 400);
+  // The shop header is unsigned; it only picks the candidate apps. The HMAC
+  // must verify with the secret of an app that serves this shop.
+  const hmac = c.req.header('x-shopify-hmac-sha256') ?? null;
+  const app = await matchApp(await appsForShop(c.env, shop), (secret) => verifyShopifyWebhook(raw, hmac, secret));
+  if (!app) return c.text('invalid hmac', 401);
   const body = safeJson<Record<string, unknown>>(raw) ?? {};
 
   switch (topic) {
@@ -107,9 +121,13 @@ app.post('/webhooks/shopify', async (c) => {
       }
       break;
     }
-    case 'app/uninstalled':
-      await markUninstalled(c.env, shop);
+    case 'app/uninstalled': {
+      // Only the app that owns the tokens can revoke them; uninstalling the
+      // other one (shared vs. custom) leaves the live install alone.
+      const row = await getShop(c.env, shop);
+      if (row && (row.client_id === null || row.client_id === app.clientId)) await markUninstalled(c.env, shop);
       break;
+    }
     case 'shop/redact':
       await redactShop(c.env, shop);
       break;
@@ -213,17 +231,24 @@ function publicView(row: OrderRow): Record<string, unknown> {
 
 /// Checkout / customer-account session token: HS256 JWT signed with the app
 /// secret, `aud` = client id, `dest` = the shop. Returns the shop domain.
+/// `aud` is read unverified only to pick the app; the signature is then
+/// checked with that app's secret, and a custom app only vouches for its shop.
 async function verifySessionToken(env: Env, header: string | undefined): Promise<string | null> {
   const token = header?.startsWith('Bearer ') ? header.slice(7) : null;
   if (!token) return null;
   try {
-    const { payload } = await jwtVerify(token, new TextEncoder().encode(env.SHOPIFY_API_SECRET), {
+    const aud = decodeJwt(token).aud;
+    const clientId = typeof aud === 'string' ? aud : Array.isArray(aud) && aud.length === 1 ? aud[0] : null;
+    if (!clientId || !CLIENT_ID_RE.test(clientId)) return null;
+    const app = await appByClientId(env, clientId);
+    if (!app) return null;
+    const { payload } = await jwtVerify(token, new TextEncoder().encode(app.secret), {
       algorithms: ['HS256'],
-      audience: env.SHOPIFY_API_KEY,
+      audience: app.clientId,
       clockTolerance: 10,
     });
     const dest = typeof payload.dest === 'string' ? payload.dest.replace(/^https:\/\//, '').replace(/\/$/, '') : '';
-    return SHOP_RE.test(dest) ? dest : null;
+    return SHOP_RE.test(dest) && appServesShop(app, dest) ? dest : null;
   } catch {
     return null;
   }
@@ -238,6 +263,32 @@ app.use('/admin/*', async (c, next) => {
 });
 
 const ADDR_RE = /^0x[0-9a-fA-F]{40}$/;
+
+/// Register (or rotate the secret of) a merchant's custom-distribution app.
+/// Do this BEFORE the merchant opens the install link: the install request is
+/// only accepted once its HMAC verifies with a registered secret.
+app.put('/admin/apps/:client_id', async (c) => {
+  const clientId = c.req.param('client_id');
+  if (!CLIENT_ID_RE.test(clientId)) return c.json({ error: 'invalid_client_id' }, 400);
+  const b = await c.req.json<{ shop?: string; client_secret?: string; label?: string }>();
+  const shop = b.shop?.trim().toLowerCase() ?? '';
+  const secret = b.client_secret?.trim() ?? '';
+  if (!SHOP_RE.test(shop)) return c.json({ error: 'invalid_shop' }, 400);
+  if (secret.length < 16) return c.json({ error: 'invalid_client_secret' }, 400);
+  if (sharedApp(c.env)?.clientId === clientId) return c.json({ error: 'client_id_is_the_shared_app' }, 409);
+  const taken = await c.env.DB.prepare('SELECT client_id FROM apps WHERE shop = ? AND client_id != ?')
+    .bind(shop, clientId)
+    .first<{ client_id: string }>();
+  if (taken) return c.json({ error: 'shop_has_another_app', client_id: taken.client_id }, 409);
+  await upsertApp(c.env, { clientId, shop, secret, label: b.label?.trim() || null });
+  return c.json({ client_id: clientId, shop, label: b.label?.trim() || null });
+});
+
+app.get('/admin/apps', async (c) => c.json({ shared_app: sharedApp(c.env)?.clientId ?? null, apps: await listApps(c.env) }));
+
+app.delete('/admin/apps/:client_id', async (c) =>
+  (await deleteApp(c.env, c.req.param('client_id'))) ? c.json({ deleted: true }) : c.json({ error: 'not_found' }, 404),
+);
 
 app.put('/admin/shops/:shop', async (c) => {
   const shop = c.req.param('shop');
@@ -302,6 +353,7 @@ async function shopView(env: Env, shop: string): Promise<Record<string, unknown>
     .all();
   return {
     shop: row.shop,
+    client_id: row.client_id,
     installed: !!row.access_token_enc,
     uninstalled_at: row.uninstalled_at,
     active: row.active === 1,

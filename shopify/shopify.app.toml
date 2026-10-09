@@ -1,6 +1,9 @@
 # MPT for Shopify — Shopify CLI app config. Deploy with `shopify app deploy`
 # (pushes this config + the UI extension). The backend is shopify/worker,
 # deployed separately with wrangler. See README.md.
+#
+# Also the TEMPLATE for per-merchant custom-distribution apps:
+# scripts/new-merchant-app.sh copies it to shopify.app.<slug>.toml.
 
 client_id = "REPLACE_WITH_CLIENT_ID"
 name = "MPT — plaćanje QR kodom"

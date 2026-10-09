@@ -22,12 +22,15 @@ migrations_dir = "migrations"
 [vars]
 APP_URL = "https://mpt-shopify.domovina.ai"
 MPT_API_BASE = "https://mpt.domovina.ai"
-SHOPIFY_API_KEY = "REPLACE_WITH_CLIENT_ID"
+# Optional shared (unlisted public) app. Leave empty when every merchant has
+# its own custom-distribution app, registered with PUT /admin/apps/<client_id>.
+SHOPIFY_API_KEY = ""
 SHOPIFY_SCOPES = "read_orders,write_orders"
 SHOPIFY_API_VERSION = "2026-07"
 
 # Secrets (wrangler secret put <NAME>):
-#   SHOPIFY_API_SECRET  — app client secret (Partner Dashboard / Dev Dashboard)
+#   SHOPIFY_API_SECRET  — only with SHOPIFY_API_KEY: the shared app's client secret.
+#                         Per-merchant app secrets live in D1 (apps table, encrypted).
 #   TOKEN_KEK           — openssl rand -base64 32   (AES-GCM for D1 secrets)
 #   SID_SECRET          — openssl rand -base64 32   (intent sid derivation; NEVER rotate:
 #                         a new key re-derives different sids for existing orders)

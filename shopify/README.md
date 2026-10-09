@@ -12,9 +12,10 @@ Pozadina i usporedba s pravim payment appom (put A): [docs/integrations/shopify-
 
 | Dio | Što radi |
 |---|---|
-| `shopify.app.toml` | Shopify app konfiguracija: scopes `read_orders,write_orders`, webhookovi `orders/create`, `app/uninstalled` i GDPR |
+| `shopify.app.toml` | Shopify app konfiguracija: scopes `read_orders,write_orders`, webhookovi `orders/create`, `app/uninstalled` i GDPR. Ujedno predložak za appove po trgovcu |
+| `shopify.app.<trgovac>.toml` | Custom-distribution app jednog trgovca, generiran skriptom `scripts/new-merchant-app.sh` |
 | `extensions/mpt-payment-qr/` | Checkout UI extension (Preact, API 2026-07): `purchase.thank-you.block.render` i `customer-account.order-status.block.render`. Prikazuje nativni `s-qr-code`, IBAN i opis plaćanja te status uživo. Za narudžbe koje nisu plaćene MPT-om ne prikazuje ništa |
-| `worker/` | CF Worker `mpt-shopify.domovina.ai`: OAuth instalacija, Shopify i MPT webhookovi, API za extension, operatorski `/admin`, cron svake 2 min. D1 baza `mpt_shopify` |
+| `worker/` | CF Worker `mpt-shopify.domovina.ai`: OAuth instalacija, Shopify i MPT webhookovi, API za extension, operatorski `/admin`, cron svake 2 min. D1 baza `mpt_shopify`. Jedan worker poslužuje sve appove |
 
 Backend (`backend/`) se **ne mijenja**. Worker je običan klijent intent API-ja s
 tenant ključem i prima outbound webhookove tenanta (ADR 0017).
@@ -56,33 +57,67 @@ cron svake 2 minute pita intent API.
 
 Status se uvijek čita iz intent API-ja. Tijelo webhooka je samo okidač.
 
+## Jedan app po trgovcu
+
+Custom distribution veže app za **jednu** trgovinu, i to se ne može poništiti
+(isti model koristi BTCPay Server Shopify v2). Zato svaki trgovac dobiva svoj
+app u Dev Dashboardu, sa svojim client ID-jem i secretom. Kod je isti za sve:
+
+- **Shopify strana**: `shopify.app.<trgovac>.toml` se razlikuje od
+  `shopify.app.toml` samo u `client_id` i `name`. Isti extension (`handle =
+  "mpt-payment-qr"`) deploya se u svaki app s `--config <trgovac>`.
+- **Worker**: tablica `apps` u D1 (client ID → shop + šifrirani secret).
+  Worker prepoznaje app ovako:
+  - install upit i Shopify webhookovi: po secretu čiji HMAC prolazi, među appovima te trgovine;
+  - OAuth callback: po `client_id` spremljenom uz `state`;
+  - session token iz extensiona: po `aud`, a zatim provjera potpisa tim secretom.
+
+  Custom app vrijedi samo za svoju trgovinu. Token s `dest` druge trgovine se odbija.
+- **Dijeljeni app** (`SHOPIFY_API_KEY` / `SHOPIFY_API_SECRET` u workeru) je
+  opcionalan, za unlisted javni app ako ga jednom napravimo. Prazan znači da ga nema.
+- Svaka trgovina pamti `client_id` appa koji ju je instalirao, jer je to app
+  koji drži tokene i radi refresh. `app/uninstalled` drugog appa ne briše te tokene.
+
 ## Jednokratni setup (mi)
 
-1. **Shopify app**: u Dev Dashboardu (Partner račun) napraviti app, ili
-   `cd shopify && npx shopify app config link`. `client_id` upisati u
-   `shopify.app.toml` i u `worker/wrangler.toml` (`SHOPIFY_API_KEY`).
-2. **Worker**:
+1. **Worker**:
    ```bash
    cd shopify/worker && npm install
    npx wrangler d1 create mpt_shopify        # id → wrangler.toml
    npm run db:migrate:prod
-   for s in SHOPIFY_API_SECRET TOKEN_KEK SID_SECRET ADMIN_TOKEN; do npx wrangler secret put $s; done
+   for s in TOKEN_KEK SID_SECRET ADMIN_TOKEN; do npx wrangler secret put $s; done
    npm run deploy
    ```
    `TOKEN_KEK`, `SID_SECRET` i `ADMIN_TOKEN` generirati s `openssl rand -base64 32`.
    **`SID_SECRET` se nikad ne rotira**: novi ključ bi postojećim narudžbama izveo drukčije sidove.
-3. **Konfiguracija i extension**: `cd shopify && npm install && npm run deploy`.
-4. **U Dev Dashboardu zatražiti**:
-   - *Protected customer data access*: potreban za `orders/*` webhookove i čitanje narudžbi. Ne trebaju nam ime, email ni adresa.
-   - *Network access* za UI extension (`network_access = true`).
-5. **Distribucija**: custom distribution po trgovcu ili unlisted. Javno listanje u App Storeu vjerojatno ne bi prošlo review jer pravila zabranjuju appove koji „register transactions through the Shopify API“ mimo payment procesiranja.
+   **Ni `TOKEN_KEK` se ne mijenja bez re-enkripcije**: pod njim su secreti svih appova i tokeni svih trgovina.
+2. `cd shopify && npm install` (Shopify CLI i extension).
+3. **Distribucija**: custom distribution po trgovcu (dolje). Javno listanje u App Storeu vjerojatno ne bi prošlo review jer pravila zabranjuju appove koji „register transactions through the Shopify API“ mimo payment procesiranja.
 
-## Onboarding trgovca (~30 min)
+## Onboarding trgovca (~45 min)
 
+0. **Shopify app trgovca**:
+   1. Dev Dashboard → *Create app* (naziv npr. „MPT — Croatisimo“) → *Distribution* → **Custom distribution** → domena trgovine `<shop>.myshopify.com`. Ovo je nepovratno.
+   2. Kopirati *Client ID* i *Client secret*.
+   3. Generirati config i deployati ga zajedno s extensionom:
+      ```bash
+      cd shopify
+      ./scripts/new-merchant-app.sh croatisimo <client_id> "MPT — Croatisimo"
+      npx shopify app deploy --config croatisimo
+      ```
+      `shopify.app.croatisimo.toml` se commita (client ID nije tajna).
+   4. U Dev Dashboardu za taj app zatražiti *Protected customer data access* (potreban za `orders/*` webhookove i čitanje narudžbi; ime, email i adresa nam ne trebaju) i *Network access* za UI extension.
+   5. Registrirati secret u workeru **prije** instalacije. Bez toga worker odbija install jer ne može provjeriti HMAC:
+      ```bash
+      curl -X PUT https://mpt-shopify.domovina.ai/admin/apps/<client_id> \
+        -H "authorization: Bearer $ADMIN_TOKEN" -H 'content-type: application/json' \
+        -d '{"shop":"<shop>.myshopify.com","client_secret":"<secret>","label":"Croatisimo"}'
+      ```
+      `GET /admin/apps` daje popis (bez secreta). Rotacija secreta je isti `PUT`.
 1. **MPT tenant** (ADR 0017, `/admin` → Tenanti): trgovčev vlastiti Monerium KYB, IBAN, Safe za isplatu na whitelisti.
    - `outbound_webhook_url` = `https://mpt-shopify.domovina.ai/webhooks/mpt`
    - `outbound_webhook_secret` = novi `whsec_…`
-2. Trgovac instalira app (link za custom distribution).
+2. Trgovac instalira app preko install linka iz *Distribution* stranice appa.
 3. Trgovac u **Settings → Payments → Manual payment methods → Create custom payment method**:
    - Naziv: `Plaćanje QR kodom (MPT)`. Mora sadržavati `gateway_match`, zadano `MPT`.
    - Dodatne informacije: „Nakon narudžbe prikazat ćemo vam QR kod. Skenirajte ga u aplikaciji banke i narudžba je plaćena.“
@@ -99,6 +134,7 @@ Status se uvijek čita iz intent API-ja. Tijelo webhooka je samo okidač.
 
 ## Poznata ograničenja (MVP)
 
+- **Svaki novi trgovac traži ručni korak u Dev Dashboardu** (app, distribucija, zahtjevi za pristup). Shopify za to nema API.
 - **Session token ne veže narudžbu.** Svaki kupac iste trgovine s valjanim tokenom može upitati status i QR tuđe narudžbe ako pogodi njezin ID. Vidi iznos, broj narudžbe i QR, ali ne i osobne podatke. Ispravak bi bio vezati narudžbu uz `checkoutToken` ili `sub` iz tokena.
 - **Jedan tenant ima jedan outbound webhook URL.** Tenant koji koristi Shopify ne može istodobno slati evente drugom primatelju (npr. pinka). Cron ionako pokriva sve.
 - **Povrati su ručni** iz Safea trgovca. Refund u Shopifyju ne pokreće povrat novca.

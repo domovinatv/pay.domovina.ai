@@ -1,6 +1,8 @@
 import { createHmac, randomBytes } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 
+import { appServesShop, matchApp, sharedApp } from '../src/apps';
+
 import {
   decryptSecret,
   deriveSid,
@@ -11,7 +13,7 @@ import {
 } from '../src/crypto';
 import { moneyToCents } from '../src/shopify';
 import { classifyIntent, gatewayMatches, nextStatus } from '../src/sync';
-import type { MptIntent } from '../src/types';
+import type { Env, MptIntent } from '../src/types';
 
 const SECRET = 'shpss_test_secret';
 
@@ -143,5 +145,33 @@ describe('nextStatus', () => {
     expect(nextStatus('received', 'expired')).toBe('received');
     expect(nextStatus('expired', 'paid')).toBe('paid');
     expect(nextStatus('pending', 'received')).toBe('received');
+  });
+});
+
+describe('multiple Shopify apps', () => {
+  const custom = { clientId: 'a'.repeat(32), secret: 'shpss_custom', shop: 'a.myshopify.com' };
+  const shared = { clientId: 'b'.repeat(32), secret: 'shpss_shared', shop: null };
+
+  it('picks the app whose secret verifies the webhook', async () => {
+    const body = '{"id":1}';
+    const h = createHmac('sha256', 'shpss_shared').update(body).digest('base64');
+    const check = (secret: string) => verifyShopifyWebhook(body, h, secret);
+    expect((await matchApp([custom, shared], check))?.clientId).toBe(shared.clientId);
+    expect(await matchApp([custom], check)).toBeNull();
+  });
+
+  it('a custom app only vouches for its own shop', () => {
+    expect(appServesShop(custom, 'a.myshopify.com')).toBe(true);
+    expect(appServesShop(custom, 'b.myshopify.com')).toBe(false);
+    expect(appServesShop(shared, 'b.myshopify.com')).toBe(true);
+  });
+
+  it('ignores the wrangler.toml placeholder as a shared app', () => {
+    const env = (key: string | undefined, secret: string | undefined) =>
+      ({ SHOPIFY_API_KEY: key, SHOPIFY_API_SECRET: secret }) as unknown as Env;
+    expect(sharedApp(env('REPLACE_WITH_CLIENT_ID', 's'))).toBeNull();
+    expect(sharedApp(env('', 's'))).toBeNull();
+    expect(sharedApp(env(shared.clientId, undefined))).toBeNull();
+    expect(sharedApp(env(shared.clientId, 'shpss_shared'))?.clientId).toBe(shared.clientId);
   });
 });

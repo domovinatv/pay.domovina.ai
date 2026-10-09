@@ -4,11 +4,13 @@ export interface Env {
   APP_URL: string;
   /// MPT backend origin, e.g. https://mpt.domovina.ai
   MPT_API_BASE: string;
-  SHOPIFY_API_KEY: string; // client id (public)
+  /// Shared (unlisted public) app's client id. Optional: custom-distribution
+  /// apps, one per merchant, are registered in D1 via /admin/apps.
+  SHOPIFY_API_KEY?: string;
   SHOPIFY_SCOPES: string; // "read_orders,write_orders"
   SHOPIFY_API_VERSION: string; // "2026-07"
   // Secrets (wrangler secret put):
-  SHOPIFY_API_SECRET: string; // client secret — OAuth, webhook HMAC, session tokens
+  SHOPIFY_API_SECRET?: string; // shared app's client secret (only with SHOPIFY_API_KEY)
   TOKEN_KEK: string; // base64 of 32 bytes, AES-GCM for D1 secrets
   SID_SECRET: string; // HMAC key for deriveSid
   ADMIN_TOKEN: string; // operator bearer for /admin/*
@@ -16,6 +18,7 @@ export interface Env {
 
 export interface ShopRow {
   shop: string;
+  client_id: string | null;
   access_token_enc: string | null;
   access_expires_at: number | null;
   refresh_token_enc: string | null;

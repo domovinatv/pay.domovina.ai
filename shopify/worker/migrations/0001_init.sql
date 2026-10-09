@@ -1,8 +1,23 @@
--- MPT for Shopify — one row per installed shop, one per order paid by MPT QR.
--- Secrets (*_enc) are AES-GCM ciphertext under TOKEN_KEK, never plaintext.
+-- MPT for Shopify — one row per Shopify app, per installed shop, per order
+-- paid by MPT QR. Secrets (*_enc) are AES-GCM ciphertext under TOKEN_KEK,
+-- never plaintext.
+
+-- Custom-distribution apps: Shopify allows a custom-distribution app on ONE
+-- store, so every merchant gets its own app (own client id + secret) served by
+-- this single worker. A shop without a row here uses the shared app from
+-- SHOPIFY_API_KEY / SHOPIFY_API_SECRET (unlisted public app), if configured.
+CREATE TABLE apps (
+  client_id              TEXT PRIMARY KEY,
+  shop                   TEXT NOT NULL UNIQUE,      -- the one store this app may be installed on
+  client_secret_enc      TEXT NOT NULL,
+  label                  TEXT,                      -- operator note, e.g. merchant name
+  created_at             INTEGER NOT NULL,
+  updated_at             INTEGER NOT NULL
+);
 
 CREATE TABLE shops (
   shop                   TEXT PRIMARY KEY,          -- foo.myshopify.com
+  client_id              TEXT,                      -- app that installed it (owns the tokens)
   access_token_enc       TEXT,
   access_expires_at      INTEGER,                   -- unix; NULL = non-expiring
   refresh_token_enc      TEXT,
@@ -46,5 +61,6 @@ CREATE INDEX orders_open ON orders (status, created_at);
 CREATE TABLE oauth_states (
   state      TEXT PRIMARY KEY,
   shop       TEXT NOT NULL,
+  client_id  TEXT NOT NULL,
   created_at INTEGER NOT NULL
 );
