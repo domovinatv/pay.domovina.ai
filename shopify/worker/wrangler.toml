@@ -38,3 +38,27 @@ SHOPIFY_API_VERSION = "2026-07"
 
 [observability]
 enabled = true
+
+# ── Standalone worker for one merchant (optional) ───────────────────────────
+# Same code, own domain + D1 + secrets, so a breach of one merchant's worker
+# exposes nothing of another. Route/vars/D1/crons are not inherited by envs —
+# repeat them. Put the merchant's app in SHOPIFY_API_KEY/SECRET (the "shared"
+# app of this worker); /admin/apps stays empty. Then:
+#   wrangler d1 create mpt_shopify_<slug>
+#   wrangler d1 migrations apply mpt_shopify_<slug> --remote --env <slug>
+#   wrangler secret put SHOPIFY_API_SECRET|TOKEN_KEK|SID_SECRET|ADMIN_TOKEN --env <slug>
+#   wrangler deploy --env <slug>
+# and on the Shopify side: scripts/new-merchant-app.sh <slug> <client_id>
+#   --worker-url https://mpt-shopify-<slug>.domovina.ai
+#
+# [env.croatisimo]
+# name = "mpt-shopify-croatisimo"
+# routes = [{ pattern = "mpt-shopify-croatisimo.domovina.ai", custom_domain = true }]
+# triggers = { crons = ["*/2 * * * *"] }
+# d1_databases = [{ binding = "DB", database_name = "mpt_shopify_croatisimo", database_id = "…", migrations_dir = "migrations" }]
+# [env.croatisimo.vars]
+# APP_URL = "https://mpt-shopify-croatisimo.domovina.ai"
+# MPT_API_BASE = "https://mpt.domovina.ai"
+# SHOPIFY_API_KEY = "<client id>"
+# SHOPIFY_SCOPES = "read_orders,write_orders"
+# SHOPIFY_API_VERSION = "2026-07"

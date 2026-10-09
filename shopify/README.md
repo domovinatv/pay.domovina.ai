@@ -78,6 +78,30 @@ app u Dev Dashboardu, sa svojim client ID-jem i secretom. Kod je isti za sve:
 - Svaka trgovina pamti `client_id` appa koji ju je instalirao, jer je to app
   koji drži tokene i radi refresh. `app/uninstalled` drugog appa ne briše te tokene.
 
+### Adresa workera je u configu appa
+
+Sve adrese appa (install, OAuth, webhookovi i API koji zove QR extension)
+dolaze iz **`application_url`** u `shopify.app.<trgovac>.toml`.
+Extension ne može čitati config u runtimeu, pa `scripts/deploy-app.sh` prije
+deploya upiše tu adresu u `extensions/mpt-payment-qr/src/config.js`, a nakon
+deploya vrati commitanu vrijednost (zajednički worker). Zato se appovi deployaju
+**samo** preko `./scripts/deploy-app.sh <trgovac>` (ili `npm run deploy -- <trgovac>`),
+nikad izravno sa `shopify app deploy`.
+
+### Zajednički ili standalone worker
+
+| | Zajednički (zadano) | Standalone po trgovcu |
+|---|---|---|
+| Worker | `mpt-shopify.domovina.ai` | `mpt-shopify-<trgovac>.domovina.ai` (`wrangler deploy --env <trgovac>`) |
+| D1, `TOKEN_KEK`, `SID_SECRET`, `ADMIN_TOKEN` | zajednički | vlastiti |
+| App trgovca | redak u `apps` (`PUT /admin/apps`) | `SHOPIFY_API_KEY`/`SECRET` tog workera |
+| Shopify config | `new-merchant-app.sh <trgovac> <client_id>` | isto + `--worker-url https://mpt-shopify-<trgovac>.domovina.ai` |
+| Proboj workera otkriva | tokene i MPT ključeve svih trgovaca | samo tog trgovca |
+
+Novac je odvojen u oba slučaja: svaki trgovac ima vlastiti Monerium račun,
+MPT tenant i Safe s whitelistom, a worker nikad ne drži sredstva. Primjer
+`[env.<trgovac>]` je na dnu `worker/wrangler.toml`.
+
 ## Jednokratni setup (mi)
 
 1. **Worker**:
@@ -102,8 +126,8 @@ app u Dev Dashboardu, sa svojim client ID-jem i secretom. Kod je isti za sve:
    3. Generirati config i deployati ga zajedno s extensionom:
       ```bash
       cd shopify
-      ./scripts/new-merchant-app.sh croatisimo <client_id> "MPT — Croatisimo"
-      npx shopify app deploy --config croatisimo
+      ./scripts/new-merchant-app.sh croatisimo <client_id> --name "MPT — Croatisimo"
+      ./scripts/deploy-app.sh croatisimo
       ```
       `shopify.app.croatisimo.toml` se commita (client ID nije tajna).
    4. U Dev Dashboardu za taj app zatražiti *Protected customer data access* (potreban za `orders/*` webhookove i čitanje narudžbi; ime, email i adresa nam ne trebaju) i *Network access* za UI extension.

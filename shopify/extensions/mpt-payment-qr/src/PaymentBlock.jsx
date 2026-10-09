@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'preact/hooks';
 
-/// Worker that owns the Shopify ↔ MPT mapping (shopify/worker).
-const API = 'https://mpt-shopify.domovina.ai';
+import { API } from './config.js';
+
 const POLL_MS = 5000;
 const OPEN = new Set(['pending', 'received']);
 
