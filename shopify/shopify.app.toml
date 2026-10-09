@@ -1,0 +1,33 @@
+# MPT for Shopify — Shopify CLI app config. Deploy with `shopify app deploy`
+# (pushes this config + the UI extension). The backend is shopify/worker,
+# deployed separately with wrangler. See README.md.
+
+client_id = "REPLACE_WITH_CLIENT_ID"
+name = "MPT — plaćanje QR kodom"
+application_url = "https://mpt-shopify.domovina.ai/"
+embedded = false
+
+[access_scopes]
+scopes = "read_orders,write_orders"
+# The worker installs with the authorization-code grant (no App Bridge /
+# token exchange, because the app is not embedded).
+use_legacy_install_flow = true
+
+[auth]
+redirect_urls = ["https://mpt-shopify.domovina.ai/auth/callback"]
+
+[webhooks]
+api_version = "2026-07"
+
+  [[webhooks.subscriptions]]
+  topics = ["orders/create", "app/uninstalled"]
+  uri = "https://mpt-shopify.domovina.ai/webhooks/shopify"
+
+  # Mandatory GDPR topics.
+  [[webhooks.subscriptions]]
+  compliance_topics = ["customers/data_request", "customers/redact", "shop/redact"]
+  uri = "https://mpt-shopify.domovina.ai/webhooks/shopify"
+
+[build]
+automatically_update_urls_on_dev = false
+include_config_on_deploy = true

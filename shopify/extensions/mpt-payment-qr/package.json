@@ -1,0 +1,11 @@
+{
+  "name": "mpt-payment-qr",
+  "private": true,
+  "version": "0.1.0",
+  "license": "UNLICENSED",
+  "dependencies": {
+    "@preact/signals": "^2.3.1",
+    "@shopify/ui-extensions": "2026.7.4",
+    "preact": "^10.26.0"
+  }
+}

@@ -1,0 +1,22 @@
+api_version = "2026-07"
+
+[[extensions]]
+name = "MPT QR plaćanje"
+handle = "mpt-payment-qr"
+type = "ui_extension"
+
+  # Thank-you page — the buyer sees the QR right after placing the order.
+  [[extensions.targeting]]
+  module = "./src/ThankYou.jsx"
+  target = "purchase.thank-you.block.render"
+
+  # Order status page (new customer accounts) — reached from the order
+  # confirmation email, so a buyer who closed the tab can still pay.
+  [[extensions.targeting]]
+  module = "./src/OrderStatus.jsx"
+  target = "customer-account.order-status.block.render"
+
+  [extensions.capabilities]
+  # fetch() to the MPT worker. Must also be approved for the app in the
+  # Partner / Dev Dashboard (API access requests → network access).
+  network_access = true

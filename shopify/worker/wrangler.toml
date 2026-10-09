@@ -1,0 +1,37 @@
+name = "mpt-shopify"
+main = "src/index.ts"
+compatibility_date = "2025-01-01"
+account_id = "7dc7167b7e2e00923bfa7cd697df14e4"
+
+# Single-level subdomain so Universal SSL covers it (see backend/wrangler.toml).
+# DNS: proxied record on the domovina.ai zone, created on first deploy.
+[[routes]]
+pattern = "mpt-shopify.domovina.ai"
+custom_domain = true
+
+[triggers]
+crons = ["*/2 * * * *"]
+
+# wrangler d1 create mpt_shopify → paste the id here
+[[d1_databases]]
+binding = "DB"
+database_name = "mpt_shopify"
+database_id = "REPLACE_WITH_D1_ID"
+migrations_dir = "migrations"
+
+[vars]
+APP_URL = "https://mpt-shopify.domovina.ai"
+MPT_API_BASE = "https://mpt.domovina.ai"
+SHOPIFY_API_KEY = "REPLACE_WITH_CLIENT_ID"
+SHOPIFY_SCOPES = "read_orders,write_orders"
+SHOPIFY_API_VERSION = "2026-07"
+
+# Secrets (wrangler secret put <NAME>):
+#   SHOPIFY_API_SECRET  — app client secret (Partner Dashboard / Dev Dashboard)
+#   TOKEN_KEK           — openssl rand -base64 32   (AES-GCM for D1 secrets)
+#   SID_SECRET          — openssl rand -base64 32   (intent sid derivation; NEVER rotate:
+#                         a new key re-derives different sids for existing orders)
+#   ADMIN_TOKEN         — openssl rand -base64 32   (operator /admin/* bearer)
+
+[observability]
+enabled = true

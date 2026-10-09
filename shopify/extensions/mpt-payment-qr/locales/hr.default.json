@@ -1,0 +1,38 @@
+{
+  "pay": {
+    "heading": "Platite QR kodom",
+    "instructions": "Otvorite aplikaciju svoje banke (ili Revolut), odaberite plaćanje skeniranjem i skenirajte kod. Iznos od {{amount}} i opis plaćanja već su upisani — samo potvrdite.",
+    "qrLabel": "QR kod za SEPA uplatu",
+    "amount": "Iznos",
+    "beneficiary": "Primatelj",
+    "reference": "Opis plaćanja",
+    "referenceWarning": "Ako plaćate ručno, opis plaćanja upišite točno ovako — po njemu prepoznajemo vašu narudžbu.",
+    "openPage": "Otvori stranicu za plaćanje",
+    "autoRefresh": "Status se osvježava sam čim uplata stigne."
+  },
+  "received": {
+    "heading": "Uplata je zaprimljena",
+    "body": "Vaša banka poslala je novac. Potvrda obično stiže za nekoliko sekundi.",
+    "review": "Vaša banka poslala je novac. Prva uplata s novog računa može se dodatno provjeravati, najčešće nekoliko minuta, a iznimno do nekoliko sati. Ne morate ništa ponavljati."
+  },
+  "paid": {
+    "heading": "Plaćeno",
+    "body": "Primili smo {{amount}}. Hvala!"
+  },
+  "underpaid": {
+    "heading": "Primljen je manji iznos",
+    "body": "Uplata je stigla, ali je manja od iznosa narudžbe. Trgovac će vas kontaktirati."
+  },
+  "rejected": {
+    "heading": "Uplata nije prošla",
+    "body": "Uplata je odbijena i novac se vraća na vaš račun. Javite se trgovcu za novi pokušaj."
+  },
+  "expired": {
+    "heading": "QR kod više ne vrijedi",
+    "body": "Rok za plaćanje ove narudžbe je istekao. Javite se trgovcu ako je i dalje želite."
+  },
+  "unavailable": {
+    "heading": "Plaćanje QR kodom trenutno nije dostupno",
+    "body": "Za ovu narudžbu ne možemo izdati QR kod. Javite se trgovcu za druge načine plaćanja."
+  }
+}
