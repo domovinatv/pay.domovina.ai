@@ -14,6 +14,8 @@ on Shopify and WooCommerce shops. Companion to
 > Shopify API“ mimo checkouta su zabranjeni u App Storeu, pa se put B distribuira kao
 > custom ili unlisted app; (3) Payments Partner program prema dokumentaciji opet prima
 > prijave, uz godišnju naknadu i periodične compliance reviewe.
+> Mergano u main kao PR #67 (`f8b8ef5`), **još nije deployano**. Pregled sličnih appova
+> i plan prvog testa: [§10](#10-sličan-shopify-softver-2026-10-09) i [§11](#11-plan-prvog-testa-2026-10-09).
 
 ## 1. TL;DR
 
@@ -526,3 +528,71 @@ All URLs accessed 2026-05-21.
 
 - [docs/product-vision/per-event-safe-rail.md](../product-vision/per-event-safe-rail.md)
   — the MPT architecture this gateway integrates with.
+
+## 10. Sličan Shopify softver (2026-10-09)
+
+Istraživanje prije i tijekom izrade puta B. Pitanja: tko već radi kripto
+naplatu na Shopifyju, posebno na Solani, i postoji li išta s Monerium EURe.
+
+| App | Lanac / valuta | Model integracije | Napomena |
+|---|---|---|---|
+| Solana Pay for Shopify | USDC na Solani; preko MoonPay Commerce i drugi tokeni, isplata u stablecoinu | odobreni payment app (put A) | izvorno Helio za Solana Foundation, danas MoonPay Commerce; KYB s dokumentima, odobrenje do 48 h |
+| Coinbase Commerce, BitPay | više chainova | odobreni payment app | najinstaliraniji kripto appovi |
+| Shopify USDC | USDC na Baseu (+ EVM L2 od 2026.) | ugrađeno u Shopify Payments (Coinbase + Stripe) | trgovac dobiva fiat ili USDC; nema eura ni Gnosisa |
+| **BTCPay Server Shopify v2** | BTC | **ručni način plaćanja + Thank-you extension** | gotovo isti dizajn kao naš put B |
+| Bitcart, NOWPayments | razno | ručni način + skripta / ručno označavanje | stariji ili polu-ručni obrazac |
+
+Za vrstu integracije Solana Pay i Coinbase Commercea nismo našli Shopify
+dokumentaciju. Zaključak da su payment appovi temelji se samo na tome kako se
+pojavljuju na checkoutu i u Settings → Payments.
+
+**BTCPay v2** potvrđuje naš put B u praksi: Shopify ga tolerira godinama. Iz njega smo preuzeli:
+- custom distribution = **jedan app po trgovini** (nepovratno). Zato worker drži tablicu
+  `apps` i prepoznaje app po HMAC-u, OAuth state-u i `aud` session tokena;
+- ključnu riječ u nazivu ručnog načina plaćanja (kod nas `gateway_match`).
+
+Ideje koje još **nisu** napravljene:
+- povrat preko webhooka `refunds/create`. Kod nas bi povrat mogao ići izravno na
+  `sender_iban` preko Monerium redeema, bez emaila kupcu kakav koristi BTCPay;
+- toleranciju manjka kao postavku trgovca;
+- poništavanje narudžbe i vraćanje zalihe po isteku kao zadanu postavku
+  (kod nas je danas `auto_cancel` opcionalan).
+
+**Monerium EURe na Shopifyju: nismo našli nikoga.** Na Monerium popisu
+partnera nema e-commerce integracija, a gatewayi (CoinGate, BitPay,
+CoinPayments, NOWPayments, Request Network, EukaPay, Due) ne navode ni Gnosis
+ni EURe. Najbliže je Gnosis Pay kartica, ali trgovac tada prima obično plaćanje
+karticom. Shopify App Store pretraga se nije učitala, pa tamo nismo provjerili;
+pitati Moneriuma. Ono po čemu se razlikujemo: SEPA Instant iz bilo koje banke,
+bez walleta, s isplatom u EUR na Safe trgovca.
+
+Izvori: docs.btcpayserver.org/ShopifyV2, commercedocs.solanapay.com,
+hel.io/blog/crypto-payments-for-shopify, shopify.com/enterprise/blog/shopify-usdc-checkout,
+docs.cdp.coinbase.com/commerce/integrations/shopify, monerium.com/partners.
+
+### Zajednički ili standalone worker
+
+Svaki trgovac ima vlastiti Monerium račun i MPT tenant, pa je novac odvojen
+u svakom slučaju. Worker je po defaultu **zajednički** (jedna D1 baza, jedan
+`TOKEN_KEK`). Proboj tog workera otkriva Shopify tokene i MPT ključeve svih
+trgovaca, ali ne omogućuje pomicanje novca. Zaseban worker po trgovcu već je
+podržan (`--worker-url`, `[env.<trgovac>]`). Prelazimo na njega kad ga neki
+trgovac zatraži ugovorno ili kad zbog broja trgovaca rizik postane prevelik.
+Detalji su u `shopify/README.md`.
+
+## 11. Plan prvog testa (2026-10-09)
+
+**Monerium sandbox se ne koristi.** Rail je vezan za produkciju (Gnosis
+mainnet, Safe, Zodiac Roles, stray resolver), pa bi sandbox značio novi lanac
+na Chiadu. Umjesto toga plaćamo pravih 1 € kroz produkciju. Novac ostaje na
+Safeu trgovca, a prva uplata mora doći s IBAN-a koji je Monerium već
+pregledao, inače može čekati ručni pregled od 1 min do 8 h.
+
+1. **Matija:** u Dev Dashboardu napraviti **dev store** (besplatan) i app s custom distribucijom na njega; poslati Client ID i secret.
+2. D1 `mpt_shopify` → id u `shopify/worker/wrangler.toml`, `npm run db:migrate:prod`, secreti `TOKEN_KEK`, `SID_SECRET` i `ADMIN_TOKEN`, `npm run deploy`.
+3. `shopify/scripts/new-merchant-app.sh <slug> <client_id>`, zatim `./scripts/deploy-app.sh <slug>`, `PUT /admin/apps/<client_id>`, i zatražiti protected customer data + network access.
+4. Instalacija u dev store, ručni način „Plaćanje QR kodom (MPT)“, blok u Checkout editoru na Thank-you stranici.
+5. `PUT /admin/shops/<shop>` s MPT ključem i Safeom. **Otvoreno pitanje:** tenant ima samo jedan `outbound_webhook_url`. Ako `italk` preusmjerimo na Shopify worker, prekidamo njegove postojeće primatelje. Zato treba zaseban testni tenant ili oslanjanje samo na cron (svake 2 min).
+6. Narudžba od 1 €. Očekivano: QR na Thank-you stranici, zatim „zaprimljeno“, pa „plaćeno“; u adminu *Paid*, tag `mpt-placeno` i metafield `mpt.tx_url`.
+
+`shopify app dev` prikazuje blok u Checkout editoru i bez ikakve uplate.
