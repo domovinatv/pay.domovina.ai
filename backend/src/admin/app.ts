@@ -19,6 +19,7 @@ import { getTenantRail, isLegacyTenant, legacyRail, type TenantRail } from '../t
 import { defaultTenantId } from '../tenants/whitelist';
 import { writeAudit } from '../tenants/db';
 import { getIntent, isTrustedTarget } from '../intents/db';
+import { getForwardStatus } from '../router/safe';
 import {
   countWallets,
   listPhoneBindingsForCredentials,
@@ -165,6 +166,13 @@ export function mountAdminUi(
     const row = await getForwardById(c.env, id);
     if (!row) return c.json({ error: 'forward_not_found' }, 404);
     if (row.status !== 'failed') return c.json({ error: 'not_failed', status: row.status }, 409);
+    // A `failed` row WITH a tx hash (revert, or dropped from the mempool):
+    // make sure that tx is not mined or pending after all — a second
+    // broadcast would then pay twice. RPC trouble ('unknown') refuses too.
+    if (row.tx_hash) {
+      const st = await getForwardStatus(c.env, row.tx_hash as `0x${string}`, row.tenant_id);
+      if (st !== 'failed' && st !== 'dropped') return c.json({ error: 'tx_still_live', tx_status: st }, 409);
+    }
     const latest = await getForwardByOrder(c.env, row.order_id);
     if (latest && latest.id !== row.id) return c.json({ error: 'superseded', latest_id: latest.id, latest_status: latest.status }, 409);
     const loaded = await loadParkedOrder(c.env, row.order_id);

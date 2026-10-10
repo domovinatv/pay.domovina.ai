@@ -430,3 +430,28 @@ describe('BW-01: amount reconciliation on the paid flip', () => {
     expect(h.paidWebhooks).toHaveLength(1);
   });
 });
+
+describe('BW-16: dropped forwards', () => {
+  it('a forward no node knows, broadcast > 30 min ago → failed + one alert', async () => {
+    const fwd = forwardRow({ created_at: NOW - 3600, updated_at: NOW - 3600 });
+    const h = makeDeps({ statuses: ['dropped'], forwards: [fwd], intents: [intentRow()], orders: [orderRow()] });
+    const alerts: string[] = [];
+    h.deps.alert = async (t) => { alerts.push(t); };
+    const r = await reconcileSubmittedForwards(h.deps, NOW);
+    expect(r.failed).toBe(1);
+    expect(h.forwards.get(1)!.status).toBe('failed');
+    expect(h.forwards.get(1)!.error).toBe('dropped_from_mempool');
+    expect(alerts).toHaveLength(1);
+    expect(h.paidWebhooks).toHaveLength(0);
+  });
+
+  it('a young "dropped" (or still pending) forward is only touched, never failed', async () => {
+    const fwd = forwardRow({ created_at: NOW - 120, updated_at: NOW - 120 });
+    const h = makeDeps({ statuses: ['dropped'], forwards: [fwd], intents: [intentRow()], orders: [orderRow()] });
+    const touched: number[] = [];
+    h.deps.touchForward = async (id) => { touched.push(id); };
+    await reconcileSubmittedForwards(h.deps, NOW);
+    expect(h.forwards.get(1)!.status).toBe('submitted');
+    expect(touched).toEqual([1]);
+  });
+});

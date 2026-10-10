@@ -8,7 +8,8 @@ import {
   listSubmittedForwardsOlderThan,
   updateForward,
 } from '../monerium/db';
-import { getForwardStatus } from '../router/safe';
+import { getForwardStatus, type ForwardTxStatus } from '../router/safe';
+import { sendAlert } from '../alerts';
 import { publishIntentChange } from './stream';
 import { parseCampaignIdFromText, type SenderInfo } from '../monerium/sid';
 import type { PaymentIntentRow } from './db';
@@ -47,7 +48,7 @@ export type SettleableForward = Pick<
 };
 
 export interface ConfirmDeps {
-  getForwardStatus(txHash: Hex, tenantId?: string | null): Promise<'pending' | 'confirmed' | 'failed' | 'unknown'>;
+  getForwardStatus(txHash: Hex, tenantId?: string | null): Promise<ForwardTxStatus>;
   /// Atomic `submitted → confirmed` flip; true only for the caller that won.
   confirmForwardOnce(forwardId: number): Promise<boolean>;
   markForwardFailed(forwardId: number, error: string): Promise<void>;
@@ -100,6 +101,11 @@ export interface ConfirmDeps {
     tenantId: string | null;
   }): Promise<void>;
   listSubmittedForwards(olderThanUnix: number): Promise<MoneriumForwardRow[]>;
+  /// Mark a submitted row as checked now, so the reconcile walks the whole
+  /// backlog oldest-check-first instead of re-checking the same 50 (CT-03).
+  touchForward?(forwardId: number): Promise<void>;
+  /// Operator alert (dropped forward). Optional, fail-soft.
+  alert?(text: string): Promise<void>;
   sleep(ms: number): Promise<void>;
   /// Poke the intent's SSE stream after settlement (ADR 0017). Optional and
   /// fail-soft: the stream's own heartbeat re-read is the backstop.
@@ -121,6 +127,12 @@ export function makeConfirmDeps(env: Env): ConfirmDeps {
     emitPaymentUnderpaid: (intent, sender) => emitPaymentUnderpaidWebhook(env, intent, sender),
     emitCampaignContribution: (args) => emitCampaignContributionWebhook(env, args),
     listSubmittedForwards: (olderThan) => listSubmittedForwardsOlderThan(env, olderThan),
+    touchForward: async (id) => {
+      await env.DB.prepare(`UPDATE monerium_forwards SET updated_at = ? WHERE id = ? AND status = 'submitted'`)
+        .bind(Math.floor(Date.now() / 1000), id)
+        .run();
+    },
+    alert: (text) => sendAlert(env, text),
     sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
     publish: (sid) => publishIntentChange(env, sid),
   };
@@ -134,6 +146,9 @@ export const CONFIRM_POLL_DELAYS_MS = [5_000, 5_000, 5_000, 10_000, 15_000, 15_0
 /// Cron reconcile only touches `submitted` forwards at least this old, so it
 /// doesn't burn RPC calls racing a primary poll that is still running.
 export const RECONCILE_MIN_AGE_SECONDS = 60;
+
+/// A forward broadcast this long ago that no node knows is dropped (BW-16).
+export const DROPPED_AFTER_SECONDS = 30 * 60;
 
 /// Settle a forward whose TX was observed CONFIRMED on-chain. Returns true
 /// when this call won the atomic flip and fired the effects; false when
@@ -249,6 +264,19 @@ export async function reconcileSubmittedForwards(
     } else if (status === 'failed') {
       await deps.markForwardFailed(fwd.id, 'onchain_revert');
       failed++;
+    } else if (status === 'dropped' && fwd.created_at < nowUnix - DROPPED_AFTER_SECONDS) {
+      // BW-16: the tx left every mempool we can see — the EURe never moved.
+      // `failed` makes it retryable from /admin/forwards (the retry re-checks
+      // the hash on-chain first).
+      await deps.markForwardFailed(fwd.id, 'dropped_from_mempool');
+      failed++;
+      await deps.alert?.(
+        `❌ <b>MPT forward ispao iz mempoola</b>\n` +
+          `order: <code>${fwd.order_id}</code> · tx: <code>${fwd.tx_hash}</code>\n` +
+          `EURe je i dalje u Safe-u. /admin/forwards → Pokušaj ponovno.`,
+      ).catch(() => {});
+    } else {
+      await deps.touchForward?.(fwd.id);
     }
   }
   return { checked: rows.length, confirmed, failed };

@@ -6,6 +6,8 @@ import {
   http,
   isAddress,
   nonceManager,
+  TransactionNotFoundError,
+  TransactionReceiptNotFoundError,
   numberToHex,
   pad,
   size,
@@ -229,7 +231,7 @@ export async function getForwardStatus(
   env: Env,
   txHash: Hex,
   tenantId: string | null = null,
-): Promise<'pending' | 'confirmed' | 'failed' | 'unknown'> {
+): Promise<ForwardTxStatus> {
   const rail = !tenantId || isLegacyTenant(env, tenantId) ? legacyRail(env) : await getTenantRail(env, tenantId);
   if (!rail) return 'unknown';
   const client = createPublicClient({ chain: viemChain(rail.signer.chain), transport: http(rail.signer.rpcUrl) });
@@ -237,10 +239,22 @@ export async function getForwardStatus(
     const receipt = await client.getTransactionReceipt({ hash: txHash });
     if (!receipt) return 'pending';
     return receipt.status === 'success' ? 'confirmed' : 'failed';
-  } catch {
-    return 'unknown';
+  } catch (e) {
+    if (!(e instanceof TransactionReceiptNotFoundError)) return 'unknown';
+  }
+  // Not mined. Still known to the node (mempool) → pending; unknown to it
+  // entirely → dropped (BW-16). An RPC error is never "dropped".
+  try {
+    await client.getTransaction({ hash: txHash });
+    return 'pending';
+  } catch (e) {
+    return e instanceof TransactionNotFoundError ? 'dropped' : 'unknown';
   }
 }
+
+/// `dropped`: neither mined nor known to the RPC node. One observation can be
+/// a load-balanced node that never saw it — callers act only on old forwards.
+export type ForwardTxStatus = 'pending' | 'confirmed' | 'failed' | 'unknown' | 'dropped';
 
 /// Encode a Safe MultiSend payload. Format per Safe contracts (single-byte
 /// packed encoding — NOT ABI):

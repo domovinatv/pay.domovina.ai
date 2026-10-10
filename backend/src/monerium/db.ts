@@ -388,7 +388,7 @@ export async function listSubmittedForwardsOlderThan(
   const res = await env.DB.prepare(
     `SELECT * FROM monerium_forwards
       WHERE status = 'submitted' AND tx_hash IS NOT NULL AND updated_at < ?
-      ORDER BY id ASC LIMIT 50`,
+      ORDER BY updated_at ASC LIMIT 50`,
   )
     .bind(olderThanUnix)
     .all<MoneriumForwardRow>();
