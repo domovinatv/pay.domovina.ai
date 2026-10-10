@@ -147,13 +147,26 @@ app.get('/api/hpb/callback', async (c) => {
 
 // ---- Monerium webhook (public, signature-verified) ----
 
+/// A Monerium order event is a few KB. Anything bigger is not Monerium and is
+/// refused before it reaches D1 (MT-04).
+export const MAX_WEBHOOK_BODY_BYTES = 65_536;
+
+async function readWebhookBody(req: Request): Promise<string | null> {
+  const declared = Number(req.headers.get('content-length') ?? '0');
+  if (declared > MAX_WEBHOOK_BODY_BYTES) return null;
+  const text = await req.text();
+  return new TextEncoder().encode(text).length > MAX_WEBHOOK_BODY_BYTES ? null : text;
+}
+
 app.post('/api/monerium/webhook', async (c) => {
   // ITalk (default tenant): env secret, env rail — unchanged since ADR 0016.
   const rail = legacyRail(c.env);
+  const rawBody = await readWebhookBody(c.req.raw);
+  if (rawBody === null) return c.json({ error: 'payload_too_large' }, 413);
   const res = await handleMoneriumWebhook(
     makeWebhookDeps(c.env, rail, c.executionCtx),
     rail,
-    await c.req.text(),
+    rawBody,
     c.req.raw.headers,
   );
   return c.json(res.body, res.status);
@@ -165,7 +178,8 @@ app.post('/api/monerium/webhook', async (c) => {
 app.post('/api/monerium/webhook/t/:tenantId', async (c) => {
   if (!multiTenantEnabled(c.env)) return c.json({ error: 'not_found' }, 404);
   const tenantId = c.req.param('tenantId');
-  const rawBody = await c.req.text();
+  const rawBody = await readWebhookBody(c.req.raw);
+  if (rawBody === null) return c.json({ error: 'payload_too_large' }, 413);
   // The default tenant has exactly one entry point (the legacy URL above).
   const rail = isLegacyTenant(c.env, tenantId) ? null : await getTenantRail(c.env, tenantId);
   if (!rail) {
@@ -173,7 +187,8 @@ app.post('/api/monerium/webhook/t/:tenantId', async (c) => {
       orderId: null,
       eventType: 'unknown_tenant',
       signatureOk: false,
-      payload: rawBody,
+      // Unauthenticated: keep only enough to debug a misconfigured URL.
+      payload: rawBody.slice(0, 1024),
       processingNote: `unknown_tenant: ${tenantId.slice(0, 64)}`,
       tenantId: null,
     });

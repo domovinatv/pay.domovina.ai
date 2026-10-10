@@ -138,6 +138,17 @@ describe('per-tenant webhook — attribution', () => {
     expect(rec.records[0]).toMatchObject({ signatureOk: false, tenantId: 'zupa-a' });
   });
 
+  it('MT-04: an unsigned delivery keeps at most 4 KB of payload and only signature-related headers', async () => {
+    const { deps, rec } = harness();
+    const headers = new Headers({ 'webhook-id': 'x', 'webhook-signature': 'v1,bad', 'webhook-timestamp': '1', 'x-junk': 'y'.repeat(500) });
+    await handleMoneriumWebhook(deps, rail(), 'z'.repeat(20_000), headers);
+    expect(rec.records[0].signatureOk).toBe(false);
+    expect(rec.records[0].payload.length).toBe(4096);
+    const kept = JSON.parse(rec.records[0].headersJson);
+    expect(kept['webhook-id']).toBe('x');
+    expect(kept['x-junk']).toBeUndefined();
+  });
+
   it("rejects ITalk's secret on a tenant URL", async () => {
     const { deps, rec } = harness();
     const d = await delivery(SECRET_ITALK, { type: 'order.updated', data: processedOrder() });

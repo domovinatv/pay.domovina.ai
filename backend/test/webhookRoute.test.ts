@@ -60,6 +60,19 @@ describe('POST /api/monerium/webhook/t/:tenantId', () => {
     expect(sql.some((q) => q.includes('INSERT INTO monerium_webhook_events'))).toBe(true);
   });
 
+  it('MT-04: a body over 64 KB is refused before D1, on both URLs', async () => {
+    for (const path of ['/api/monerium/webhook', '/api/monerium/webhook/t/zupa-a']) {
+      const { db, sql } = fakeDb();
+      const res = await worker.fetch(
+        new Request(`https://mpt.domovina.ai${path}`, { method: 'POST', body: 'x'.repeat(70_000) }),
+        env({ DB: db }),
+        ctx,
+      );
+      expect(res.status).toBe(413);
+      expect(sql).toHaveLength(0);
+    }
+  });
+
   it('does not serve the default tenant on the per-tenant URL', async () => {
     const { db, sql } = fakeDb();
     const res = await post('/api/monerium/webhook/t/italk', env({ DB: db }));

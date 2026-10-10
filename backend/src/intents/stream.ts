@@ -59,6 +59,10 @@ export interface Sink {
 }
 
 /// Fan-out logic, free of Workers APIs (unit-tested directly).
+/// Open streams per sid (MT-09). A checkout has one or two tabs; more is
+/// someone holding connections open.
+export const MAX_SINKS_PER_SID = 8;
+
 export class StreamHub {
   private sinks = new Set<Sink>();
   private lastKey: string | null = null;
@@ -70,9 +74,18 @@ export class StreamHub {
     return this.sinks.size;
   }
 
+  get full(): boolean {
+    return this.sinks.size >= MAX_SINKS_PER_SID;
+  }
+
   /// Opens a stream: retry hint + a fresh snapshot. A terminal snapshot is
   /// sent and the stream closed at once. Returns false when the intent is gone.
   async subscribe(sink: Sink): Promise<boolean> {
+    // Re-checked here: concurrent subscribes can all pass the caller's check.
+    if (this.full) {
+      sink.close();
+      return true;
+    }
     const p = await this.load();
     if (!p) {
       sink.close();
@@ -207,6 +220,12 @@ export class IntentStream {
     }
 
     if (url.pathname === '/subscribe') {
+      if (hub.full) {
+        return new Response(JSON.stringify({ error: 'too_many_streams' }), {
+          status: 429,
+          headers: { 'content-type': 'application/json', 'retry-after': '30' },
+        });
+      }
       const { readable, writable } = new TransformStream<Uint8Array, Uint8Array>();
       const writer = writable.getWriter();
       const enc = new TextEncoder();

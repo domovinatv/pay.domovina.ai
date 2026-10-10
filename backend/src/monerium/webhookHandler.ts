@@ -96,6 +96,10 @@ export function profileMismatch(rail: TenantRail, order: MoneriumOrder | null): 
   return !expected || !order.profile || order.profile !== expected;
 }
 
+/// What survives of a delivery whose signature did not verify (MT-04).
+export const UNSIGNED_PAYLOAD_KEEP = 4096;
+const UNSIGNED_KEPT_HEADERS = /^(webhook-[a-z-]+|user-agent|cf-connecting-ip|content-type|content-length)$/i;
+
 export async function handleMoneriumWebhook(
   deps: WebhookDeps,
   rail: TenantRail,
@@ -114,7 +118,11 @@ export async function handleMoneriumWebhook(
   const sid = extractSessionId(order);
   const amountCents = parseAmountCents(order?.amount);
   const headersObj: Record<string, string> = {};
-  headers.forEach((v, k) => { headersObj[k] = v; });
+  headers.forEach((v, k) => {
+    // An unsigned delivery is anyone's input (MT-04): keep the headers that
+    // explain a signature failure, not arbitrary attacker-chosen ones.
+    if (verify.ok || UNSIGNED_KEPT_HEADERS.test(k)) headersObj[k] = v;
+  });
   const wrongProfile = verify.ok && profileMismatch(rail, order);
   let processingNote: string | null = null;
   if (!verify.ok) processingNote = `signature_invalid: ${verify.reason}`;
@@ -136,7 +144,7 @@ export async function handleMoneriumWebhook(
     orderId: order?.id ?? null,
     eventType,
     signatureOk: verify.ok,
-    payload: rawBody,
+    payload: verify.ok ? rawBody : rawBody.slice(0, UNSIGNED_PAYLOAD_KEEP),
     headersJson: JSON.stringify(headersObj),
     sidExtracted: sid,
     sidResolved,
