@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { changeKey, formatEvent, StreamHub, type Sink, type StreamPayload } from '../src/intents/stream';
+import { changeKey, formatEvent, MAX_SINKS_PER_SID, StreamHub, type Sink, type StreamPayload } from '../src/intents/stream';
 import type { PaymentStage, StageResult } from '../src/intents/stage';
 
 function payload(stage: PaymentStage, over: Partial<StageResult> = {}, state = 'pending'): StreamPayload {
@@ -68,6 +68,17 @@ describe('SSE frames', () => {
 });
 
 describe('StreamHub', () => {
+  it('MT-09: refuses a stream beyond MAX_SINKS_PER_SID', async () => {
+    const { load } = source(payload('awaiting_payment'));
+    const hub = new StreamHub(load);
+    for (let i = 0; i < MAX_SINKS_PER_SID; i++) await hub.subscribe(new FakeSink());
+    expect(hub.full).toBe(true);
+    const extra = new FakeSink();
+    await hub.subscribe(extra);
+    expect(hub.size).toBe(MAX_SINKS_PER_SID);
+    expect(extra.frames).toHaveLength(0);
+  });
+
   it('opens with a retry hint and the current snapshot', async () => {
     const { load } = source(payload('awaiting_payment'));
     const hub = new StreamHub(load);

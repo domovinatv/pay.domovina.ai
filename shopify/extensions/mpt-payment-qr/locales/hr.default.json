@@ -8,7 +8,8 @@
     "reference": "Opis plaćanja",
     "referenceWarning": "Ako plaćate ručno, opis plaćanja upišite točno ovako — po njemu prepoznajemo vašu narudžbu.",
     "openPage": "Otvori stranicu za plaćanje",
-    "autoRefresh": "Status se osvježava sam čim uplata stigne."
+    "autoRefresh": "Status se osvježava sam čim uplata stigne.",
+    "reload": "Osvježite stranicu za najnoviji status uplate."
   },
   "received": {
     "heading": "Uplata je zaprimljena",

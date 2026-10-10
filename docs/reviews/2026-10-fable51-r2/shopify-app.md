@@ -13,6 +13,8 @@ Thank-you/Order-status ekstenzija polla `/ext/order`.
 
 ### SH-01 [SEC-PII] `/ext/order` daje svakom nositelju session tokena trgovine podatke (i QR) o **bilo kojoj** narudžbi te trgovine
 
+> ✅ Napravljeno 2026-10-10 (`08786a1`, grana `fix/fable51-r2-fixes`) — rate-limit po IP-u nije napravljen (worker nema KV)
+
 **Gdje.**
 - `shopify/worker/src/index.ts:184-208` — `verifySessionToken` vraća samo
   `shop`; `order_id` iz query parametra; `ensureIntent(env, shop, orderGid)`
@@ -51,6 +53,8 @@ API — amplifikacija troška.
 
 ### SH-02 [RISK → MONEY-semantika] Iznos intenta zamrznut pri prvom viđenju; kasnije izmjene narudžbe ne utječu na `paid`/`underpaid`
 
+> ✅ Napravljeno 2026-10-10 (`08786a1`, grana `fix/fable51-r2-fixes`)
+
 **Gdje.** `sync.ts:51-66` — `totalOutstandingSet` jednom, u `amount_cents`;
 `sync.ts:90-94` `classifyIntent(intent, row.amount_cents)` uspoređuje s tim
 zamrznutim iznosom; `syncFinalToShopify` (:153-163) `markOrderPaid` ako
@@ -71,6 +75,8 @@ Test: narudžba 120 nakon izmjene, primljeno 100 → `underpaid`.
 ---
 
 ### SH-03 [RISK] `auto_cancel` otkazuje, vraća zalihu i šalje e-mail kupcu na `expired` bez provjere je li novac u međuvremenu krenuo
+
+> ✅ Napravljeno 2026-10-10 (`08786a1`, grana `fix/fable51-r2-fixes`)
 
 **Gdje.** `sync.ts:172-179` — `status === 'expired'` → `cancelOrder(…,
 restock: true, notifyCustomer: true)`. `classifyIntent` (:95-99) `expired`
@@ -96,6 +102,8 @@ trgovini) **i** zadnji `GET` intenta vraća `status.stage === 'expired'`
 
 ### SH-04 [BUG] Tag `mpt-zaprimljeno` se dodaje jednom; ako Admin API padne, nikad se ne ponovi
 
+> ✅ Napravljeno 2026-10-10 (`08786a1`, grana `fix/fable51-r2-fixes`)
+
 **Gdje.** `sync.ts:116-129` — `updateOrder(status='received')` **prije**
 `addOrderTags`; sljedeći prolaz `row.status === 'received'` → preskok.
 `last_error` se upiše, ali nema retryja.
@@ -107,6 +115,8 @@ je idempotentan). Test: prvi `tagsAdd` baca → drugi prolaz ga ponovi.
 ---
 
 ### SH-05 [LOW] AES-GCM bez AAD — šifrati se mogu presaditi među redovima (`shops.mpt_api_key_enc` ↔ `apps.client_secret_enc`)
+
+> ✅ Napravljeno 2026-10-10 (`ecb7065`, grana `fix/fable51-r2-fixes`)
 
 **Gdje.** `crypto.ts:107-121` — `encrypt({ name: 'AES-GCM', iv })` bez
 `additionalData`; backend ima AAD `<tenant>|<field>` (`backend/src/tenants/secrets.ts:67-69`).
@@ -122,6 +132,8 @@ format `v2:` uz `v1` čitanje; migracijski rewrap pri prvom čitanju.
 ---
 
 ### SH-06 [LOW] `/webhooks/mpt` odgovara različito za nepoznat sid prije provjere potpisa
+
+> ✅ Napravljeno 2026-10-10 (`ecb7065`, grana `fix/fable51-r2-fixes`)
 
 **Gdje.** `index.ts:153-166` — `unknown sid` 200 vs `webhook secret not
 configured` 401 vs `invalid signature` 401. Sid je HMAC-izveden (32 hex), pa
@@ -144,6 +156,8 @@ Prije prvog deploya: `wrangler d1 create`, ID u toml, `wrangler secret put` ×4,
 
 ### SH-08 [LOW] Install HMAC bez provjere svježine `timestamp`
 
+> ✅ Napravljeno 2026-10-10 (`ecb7065`, grana `fix/fable51-r2-fixes`)
+
 **Gdje.** `index.ts:93-96` `installApp` → `verifyShopifyQueryHmac` (:43-53) ne
 gleda `timestamp`. Shopify preporuča odbiti potpisane URL-ove starije od ~24 h
 (replay instalacijskog linka). Posljedica je samo ponovno pokretanje OAuth-a (koji
@@ -152,6 +166,8 @@ traži Shopify consent), pa nisko; dodati `|now − timestamp| ≤ 86400`.
 ---
 
 ### SH-09 [LOW] `PUT /admin/apps/:client_id` dopušta tiho premještanje postojećeg appa na drugu trgovinu
+
+> ✅ Napravljeno 2026-10-10 (`ecb7065`, grana `fix/fable51-r2-fixes`)
 
 **Gdje.** `index.ts:271-285` + `apps.ts:72-85` `ON CONFLICT … shop =
 excluded.shop`. Operaterska greška („krivi slug") prebaci A-ov app na B; A-ove
@@ -162,6 +178,8 @@ reda i logirati.
 ---
 
 ### SH-10 [LOW] Ekstenzija: polling bez eksponencijalnog backoffa i bez gornje granice trajanja
+
+> ✅ Napravljeno 2026-10-10 (`ecb7065`, grana `fix/fable51-r2-fixes`)
 
 **Gdje.** `PaymentBlock.jsx:5, 33` — 5 s fiksno dok je `pending`/`received`;
 Order-status stranica može ostati otvorena satima → 720 poziva/h po kupcu,

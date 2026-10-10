@@ -93,7 +93,10 @@ export async function verifyMptWebhook(args: {
 /// guessable `shp_<orderId>` would let anyone enumerate order amounts.
 export async function deriveSid(secret: string, shop: string, orderGid: string): Promise<string> {
   const mac = await hmacSha256(secret, `sid:v1:${shop}:${orderGid}`);
-  return `shp_${bytesToHex(mac).slice(0, 32)}`;
+  // 32 chars total (BW-20): the MPT rail caps sids at 32 so they fit bytes32
+  // on-chain. Not deployed before this change — no open orders carry the
+  // old 36-char form.
+  return `shp_${bytesToHex(mac).slice(0, 28)}`;
 }
 
 /// AES-256-GCM for Shopify access/refresh tokens, MPT tenant keys and webhook
@@ -104,19 +107,32 @@ async function importKek(kekB64: string): Promise<CryptoKey> {
   return crypto.subtle.importKey('raw', raw as BufferSource, 'AES-GCM', false, ['encrypt', 'decrypt']);
 }
 
-export async function encryptSecret(kekB64: string, plaintext: string): Promise<string> {
-  const key = await importKek(kekB64);
-  const iv = crypto.getRandomValues(new Uint8Array(12));
-  const ct = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, enc.encode(plaintext)));
-  return `v1:${bytesToBase64(iv)}:${bytesToBase64(ct)}`;
+/// Where a ciphertext lives — bound in as AES-GCM AAD (SH-05), so a value
+/// copied into another row or column fails to decrypt instead of quietly
+/// handing shop B shop A's MPT key. Same idea as the backend's tenant|field.
+export function secretAad(table: 'apps' | 'shops', key: string, column: string): string {
+  return `${table}|${key}|${column}`;
 }
 
-export async function decryptSecret(kekB64: string, stored: string): Promise<string> {
+/// v2 = with AAD (every new write). v1 (no AAD) stays readable.
+export async function encryptSecret(kekB64: string, plaintext: string, aad: string): Promise<string> {
+  const key = await importKek(kekB64);
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const ct = new Uint8Array(
+    await crypto.subtle.encrypt({ name: 'AES-GCM', iv, additionalData: enc.encode(aad) }, key, enc.encode(plaintext)),
+  );
+  return `v2:${bytesToBase64(iv)}:${bytesToBase64(ct)}`;
+}
+
+export async function decryptSecret(kekB64: string, stored: string, aad: string): Promise<string> {
   const [v, ivB64, ctB64] = stored.split(':');
   const iv = base64ToBytes(ivB64 ?? '');
   const ct = base64ToBytes(ctB64 ?? '');
-  if (v !== 'v1' || !iv || !ct) throw new Error('unsupported ciphertext format');
+  if ((v !== 'v1' && v !== 'v2') || !iv || !ct) throw new Error('unsupported ciphertext format');
   const key = await importKek(kekB64);
-  const pt = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: iv as BufferSource }, key, ct as BufferSource);
+  const params = v === 'v2'
+    ? { name: 'AES-GCM', iv: iv as BufferSource, additionalData: enc.encode(aad) as BufferSource }
+    : { name: 'AES-GCM', iv: iv as BufferSource };
+  const pt = await crypto.subtle.decrypt(params, key, ct as BufferSource);
   return new TextDecoder().decode(pt);
 }

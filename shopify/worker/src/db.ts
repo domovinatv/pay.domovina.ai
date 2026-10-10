@@ -66,22 +66,24 @@ export async function getOrder(env: Env, shop: string, orderGid: string): Promis
 
 export async function insertOrder(
   env: Env,
-  o: Pick<OrderRow, 'sid' | 'shop' | 'order_gid' | 'order_name' | 'amount_cents' | 'intent_json' | 'expires_at'>,
+  o: Pick<OrderRow, 'sid' | 'shop' | 'order_gid' | 'order_name' | 'amount_cents' | 'intent_json' | 'expires_at'>
+    & Pick<OrderRow, 'customer_gid' | 'order_created_at'>,
 ): Promise<void> {
   const ts = now();
   await env.DB.prepare(
     `INSERT OR IGNORE INTO orders (sid, shop, order_gid, order_name, amount_cents, status, intent_json,
-                                   expires_at, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?)`,
+                                   expires_at, created_at, updated_at, customer_gid, order_created_at)
+     VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?)`,
   )
-    .bind(o.sid, o.shop, o.order_gid, o.order_name, o.amount_cents, o.intent_json, o.expires_at, ts, ts)
+    .bind(o.sid, o.shop, o.order_gid, o.order_name, o.amount_cents, o.intent_json, o.expires_at, ts, ts,
+      o.customer_gid ?? null, o.order_created_at ?? null)
     .run();
 }
 
 export async function updateOrder(
   env: Env,
   sid: string,
-  patch: Partial<Pick<OrderRow, 'status' | 'intent_json' | 'paid_at' | 'forward_tx_hash' | 'amount_received_cents' | 'shopify_synced_at' | 'last_error' | 'last_polled_at'>>,
+  patch: Partial<Pick<OrderRow, 'status' | 'intent_json' | 'paid_at' | 'forward_tx_hash' | 'amount_received_cents' | 'shopify_synced_at' | 'last_error' | 'last_polled_at' | 'received_tag_at' | 'customer_gid' | 'order_created_at'>>,
 ): Promise<void> {
   const keys = Object.keys(patch) as (keyof typeof patch)[];
   if (keys.length === 0) return;

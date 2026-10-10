@@ -96,6 +96,10 @@ export async function isKnownPayer(
   env: Env,
   iban: string | null,
   excludeOrderId: string,
+  /// MT-08: Monerium screens per profile, i.e. per tenant — and one tenant
+  /// must not learn that an IBAN paid another. NULL rows = default tenant.
+  tenantId: string,
+  defaultTenantId: string,
 ): Promise<boolean | null> {
   const norm = normalizeIban(iban);
   if (!norm) return null;
@@ -103,9 +107,10 @@ export async function isKnownPayer(
     `SELECT 1 AS hit FROM monerium_orders
       WHERE kind = 'issue' AND state = 'processed' AND id <> ?
         AND REPLACE(UPPER(counterpart_iban), ' ', '') = ?
+        AND COALESCE(tenant_id, ?) = ?
       LIMIT 1`,
   )
-    .bind(excludeOrderId, norm)
+    .bind(excludeOrderId, norm, defaultTenantId, tenantId)
     .first<{ hit: number }>();
   return row !== null;
 }
@@ -113,13 +118,16 @@ export async function isKnownPayer(
 export async function listMoneriumOrders(
   env: Env,
   limit = 100,
+  /// Tenant filter; NULL tenant_id rows count as the default tenant.
+  tenant?: { sql: string; args: unknown[] },
 ): Promise<MoneriumOrderRow[]> {
   const res = await env.DB.prepare(
     `SELECT * FROM monerium_orders
+     ${tenant ? `WHERE ${tenant.sql}` : ''}
      ORDER BY COALESCE(placed_at, '') DESC, updated_at DESC
      LIMIT ?`,
   )
-    .bind(limit)
+    .bind(...(tenant?.args ?? []), limit)
     .all<MoneriumOrderRow>();
   return res.results;
 }
@@ -298,6 +306,8 @@ export async function insertForward(
     error?: string | null;
     /// Tenant whose rail this forward runs on (ADR 0017). NULL = legacy.
     tenantId?: string | null;
+    /// resolved_offrail: which Transfer log in tx_hash this row consumed (0023).
+    txLogIndex?: number | null;
   },
 ): Promise<number> {
   const now = Math.floor(Date.now() / 1000);
@@ -307,8 +317,8 @@ export async function insertForward(
   const res = await env.DB.prepare(
     `INSERT INTO monerium_forwards
        (order_id, target_address, amount_wei, amount_cents, sid, memo_prefix,
-        tx_hash, status, error, attempts, created_at, updated_at, tenant_id)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        tx_hash, status, error, attempts, created_at, updated_at, tenant_id, tx_log_index)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT DO NOTHING`,
   )
     .bind(
@@ -325,6 +335,7 @@ export async function insertForward(
       now,
       now,
       args.tenantId ?? null,
+      args.txLogIndex ?? null,
     )
     .run();
   // 0 = another caller already holds the live forward for this order.
@@ -377,11 +388,21 @@ export async function listSubmittedForwardsOlderThan(
   const res = await env.DB.prepare(
     `SELECT * FROM monerium_forwards
       WHERE status = 'submitted' AND tx_hash IS NOT NULL AND updated_at < ?
-      ORDER BY id ASC LIMIT 50`,
+      ORDER BY updated_at ASC LIMIT 50`,
   )
     .bind(olderThanUnix)
     .all<MoneriumForwardRow>();
   return res.results;
+}
+
+export async function getForwardById(
+  env: Env,
+  id: number,
+): Promise<MoneriumForwardRow | null> {
+  const row = await env.DB.prepare(`SELECT * FROM monerium_forwards WHERE id = ?`)
+    .bind(id)
+    .first<MoneriumForwardRow>();
+  return row ?? null;
 }
 
 export async function getForwardByOrder(
@@ -399,11 +420,18 @@ export async function getForwardByOrder(
 
 export async function listForwards(
   env: Env,
-  filter: { limit?: number; offset?: number; status?: string } = {},
+  filter: {
+    limit?: number;
+    offset?: number;
+    status?: string;
+    /// Tenant filter; NULL tenant_id rows count as the default tenant.
+    tenant?: { sql: string; args: unknown[] };
+  } = {},
 ): Promise<{ items: MoneriumForwardRow[]; total: number }> {
   const where: string[] = [];
   const args: unknown[] = [];
   if (filter.status) { where.push('status = ?'); args.push(filter.status); }
+  if (filter.tenant) { where.push(filter.tenant.sql); args.push(...filter.tenant.args); }
   const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
   const limit = Math.min(Math.max(filter.limit ?? 50, 1), 200);
   const offset = Math.max(filter.offset ?? 0, 0);

@@ -1,4 +1,4 @@
-import { createPublicClient, http, parseAbiItem, type Address, type Hex } from 'viem';
+import { createPublicClient, http, parseAbiItem, toEventSelector, type Address, type Hex } from 'viem';
 import { gnosis, gnosisChiado } from 'viem/chains';
 
 import type { Env } from '../types';
@@ -14,7 +14,14 @@ import { getTenantRail, legacyRail, listRailTenantIds, type TenantRail } from '.
 ///       but not by the rail — the key is being used by someone else
 ///   ⚠️  through the Roles modifier, matching a forward row that never got
 ///       its tx hash written (Worker died between broadcast and update)
-///   ℹ️  any other path, e.g. the human 2/3 owners moving money by hand
+///   🚨  through a Safe module that is not our Roles modifier
+///   ℹ️  owner-signed (the human 2/3 owners moving money by hand), or no Safe
+///       execution event at all
+///
+/// The path is read from the Safe's own execution events in the receipt
+/// (TD-01), not from `tx.to`: a thief with the forwarder key can call the
+/// modifier through any relay/multicall contract, and `tx.to` is then the
+/// relay — but the Safe still emits ExecutionFromModuleSuccess(modifier).
 ///
 /// It cannot PREVENT a theft (the role still allows transfer to anyone, see
 /// ADR 0019); it shortens the time to "revoke the role" from "whenever
@@ -24,6 +31,13 @@ import { getTenantRail, legacyRail, listRailTenantIds, type TenantRail } from '.
 /// cursor does not move, so the next tick rescans the same blocks.
 
 const TRANSFER = parseAbiItem('event Transfer(address indexed from, address indexed to, uint256 value)');
+/// Safe ≥1.3: module path / owner path. Computed, not hardcoded.
+export const EXEC_FROM_MODULE_SUCCESS = toEventSelector('ExecutionFromModuleSuccess(address)');
+export const EXECUTION_SUCCESS = toEventSelector('ExecutionSuccess(bytes32,uint256)');
+/// A forward row without tx hash only explains an outflow while it is young
+/// and still `pending` (TD-03): a months-old `failed` row must not turn a
+/// theft into ⚠️.
+export const UNHASHED_FORWARD_MAX_AGE_SECONDS = 15 * 60;
 
 /// Blocks behind head we do not look at yet. ~60 s on Gnosis: lets the forward
 /// path write its tx hash after broadcast before we judge the transfer.
@@ -31,6 +45,13 @@ export const CONFIRMATION_LAG = 12n;
 /// Upper bound per tick; the cron runs every 2 min (~24 blocks), so this only
 /// matters when catching up after an outage.
 export const MAX_RANGE = 2000n;
+/// TD-04: a public RPC that refuses a wide getLogs gets halved ranges down to
+/// this before the tick gives up.
+export const MIN_RANGE = 100n;
+/// TD-02: cursor this far behind head → "detector is lagging" (~40 min).
+export const LAG_ALERT_BLOCKS = 500n;
+/// Consecutive failed ticks per rail before the "detector is blind" alert.
+export const FAIL_ALERT_TICKS = 3;
 
 export interface Outflow {
   txHash: string;
@@ -42,8 +63,9 @@ export interface Outflow {
 export interface OutflowWatchDeps {
   latestBlock(): Promise<bigint>;
   outgoingTransfers(fromBlock: bigint, toBlock: bigint): Promise<Outflow[]>;
-  /// `to` of the transaction that carried the transfer (lowercase), or null.
-  txTarget(txHash: string): Promise<string | null>;
+  /// How the watched Safe executed in this tx, from its own receipt events:
+  /// modules that ran a transaction (lowercase), and whether owners did.
+  safeExecEvents(txHash: string): Promise<SafeExec>;
   /// A forward row with exactly this tx hash exists (any status).
   isKnownForwardTx(txHash: string): Promise<boolean>;
   /// A forward row to `to` for `amountWei` is still waiting for its tx hash.
@@ -52,6 +74,9 @@ export interface OutflowWatchDeps {
   setCursor(block: bigint): Promise<void>;
   alert(text: string): Promise<void>;
   audit(detail: Record<string, unknown>): Promise<void>;
+  /// True at most once per `ttlSeconds` for `key` (dedup for operational
+  /// alerts). Optional: without it every occurrence alerts.
+  claimOnce?(key: string, ttlSeconds: number): Promise<boolean>;
 }
 
 export interface WatchedSafe {
@@ -60,7 +85,12 @@ export interface WatchedSafe {
   rolesModifier: string;
 }
 
-export type OutflowVerdict = 'known' | 'role_unknown' | 'role_unhashed' | 'other';
+export interface SafeExec {
+  viaModules: string[];
+  viaOwners: boolean;
+}
+
+export type OutflowVerdict = 'known' | 'role_unknown' | 'role_unhashed' | 'module_unknown' | 'other';
 
 export async function watchSafeOutflows(
   deps: OutflowWatchDeps,
@@ -76,9 +106,28 @@ export async function watchSafeOutflows(
   }
   if (head <= cursor) return null;
   const from = cursor + 1n;
-  const to = head - from + 1n > MAX_RANGE ? from + MAX_RANGE - 1n : head;
+  if (head - cursor > LAG_ALERT_BLOCKS && (await claim(deps, `watch:lag:${w.tenantId}`, 6 * 3600))) {
+    await safely(deps.alert(
+      `⚠️ <b>Detektor krađe zaostaje</b>\n` +
+      `tenant: <code>${w.tenantId}</code> · Safe: <code>${w.safe}</code>\n` +
+      `kursor ${cursor}, chain ${head} → ${head - cursor} blokova iza. Izlazi iz Safe-a se još ne gledaju.`,
+    ));
+  }
+  let to = head - from + 1n > MAX_RANGE ? from + MAX_RANGE - 1n : head;
 
-  const outflows = await deps.outgoingTransfers(from, to);
+  // TD-04: shrink the range on RPC refusal instead of stalling forever.
+  let outflows: Outflow[];
+  for (;;) {
+    try {
+      outflows = await deps.outgoingTransfers(from, to);
+      break;
+    } catch (e) {
+      const range = to - from + 1n;
+      if (range <= MIN_RANGE) throw e;
+      const half = range / 2n < MIN_RANGE ? MIN_RANGE : range / 2n;
+      to = from + half - 1n;
+    }
+  }
   let flagged = 0;
   for (const o of outflows) {
     const verdict = await classify(deps, w, o);
@@ -106,10 +155,11 @@ export async function classify(
   o: Outflow,
 ): Promise<OutflowVerdict> {
   if (await deps.isKnownForwardTx(o.txHash)) return 'known';
-  const target = await deps.txTarget(o.txHash);
-  if (target !== null && target === w.rolesModifier.toLowerCase()) {
+  const exec = await deps.safeExecEvents(o.txHash);
+  if (exec.viaModules.includes(w.rolesModifier.toLowerCase())) {
     return (await deps.hasUnhashedForward(o.to, o.value.toString())) ? 'role_unhashed' : 'role_unknown';
   }
+  if (exec.viaModules.length > 0) return 'module_unknown';
   return 'other';
 }
 
@@ -127,6 +177,14 @@ function alertText(w: WatchedSafe, o: Outflow, v: OutflowVerdict): string {
       `(Roles.assignRoles(router, [roleKey], [false])) i rotiraju ROUTER_PRIVATE_KEY.`
     );
   }
+  if (v === 'module_unknown') {
+    return (
+      `🚨 <b>EURe izašao iz MPT Safe-a kroz modul koji nije naš Roles modifier</b>\n` +
+      `${facts}\n` +
+      `Safe ima modul koji ne bi smio imati. Odmah: 2/3 vlasnika provjeravaju ` +
+      `getModulesPaginated i uklanjaju nepoznati modul (disableModule).`
+    );
+  }
   if (v === 'role_unhashed') {
     return (
       `⚠️ <b>Forward je na chainu, ali rail nije zapisao tx hash</b>\n` +
@@ -138,8 +196,18 @@ function alertText(w: WatchedSafe, o: Outflow, v: OutflowVerdict): string {
   return (
     `ℹ️ <b>Izlazni EURe iz MPT Safe-a mimo raila</b>\n` +
     `${facts}\n` +
-    `Nije prošao kroz forwarder rolu (npr. ručni 2/3 transfer vlasnika). Ako ga nitko nije radio — istražiti.`
+    `Nije prošao kroz forwarder rolu ni kroz drugi modul (ručni 2/3 transfer vlasnika ili ` +
+    `transfer bez Safe izvršenja). Ako ga nitko nije radio — istražiti.`
   );
+}
+
+async function claim(deps: OutflowWatchDeps, key: string, ttl: number): Promise<boolean> {
+  if (!deps.claimOnce) return true;
+  try {
+    return await deps.claimOnce(key, ttl);
+  } catch {
+    return true;
+  }
 }
 
 export function formatEure(wei: bigint): string {
@@ -154,6 +222,26 @@ async function safely(p: Promise<unknown>): Promise<void> {
   } catch (e) {
     console.error(`outflow watch side-effect failed: ${(e as Error).message}`);
   }
+}
+
+/// Safe execution events emitted BY `safe` in a receipt. Module address is the
+/// indexed topic of ExecutionFromModuleSuccess.
+export function safeExecFromLogs(
+  logs: ReadonlyArray<{ address: string; topics: ReadonlyArray<string | null> }>,
+  safe: string,
+): SafeExec {
+  const viaModules: string[] = [];
+  let viaOwners = false;
+  for (const l of logs) {
+    if (l.address.toLowerCase() !== safe.toLowerCase()) continue;
+    const t0 = l.topics[0]?.toLowerCase();
+    if (t0 === EXEC_FROM_MODULE_SUCCESS && l.topics[1]) {
+      viaModules.push(`0x${l.topics[1].slice(-40)}`.toLowerCase());
+    } else if (t0 === EXECUTION_SUCCESS) {
+      viaOwners = true;
+    }
+  }
+  return { viaModules, viaOwners };
 }
 
 // ---- wiring ----------------------------------------------------------------
@@ -183,9 +271,9 @@ export function makeOutflowWatchDeps(env: Env, rail: TenantRail): OutflowWatchDe
         value: l.args.value ?? 0n,
       }));
     },
-    txTarget: async (txHash) => {
-      const tx = await client.getTransaction({ hash: txHash as Hex });
-      return tx.to ? tx.to.toLowerCase() : null;
+    safeExecEvents: async (txHash) => {
+      const receipt = await client.getTransactionReceipt({ hash: txHash as Hex });
+      return safeExecFromLogs(receipt.logs, safe);
     },
     isKnownForwardTx: async (txHash) => {
       const row = await env.DB.prepare(
@@ -196,8 +284,13 @@ export function makeOutflowWatchDeps(env: Env, rail: TenantRail): OutflowWatchDe
     hasUnhashedForward: async (to, amountWei) => {
       const row = await env.DB.prepare(
         `SELECT 1 AS hit FROM monerium_forwards
-          WHERE tx_hash IS NULL AND lower(target_address) = ? AND amount_wei = ? LIMIT 1`,
-      ).bind(to.toLowerCase(), amountWei).first<{ hit: number }>();
+          WHERE tx_hash IS NULL AND status = 'pending' AND created_at > ?
+            AND lower(target_address) = ? AND amount_wei = ? LIMIT 1`,
+      ).bind(
+        Math.floor(Date.now() / 1000) - UNHASHED_FORWARD_MAX_AGE_SECONDS,
+        to.toLowerCase(),
+        amountWei,
+      ).first<{ hit: number }>();
       return row !== null;
     },
     getCursor: async () => {
@@ -213,6 +306,7 @@ export function makeOutflowWatchDeps(env: Env, rail: TenantRail): OutflowWatchDe
       ).bind(key, Number(block), Math.floor(Date.now() / 1000)).run();
     },
     alert: (text) => sendAlert(env, text),
+    claimOnce: (k, ttl) => kvClaimOnce(env, k, ttl),
     audit: (detail) => writeAudit(env, {
       tenantId: rail.tenantId,
       action: 'outflow.unexplained',
@@ -223,17 +317,33 @@ export function makeOutflowWatchDeps(env: Env, rail: TenantRail): OutflowWatchDe
   };
 }
 
+async function kvClaimOnce(env: Env, key: string, ttlSeconds: number): Promise<boolean> {
+  if (await env.TOKEN_CACHE.get(key)) return false;
+  await env.TOKEN_CACHE.put(key, '1', { expirationTtl: ttlSeconds });
+  return true;
+}
+
 /// Cron entry: the ITalk rail and every tenant rail, each independently.
-export async function watchAllRailOutflows(env: Env): Promise<number> {
+///
+/// TD-02: the detector lives in the Worker an attacker with deploy rights
+/// controls, so it proves it is alive OUTSIDE Cloudflare: after a tick in
+/// which every rail was read, it pings WATCH_HEARTBEAT_URL (a dead-man
+/// switch such as healthchecks.io that alerts when pings stop). Once an hour
+/// it also leaves an `outflow.tick` audit row. A rail that fails
+/// FAIL_ALERT_TICKS ticks in a row raises "detector is blind".
+export async function watchAllRailOutflows(env: Env, nowMs = Date.now()): Promise<number> {
   const rails: TenantRail[] = [legacyRail(env)];
   for (const id of await listRailTenantIds(env)) {
     const r = await getTenantRail(env, id);
     if (r) rails.push(r);
   }
   let flagged = 0;
+  let allOk = true;
+  const hourly = Math.floor(nowMs / 120_000) % 30 === 0;
   for (const rail of rails) {
     const s = rail.signer;
     if (!s.safe || !s.rolesModifier || !s.eureContract || !s.rpcUrl) continue;
+    const failKey = `watch:fail:${rail.tenantId}`;
     try {
       const r = await watchSafeOutflows(makeOutflowWatchDeps(env, rail), {
         tenantId: rail.tenantId,
@@ -241,8 +351,40 @@ export async function watchAllRailOutflows(env: Env): Promise<number> {
         rolesModifier: s.rolesModifier.toLowerCase(),
       });
       if (r) flagged += r.flagged;
+      await env.TOKEN_CACHE.delete(failKey).catch(() => {});
+      if (hourly && r) {
+        await writeAudit(env, {
+          tenantId: rail.tenantId,
+          action: 'outflow.tick',
+          actor: 'system',
+          detail: JSON.stringify({ from: r.from.toString(), to: r.to.toString(), outflows: r.outflows, flagged: r.flagged }),
+        }).catch(() => {});
+      }
     } catch (e) {
+      allOk = false;
       console.error(`outflow watch ${rail.tenantId} failed: ${(e as Error).message}`);
+      try {
+        const n = Number((await env.TOKEN_CACHE.get(failKey)) ?? '0') + 1;
+        await env.TOKEN_CACHE.put(failKey, String(n), { expirationTtl: 3600 });
+        if (n === FAIL_ALERT_TICKS) {
+          await sendAlert(
+            env,
+            `⚠️ <b>Detektor krađe ne čita chain</b>\n` +
+              `tenant: <code>${rail.tenantId}</code> · ${n} uzastopna neuspjela pokušaja\n` +
+              `greška: <code>${(e as Error).message.slice(0, 200)}</code>\n` +
+              `Dok se ne popravi, izlazi iz Safe-a se ne prate.`,
+          );
+        }
+      } catch (kvErr) {
+        console.error(`outflow watch fail counter: ${(kvErr as Error).message}`);
+      }
+    }
+  }
+  if (allOk && env.WATCH_HEARTBEAT_URL) {
+    try {
+      await fetch(env.WATCH_HEARTBEAT_URL, { method: 'GET' });
+    } catch (e) {
+      console.error(`outflow watch heartbeat: ${(e as Error).message}`);
     }
   }
   return flagged;

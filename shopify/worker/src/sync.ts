@@ -1,4 +1,4 @@
-import { decryptSecret, deriveSid } from './crypto';
+import { decryptSecret, deriveSid, secretAad } from './crypto';
 import { getOrder, getOrderBySid, getShop, insertOrder, now, updateOrder } from './db';
 import { createIntent, getIntent } from './mpt';
 import {
@@ -19,7 +19,48 @@ export const TAGS = {
   rejected: 'mpt-odbijeno',
   expired: 'mpt-isteklo',
   paidAfterCancel: 'mpt-placeno-nakon-otkazivanja',
+  overpaid: 'mpt-preplata',
 } as const;
+
+/// SH-01: a guest's session token proves nothing about WHICH order it may
+/// see, so a guest only gets orders this fresh (the Thank-you page moment).
+export const GUEST_ORDER_WINDOW_S = 2 * 3600;
+/// SH-03 default when the shop row predates migration 0002.
+export const DEFAULT_CANCEL_GRACE_S = 2 * 3600;
+
+/// Pure (SH-01): may the holder of a session token with subject `sub` see
+/// this order's payment QR? A logged-in customer: only their own order. A
+/// guest (no `sub`): only an order created in the last GUEST_ORDER_WINDOW_S.
+export function extOrderAccess(
+  order: { customer_gid: string | null; order_created_at: number | null },
+  sub: string | null,
+  nowTs: number,
+): 'ok' | 'order_not_yours' {
+  if (sub) return order.customer_gid === sub ? 'ok' : 'order_not_yours';
+  return order.order_created_at !== null && order.order_created_at > nowTs - GUEST_ORDER_WINDOW_S
+    ? 'ok'
+    : 'order_not_yours';
+}
+
+/// Owner facts for /ext/order: from our row when we have them, else one Admin
+/// API read (and backfilled into the row, so polling stays cheap).
+export async function extOrderOwner(
+  env: Env,
+  shopDomain: string,
+  orderGid: string,
+): Promise<{ customer_gid: string | null; order_created_at: number | null } | null> {
+  const row = await getOrder(env, shopDomain, orderGid);
+  if (row && row.order_created_at != null) {
+    return { customer_gid: row.customer_gid ?? null, order_created_at: row.order_created_at };
+  }
+  const shop = await getShop(env, shopDomain);
+  if (!isActive(shop)) return null;
+  const order = await fetchOrder(env, shopDomain, orderGid);
+  if (!order) return null;
+  const owner = { customer_gid: order.customer?.id ?? null, order_created_at: isoToUnix(order.createdAt) };
+  if (row) await updateOrder(env, row.sid, owner);
+  return owner;
+}
 
 export type EnsureResult =
   | { kind: 'ok'; order: OrderRow }
@@ -54,7 +95,7 @@ export async function ensureIntent(env: Env, shopDomain: string, orderGid: strin
   if (!cents || cents <= 0) return { kind: 'skip', reason: 'nothing_due' };
 
   const sid = await deriveSid(env.SID_SECRET, shopDomain, orderGid);
-  const apiKey = await decryptSecret(env.TOKEN_KEK, shop.mpt_api_key_enc);
+  const apiKey = await decryptSecret(env.TOKEN_KEK, shop.mpt_api_key_enc, secretAad('shops', shopDomain, 'mpt_api_key'));
   let intent = await createIntent(env, apiKey, {
     sid,
     target_address: shop.target_address,
@@ -76,6 +117,8 @@ export async function ensureIntent(env: Env, shopDomain: string, orderGid: strin
     amount_cents: cents,
     intent_json: JSON.stringify(intent),
     expires_at: isoToUnix(intent.expires_at),
+    customer_gid: order.customer?.id ?? null,
+    order_created_at: isoToUnix(order.createdAt),
   });
   const row = await getOrderBySid(env, sid);
   if (!row) throw new Error('order_row_not_persisted');
@@ -88,9 +131,17 @@ const TERMINAL: ReadonlySet<OrderStatus> = new Set(['paid', 'underpaid', 'reject
 /// Pure: what the intent says about the order right now. Settlement wins over
 /// expiry — a late SEPA payment (`payment.late`) is still money in the Safe.
 export function classifyIntent(intent: MptIntent, amountCents: number): OrderStatus {
+  const got = intent.amount_received_cents;
   if (intent.paid_at) {
-    const got = intent.amount_received_cents;
     return got !== null && got !== undefined && got < amountCents ? 'underpaid' : 'paid';
+  }
+  // BW-01: MPT records an underpayment without paid_at (the intent is not
+  // paid) — settled money, so it wins over expiry like a late payment.
+  if (
+    intent.status?.amount_mismatch === 'under'
+    || (intent.monerium_order_id && got !== null && got !== undefined && got < amountCents)
+  ) {
+    return 'underpaid';
   }
   const stage = intent.status?.stage;
   if (stage === 'rejected') return 'rejected';
@@ -124,8 +175,10 @@ export async function applyIntent(env: Env, row: OrderRow, intent: MptIntent): P
   const updated = { ...row, status, intent_json: JSON.stringify(intent), forward_tx_hash: intent.forward_tx_hash ?? row.forward_tx_hash };
 
   try {
-    if (status === 'received' && row.status !== 'received') {
+    // SH-04: retried on every pass until it lands (tagsAdd is idempotent).
+    if (status === 'received' && !row.received_tag_at) {
       await addOrderTags(env, row.shop, row.order_gid, [TAGS.received]);
+      await updateOrder(env, row.sid, { received_tag_at: now() });
     }
     if (row.status === 'cancelled' && (observed === 'paid' || observed === 'underpaid') && !row.paid_at) {
       await addOrderTags(env, row.shop, row.order_gid, [TAGS.paidAfterCancel]);
@@ -134,9 +187,12 @@ export async function applyIntent(env: Env, row: OrderRow, intent: MptIntent): P
     // Sync once per final status: an `expired` order that later settles
     // (payment.late) changes status and must be synced again as `paid`.
     if (TERMINAL_OR_EXPIRED.has(status) && (row.shopify_synced_at === null || status !== row.status)) {
-      const finalStatus = await syncFinalToShopify(env, updated, intent, status);
-      await updateOrder(env, row.sid, { status: finalStatus, shopify_synced_at: now(), last_error: null });
-      return { ...updated, status: finalStatus, shopify_synced_at: now() };
+      const r = await syncFinalToShopify(env, updated, intent, status);
+      // `done: false` = an auto_cancel still inside its grace period: leave
+      // shopify_synced_at NULL so the cron comes back to it.
+      const synced = r.done ? now() : null;
+      await updateOrder(env, row.sid, { status: r.status, shopify_synced_at: synced, last_error: null });
+      return { ...updated, status: r.status, shopify_synced_at: synced };
     }
   } catch (e) {
     // Leave shopify_synced_at NULL — the cron retries on its next tick.
@@ -147,39 +203,84 @@ export async function applyIntent(env: Env, row: OrderRow, intent: MptIntent): P
 
 const TERMINAL_OR_EXPIRED: ReadonlySet<OrderStatus> = new Set(['paid', 'underpaid', 'rejected', 'expired']);
 
-async function syncFinalToShopify(env: Env, row: OrderRow, intent: MptIntent, status: OrderStatus): Promise<OrderStatus> {
+/// Pure (SH-02): compare what arrived with what the order owes NOW — the
+/// merchant may have edited the order after the QR was issued.
+export function settleAgainstOutstanding(
+  receivedCents: number | null | undefined,
+  outstandingCents: number | null,
+  alreadyPaid: boolean,
+): 'paid' | 'underpaid' | 'overpaid' {
+  if (alreadyPaid || outstandingCents === null || receivedCents == null) return 'paid';
+  if (receivedCents < outstandingCents) return 'underpaid';
+  if (receivedCents > outstandingCents) return 'overpaid';
+  return 'paid';
+}
+
+/// Pure (SH-03): auto_cancel only after the grace period AND once MPT itself
+/// reports the intent's stage as expired — never on `state` alone, which can
+/// lag a payment that is already on its way.
+export function mayAutoCancel(
+  intent: MptIntent,
+  expiresAt: number | null,
+  graceS: number,
+  nowTs: number,
+): boolean {
+  return expiresAt !== null && nowTs > expiresAt + graceS && intent.status?.stage === 'expired';
+}
+
+async function syncFinalToShopify(
+  env: Env,
+  row: OrderRow,
+  intent: MptIntent,
+  status: OrderStatus,
+): Promise<{ status: OrderStatus; done: boolean }> {
   const meta = { sid: row.sid, txHash: intent.forward_tx_hash, receivedCents: intent.amount_received_cents };
   switch (status) {
     case 'paid': {
       const order = await fetchOrder(env, row.shop, row.order_gid);
       if (order?.cancelledAt) {
         await addOrderTags(env, row.shop, row.order_gid, [TAGS.paidAfterCancel]);
-      } else if (order?.canMarkAsPaid) {
-        await markOrderPaid(env, row.shop, row.order_gid);
+      } else {
+        const due = order ? moneyToCents(order.totalOutstandingSet.shopMoney.amount) : null;
+        const verdict = settleAgainstOutstanding(
+          intent.amount_received_cents,
+          due,
+          order?.displayFinancialStatus === 'PAID',
+        );
+        if (verdict === 'underpaid') {
+          // SH-02: the order grew after the QR was issued — never mark paid.
+          await setPaymentMetafields(env, row.shop, row.order_gid, meta);
+          await addOrderTags(env, row.shop, row.order_gid, [TAGS.underpaid]);
+          return { status: 'underpaid', done: true };
+        }
+        if (verdict === 'overpaid') await addOrderTags(env, row.shop, row.order_gid, [TAGS.overpaid]);
+        if (order?.canMarkAsPaid) await markOrderPaid(env, row.shop, row.order_gid);
       }
       await setPaymentMetafields(env, row.shop, row.order_gid, meta);
       await addOrderTags(env, row.shop, row.order_gid, [TAGS.paid]);
-      return 'paid';
+      return { status: 'paid', done: true };
     }
     case 'underpaid':
       // Never mark paid on less money than the order total (review BW-01).
       await setPaymentMetafields(env, row.shop, row.order_gid, meta);
       await addOrderTags(env, row.shop, row.order_gid, [TAGS.underpaid]);
-      return 'underpaid';
+      return { status: 'underpaid', done: true };
     case 'rejected':
       await addOrderTags(env, row.shop, row.order_gid, [TAGS.rejected]);
-      return 'rejected';
+      return { status: 'rejected', done: true };
     case 'expired': {
       const shop = await getShop(env, row.shop);
-      if (shop?.auto_cancel === 1) {
-        await cancelOrder(env, row.shop, row.order_gid, `MPT: QR plaćanje isteklo (sid ${row.sid})`);
-        return 'cancelled';
-      }
       await addOrderTags(env, row.shop, row.order_gid, [TAGS.expired]);
-      return 'expired';
+      if (shop?.auto_cancel === 1) {
+        const grace = shop.cancel_grace_seconds ?? DEFAULT_CANCEL_GRACE_S;
+        if (!mayAutoCancel(intent, row.expires_at, grace, now())) return { status: 'expired', done: false };
+        await cancelOrder(env, row.shop, row.order_gid, `MPT: QR plaćanje isteklo (sid ${row.sid})`);
+        return { status: 'cancelled', done: true };
+      }
+      return { status: 'expired', done: true };
     }
     default:
-      return status;
+      return { status, done: true };
   }
 }
 

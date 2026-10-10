@@ -92,6 +92,7 @@ function makeDeps(opts: {
   const orders = new Map((opts.orders ?? []).map((o) => [o.id, o]));
   const paidWebhooks: Array<{ sid: string; sender: SenderInfo }> = [];
   const lateWebhooks: Array<{ sid: string; orderId: string | null }> = [];
+  const underpaidWebhooks: Array<{ sid: string; received: number | null }> = [];
   const campaignWebhooks: Array<Record<string, unknown>> = [];
   const sleeps: number[] = [];
   let statusCalls = 0;
@@ -124,8 +125,19 @@ function makeDeps(opts: {
     async markIntentPaid(sid, args) {
       const i = intents.get(sid);
       if (!i || i.state !== 'pending') return false;
+      if (args.amountReceivedCents === null || args.amountReceivedCents < i.amount_cents) return false;
       i.state = 'paid';
       i.paid_at = NOW;
+      i.monerium_order_id = args.moneriumOrderId;
+      i.forward_id = args.forwardId;
+      i.forward_tx_hash = args.forwardTxHash;
+      i.amount_received_cents = args.amountReceivedCents;
+      return true;
+    },
+    async markIntentUnderpaid(sid, args) {
+      const i = intents.get(sid);
+      if (!i || i.state !== 'pending' || i.monerium_order_id !== null) return false;
+      if (args.amountReceivedCents !== null && args.amountReceivedCents >= i.amount_cents) return false;
       i.monerium_order_id = args.moneriumOrderId;
       i.forward_id = args.forwardId;
       i.forward_tx_hash = args.forwardTxHash;
@@ -148,6 +160,9 @@ function makeDeps(opts: {
     async emitPaymentLate(intent) {
       lateWebhooks.push({ sid: intent.sid, orderId: intent.monerium_order_id });
     },
+    async emitPaymentUnderpaid(intent) {
+      underpaidWebhooks.push({ sid: intent.sid, received: intent.amount_received_cents });
+    },
     async emitCampaignContribution(args) {
       campaignWebhooks.push(args);
     },
@@ -161,7 +176,7 @@ function makeDeps(opts: {
     },
   };
   return {
-    deps, forwards, intents, paidWebhooks, lateWebhooks, campaignWebhooks, sleeps,
+    deps, forwards, intents, paidWebhooks, lateWebhooks, underpaidWebhooks, campaignWebhooks, sleeps,
     statusCalls: () => statusCalls,
   };
 }
@@ -304,8 +319,22 @@ describe('settleConfirmedForward (single-fire idempotency)', () => {
       forwardTxHash: '0xfwd1',
       targetAddress: '0x2222222222222222222222222222222222222222',
       senderIban: 'HR1210010051863000160',
+      tenantId: null,
     });
     expect(h.paidWebhooks).toHaveLength(0); // no sid → no intent.paid event
+  });
+
+  it('MT-01: cmp contribution carries the forward tenant', async () => {
+    const cmpForward = forwardRow({
+      sid: null,
+      memo_prefix: 'cmp',
+      target_address: '0x2222222222222222222222222222222222222222',
+      tenant_id: 'zupa-x',
+    });
+    const cmpOrder = orderRow({ memo: 'cmp:0x2222222222222222222222222222222222222222?id=camp42' });
+    const h = makeDeps({ forwards: [cmpForward], orders: [cmpOrder] });
+    await settleConfirmedForward(h.deps, cmpForward);
+    expect(h.campaignWebhooks[0]).toMatchObject({ campaignId: 'camp42', tenantId: 'zupa-x' });
   });
 });
 
@@ -363,5 +392,66 @@ describe('reconcileSubmittedForwards (cron backstop)', () => {
     const r = await reconcileSubmittedForwards(h.deps, NOW);
     expect(r.checked).toBe(0);
     expect(h.forwards.get(1)!.status).toBe('submitted');
+  });
+});
+
+describe('BW-01: amount reconciliation on the paid flip', () => {
+  const intent = () => intentRow({ amount_cents: 5000 });
+
+  it('50 asked / 30 received → not paid, payment.underpaid once, intent.paid never', async () => {
+    const fwd = forwardRow({ amount_cents: 3000 });
+    const h = makeDeps({ forwards: [fwd], intents: [intent()], orders: [orderRow({ amount: '30.00' })] });
+    await settleConfirmedForward(h.deps, fwd);
+    // A second settle path (cron / read path) racing: nothing new.
+    h.forwards.get(1)!.status = 'submitted';
+    await settleConfirmedForward(h.deps, h.forwards.get(1)!);
+    const i = h.intents.get('sid123abc')!;
+    expect(i.state).toBe('pending');
+    expect(i.paid_at).toBeNull();
+    expect(i.amount_received_cents).toBe(3000);
+    expect(h.paidWebhooks).toHaveLength(0);
+    expect(h.underpaidWebhooks).toEqual([{ sid: 'sid123abc', received: 3000 }]);
+  });
+
+  it('50/50 → paid', async () => {
+    const fwd = forwardRow({ amount_cents: 5000 });
+    const h = makeDeps({ forwards: [fwd], intents: [intent()], orders: [orderRow()] });
+    await settleConfirmedForward(h.deps, fwd);
+    expect(h.intents.get('sid123abc')!.state).toBe('paid');
+    expect(h.underpaidWebhooks).toHaveLength(0);
+  });
+
+  it('50/70 → paid (overpayment is still paid)', async () => {
+    const fwd = forwardRow({ amount_cents: 7000 });
+    const h = makeDeps({ forwards: [fwd], intents: [intent()], orders: [orderRow()] });
+    await settleConfirmedForward(h.deps, fwd);
+    expect(h.intents.get('sid123abc')!.state).toBe('paid');
+    expect(h.intents.get('sid123abc')!.amount_received_cents).toBe(7000);
+    expect(h.paidWebhooks).toHaveLength(1);
+  });
+});
+
+describe('BW-16: dropped forwards', () => {
+  it('a forward no node knows, broadcast > 30 min ago → failed + one alert', async () => {
+    const fwd = forwardRow({ created_at: NOW - 3600, updated_at: NOW - 3600 });
+    const h = makeDeps({ statuses: ['dropped'], forwards: [fwd], intents: [intentRow()], orders: [orderRow()] });
+    const alerts: string[] = [];
+    h.deps.alert = async (t) => { alerts.push(t); };
+    const r = await reconcileSubmittedForwards(h.deps, NOW);
+    expect(r.failed).toBe(1);
+    expect(h.forwards.get(1)!.status).toBe('failed');
+    expect(h.forwards.get(1)!.error).toBe('dropped_from_mempool');
+    expect(alerts).toHaveLength(1);
+    expect(h.paidWebhooks).toHaveLength(0);
+  });
+
+  it('a young "dropped" (or still pending) forward is only touched, never failed', async () => {
+    const fwd = forwardRow({ created_at: NOW - 120, updated_at: NOW - 120 });
+    const h = makeDeps({ statuses: ['dropped'], forwards: [fwd], intents: [intentRow()], orders: [orderRow()] });
+    const touched: number[] = [];
+    h.deps.touchForward = async (id) => { touched.push(id); };
+    await reconcileSubmittedForwards(h.deps, NOW);
+    expect(h.forwards.get(1)!.status).toBe('submitted');
+    expect(touched).toEqual([1]);
   });
 });

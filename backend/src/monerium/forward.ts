@@ -50,6 +50,8 @@ export interface ForwardDeps {
   insertForward(args: Parameters<typeof insertForward>[1]): Promise<number>;
   updateForward(id: number, patch: Parameters<typeof updateForward>[2]): Promise<void>;
   forward(args: ForwardArgs): Promise<ForwardResult>;
+  /// Wait before the one nonce-collision retry. Defaults to setTimeout.
+  sleep?(ms: number): Promise<void>;
   settleNonRoutedPaid(args: {
     sid: string;
     orderId: string;
@@ -125,13 +127,8 @@ export function makeForwardDeps(env: Env, rail: TenantRail): ForwardDeps {
   };
 }
 
-/// Convert Monerium's decimal-string amount ("12.34") to integer minor units.
-export function parseAmountCents(amount: string | undefined | null): number | null {
-  if (!amount) return null;
-  const n = Number(amount);
-  if (!Number.isFinite(n)) return null;
-  return Math.round(n * 100);
-}
+import { parseAmountCents } from './orderState';
+export { parseAmountCents };
 
 /// EURe has 18 decimals. Split on the decimal point and pad so no float math
 /// touches a money value.
@@ -213,8 +210,18 @@ export async function handleForward(
           .map((c) => `• <code>${c.sid}</code> → <code>${c.target_address}</code> (${c.state})`)
           .join('\n');
     } else {
-      strayNote = 'nema otvorenog/nedavno isteklog intenta s tim iznosom (48 h)';
+      strayNote = res.untrusted
+        ? `nema pouzdanog kandidata; ${res.untrusted} intent(a) s tim iznosom vodi na wallet adresu ` +
+          `koja nije na statičnoj whitelisti — ručno preusmjeriti ako je to prava uplata`
+        : 'nema otvorenog/nedavno isteklog intenta s tim iznosom (48 h)';
     }
+  }
+
+  // BW-23: only EUR issue orders become EURe forwards. Checked before the
+  // gate (whose order of checks stays as it is).
+  if ((order.currency ?? 'eur').toLowerCase() !== 'eur') {
+    await park(deps, { order, routing: memoRouting, amountCents, reason: 'unsupported_currency', tenantId: deps.authorize.railTenantId, note: null });
+    return;
   }
 
   // ---- Single authorisation gate. No forward path bypasses this. ----
@@ -295,14 +302,29 @@ export async function handleForward(
   // From here on the sid is the CLAIMED one — for a resolved stray it may be
   // a later candidate than the one the gate was asked about (same target).
   routing = { ...routing, sid: claimed.sid };
-  const result = await deps.forward({
+  // The other candidates' checkouts may be showing this payment's early
+  // "zaprimljeno" (sid_resolved preview); poke them so they re-read and drop
+  // it now that it belongs to `claimed.sid` (SR-03).
+  for (const other of claimSids ?? []) {
+    if (other !== claimed.sid) await safely(deps.publish?.(other) ?? Promise.resolve());
+  }
+  const forwardArgs: ForwardArgs = {
     target: target as Address,
     amountWei,
     // When PAYMENT_REGISTRY_ADDRESS + MULTISEND_ADDRESS are set, the rail
     // batches `registry.record(...)` alongside the transfer so each forward
     // emits an onchain `Payment` event. Null → legacy single-transfer path.
     sessionId: routing.sid,
-  });
+  };
+  let result = await deps.forward(forwardArgs);
+  // MT-10: two isolates picked the same router nonce. Our tx was NOT
+  // accepted, so one more broadcast (fresh nonce) cannot pay twice. Never on
+  // "already known" — that means the node HAS our tx.
+  if (!result.ok && NONCE_COLLISION_RE.test(result.error ?? '')) {
+    console.warn(`forward ${order.id} nonce collision (${result.error}) — one retry`);
+    await (deps.sleep ?? defaultSleep)(NONCE_RETRY_DELAY_MS);
+    result = await deps.forward(forwardArgs);
+  }
   if (!result.ok) {
     await deps.updateForward(forwardId, {
       status: 'failed',
@@ -520,16 +542,31 @@ async function claimForward(
 
 const LIVE = new Set(['pending', 'submitted', 'confirmed']);
 
+const NONCE_COLLISION_RE = /nonce too low|replacement transaction underpriced/i;
+const NONCE_RETRY_DELAY_MS = 5_000;
+const defaultSleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+
 /// Operator reroute (admin UI): push a PARKED order onto the intent the
 /// operator picked. Refuses when the order already has a live forward. The
 /// pick still goes through `authorizeForward` — the operator chooses among
 /// tenant-authorised intents, never a free address.
-export type RerouteRefusal = 'already_forwarded' | 'resolved_offrail' | 'unknown_sid' | 'not_processed';
+export type RerouteRefusal =
+  | 'already_forwarded'
+  | 'resolved_offrail'
+  | 'unknown_sid'
+  | 'not_processed'
+  /// The picked intent already has its money (paid, late or underpaid) —
+  /// a second transfer onto it would be silent (SR-02).
+  | 'already_settled'
+  /// Order amount ≠ intent amount. Allowed only with `force` + a reason, so
+  /// 1 € can never flip a 500 € intent by two careless clicks (SR-02).
+  | 'amount_mismatch';
 
 export async function checkReroute(
   deps: ForwardDeps,
   order: MoneriumOrder,
   sid: string,
+  opts: { force?: boolean } = {},
 ): Promise<RerouteRefusal | null> {
   if (order.kind !== 'issue' || (order.state ?? order.meta?.state) !== 'processed') {
     return 'not_processed';
@@ -539,7 +576,10 @@ export async function checkReroute(
   // Paid out by hand outside the rail: forwarding again would pay twice, out
   // of whatever other payments happen to be sitting in the Safe.
   if (existing?.status === 'resolved_offrail') return 'resolved_offrail';
-  if (!(await deps.authorize.getIntentBySid(sid))) return 'unknown_sid';
+  const intent = await deps.authorize.getIntentBySid(sid);
+  if (!intent) return 'unknown_sid';
+  if (intent.state === 'paid' || intent.monerium_order_id) return 'already_settled';
+  if (!opts.force && intent.amount_cents !== parseAmountCents(order.amount)) return 'amount_mismatch';
   return null;
 }
 
@@ -547,8 +587,9 @@ export async function rerouteParkedOrder(
   deps: ForwardDeps,
   order: MoneriumOrder,
   sid: string,
+  opts: { force?: boolean } = {},
 ): Promise<'ok' | RerouteRefusal> {
-  const refusal = await checkReroute(deps, order, sid);
+  const refusal = await checkReroute(deps, order, sid, opts);
   if (refusal) return refusal;
   await handleForward(deps, order, { sid });
   return 'ok';

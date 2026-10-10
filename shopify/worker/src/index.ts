@@ -5,6 +5,7 @@ import { CLIENT_ID_RE, appByClientId, appServesShop, appsForShop, deleteApp, lis
 import {
   decryptSecret,
   encryptSecret,
+  secretAad,
   timingSafeEqual,
   verifyMptWebhook,
   verifyShopifyQueryHmac,
@@ -22,7 +23,7 @@ import {
 } from './db';
 import { MptError } from './mpt';
 import { SHOP_RE, exchangeCode, isOrderGid } from './shopify';
-import { ensureIntent, refreshOrder } from './sync';
+import { ensureIntent, extOrderAccess, extOrderOwner, refreshOrder } from './sync';
 import type { Env, MptIntent, OrderRow } from './types';
 
 /// MPT for Shopify — "Path B": the merchant adds a manual payment method, this
@@ -91,7 +92,11 @@ app.get('/auth/callback', async (c) => {
 });
 
 /// Which of our apps signed this install/admin query for `shop`, if any.
+/// SH-08: a signed link older (or newer) than a day is refused — no replaying
+/// an old install URL.
 function installApp(env: Env, shop: string, params: URLSearchParams) {
+  const ts = Number(params.get('timestamp'));
+  if (!Number.isFinite(ts) || Math.abs(now() - ts) > 86_400) return Promise.resolve(null);
   return appsForShop(env, shop).then((apps) => matchApp(apps, (secret) => verifyShopifyQueryHmac(params, secret)));
 }
 
@@ -142,7 +147,7 @@ app.post('/webhooks/shopify', async (c) => {
 
 // ── MPT outbound webhooks (tenant outbound_webhook_url points here) ─────────
 
-const MPT_EVENTS = new Set(['intent.paid', 'payment.late', 'payment.received', 'payment.rejected']);
+const MPT_EVENTS = new Set(['intent.paid', 'payment.late', 'payment.underpaid', 'payment.received', 'payment.rejected']);
 
 app.post('/webhooks/mpt', async (c) => {
   const raw = await c.req.text();
@@ -150,19 +155,23 @@ app.post('/webhooks/mpt', async (c) => {
   if (!payload?.type || !MPT_EVENTS.has(payload.type) || !payload.sid) {
     return c.text('ignored'); // other tenant events (campaigns, forward.blocked) — 2xx so the outbox stops
   }
+  // SH-06: one answer for unknown sid / no secret / bad signature, so the
+  // endpoint is no oracle for which sids exist. The payload is only a
+  // trigger anyway — the cron re-reads every open order.
   const row = await getOrderBySid(c.env, payload.sid);
-  if (!row) return c.text('unknown sid'); // not a Shopify order — 2xx, nothing to retry
-  const shop = await getShop(c.env, row.shop);
-  if (!shop?.mpt_webhook_secret_enc) return c.text('webhook secret not configured', 401);
-  const ok = await verifyMptWebhook({
+  const shop = row ? await getShop(c.env, row.shop) : null;
+  const ok = !!row && !!shop?.mpt_webhook_secret_enc && await verifyMptWebhook({
     id: c.req.header('webhook-id') ?? null,
     timestamp: c.req.header('webhook-timestamp') ?? null,
     signature: c.req.header('webhook-signature') ?? null,
     body: raw,
-    secret: await decryptSecret(c.env.TOKEN_KEK, shop.mpt_webhook_secret_enc),
+    secret: await decryptSecret(c.env.TOKEN_KEK, shop.mpt_webhook_secret_enc, secretAad('shops', row.shop, 'mpt_webhook_secret')),
     nowUnix: now(),
   });
-  if (!ok) return c.text('invalid signature', 401);
+  if (!ok || !row) {
+    if (row) console.warn('webhooks/mpt not verified', row.shop, payload.sid);
+    return c.text('ignored');
+  }
   // The payload is only a trigger: re-read the intent so the order status
   // comes from the authoritative API, never from a webhook body.
   await refreshOrder(c.env, row);
@@ -182,12 +191,19 @@ const CORS = {
 app.options('/ext/*', (c) => c.body(null, 204, CORS));
 
 app.get('/ext/order', async (c) => {
-  const shop = await verifySessionToken(c.env, c.req.header('authorization'));
-  if (!shop) return c.json({ error: 'unauthorized' }, 401, CORS);
+  const session = await verifySessionToken(c.env, c.req.header('authorization'));
+  if (!session) return c.json({ error: 'unauthorized' }, 401, CORS);
+  const { shop, sub } = session;
   const orderGid = c.req.query('order_id') ?? '';
   if (!isOrderGid(orderGid)) return c.json({ error: 'invalid_order_id' }, 400, CORS);
 
   try {
+    // SH-01: a session token is the shop's, not the order's. Before any
+    // intent or QR: is this the token holder's own (or a fresh guest) order?
+    const owner = await extOrderOwner(c.env, shop, orderGid);
+    if (!owner) return c.json({ status: 'not_applicable', reason: 'order_not_found' }, 200, CORS);
+    if (extOrderAccess(owner, sub, now()) !== 'ok') return c.json({ error: 'order_not_yours' }, 403, CORS);
+
     const res = await ensureIntent(c.env, shop, orderGid);
     if (res.kind === 'skip') return c.json({ status: 'not_applicable', reason: res.reason }, 200, CORS);
     let row = res.order;
@@ -230,10 +246,11 @@ function publicView(row: OrderRow): Record<string, unknown> {
 }
 
 /// Checkout / customer-account session token: HS256 JWT signed with the app
-/// secret, `aud` = client id, `dest` = the shop. Returns the shop domain.
+/// secret, `aud` = client id, `dest` = the shop. Returns the shop domain and
+/// `sub` — the customer gid when the buyer is logged in, else null.
 /// `aud` is read unverified only to pick the app; the signature is then
 /// checked with that app's secret, and a custom app only vouches for its shop.
-async function verifySessionToken(env: Env, header: string | undefined): Promise<string | null> {
+async function verifySessionToken(env: Env, header: string | undefined): Promise<{ shop: string; sub: string | null } | null> {
   const token = header?.startsWith('Bearer ') ? header.slice(7) : null;
   if (!token) return null;
   try {
@@ -248,7 +265,9 @@ async function verifySessionToken(env: Env, header: string | undefined): Promise
       clockTolerance: 10,
     });
     const dest = typeof payload.dest === 'string' ? payload.dest.replace(/^https:\/\//, '').replace(/\/$/, '') : '';
-    return SHOP_RE.test(dest) && appServesShop(app, dest) ? dest : null;
+    if (!SHOP_RE.test(dest) || !appServesShop(app, dest)) return null;
+    const sub = typeof payload.sub === 'string' && payload.sub.startsWith('gid://shopify/Customer/') ? payload.sub : null;
+    return { shop: dest, sub };
   } catch {
     return null;
   }
@@ -280,6 +299,13 @@ app.put('/admin/apps/:client_id', async (c) => {
     .bind(shop, clientId)
     .first<{ client_id: string }>();
   if (taken) return c.json({ error: 'shop_has_another_app', client_id: taken.client_id }, 409);
+  // SH-09: moving an existing app to another shop breaks the old shop's
+  // installs (appServesShop) — only on purpose.
+  const current = await c.env.DB.prepare('SELECT shop FROM apps WHERE client_id = ?').bind(clientId).first<{ shop: string | null }>();
+  if (current && current.shop && current.shop !== shop && c.req.query('move') !== '1') {
+    return c.json({ error: 'app_bound_to_other_shop', shop: current.shop, hint: 'PUT …?move=1 to move it' }, 409);
+  }
+  if (current && current.shop !== shop) console.warn('app moved', clientId, current.shop, '→', shop);
   await upsertApp(c.env, { clientId, shop, secret, label: b.label?.trim() || null });
   return c.json({ client_id: clientId, shop, label: b.label?.trim() || null });
 });
@@ -319,8 +345,12 @@ app.put('/admin/shops/:shop', async (c) => {
     args.push(v);
   };
   if (b.active !== undefined) set('active', b.active ? 1 : 0);
-  if (b.mpt_api_key !== undefined) set('mpt_api_key_enc', await encryptSecret(c.env.TOKEN_KEK, b.mpt_api_key.trim()));
-  if (b.mpt_webhook_secret !== undefined) set('mpt_webhook_secret_enc', await encryptSecret(c.env.TOKEN_KEK, b.mpt_webhook_secret.trim()));
+  if (b.mpt_api_key !== undefined) {
+    set('mpt_api_key_enc', await encryptSecret(c.env.TOKEN_KEK, b.mpt_api_key.trim(), secretAad('shops', shop, 'mpt_api_key')));
+  }
+  if (b.mpt_webhook_secret !== undefined) {
+    set('mpt_webhook_secret_enc', await encryptSecret(c.env.TOKEN_KEK, b.mpt_webhook_secret.trim(), secretAad('shops', shop, 'mpt_webhook_secret')));
+  }
   if (b.target_address !== undefined) set('target_address', b.target_address.toLowerCase());
   if (b.gateway_match !== undefined) set('gateway_match', b.gateway_match.trim());
   if (b.intent_ttl_seconds !== undefined) set('intent_ttl_seconds', Math.floor(b.intent_ttl_seconds));

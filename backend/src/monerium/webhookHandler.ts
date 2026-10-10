@@ -12,6 +12,7 @@ import { makeForwardDeps, maybeForward, parseAmountCents, previewStraySid } from
 import { notifyOrderLifecycle } from '../intents/lifecycle';
 import { sendAlert } from '../alerts';
 import type { TenantRail } from '../tenants/rail';
+import { orderState } from './orderState';
 import { publishIntentChange } from '../intents/stream';
 
 /// Inbound Monerium webhook, for ONE tenant's rail (ADR 0017). Extracted from
@@ -96,6 +97,10 @@ export function profileMismatch(rail: TenantRail, order: MoneriumOrder | null): 
   return !expected || !order.profile || order.profile !== expected;
 }
 
+/// What survives of a delivery whose signature did not verify (MT-04).
+export const UNSIGNED_PAYLOAD_KEEP = 4096;
+const UNSIGNED_KEPT_HEADERS = /^(webhook-[a-z-]+|user-agent|cf-connecting-ip|content-type|content-length)$/i;
+
 export async function handleMoneriumWebhook(
   deps: WebhookDeps,
   rail: TenantRail,
@@ -114,7 +119,11 @@ export async function handleMoneriumWebhook(
   const sid = extractSessionId(order);
   const amountCents = parseAmountCents(order?.amount);
   const headersObj: Record<string, string> = {};
-  headers.forEach((v, k) => { headersObj[k] = v; });
+  headers.forEach((v, k) => {
+    // An unsigned delivery is anyone's input (MT-04): keep the headers that
+    // explain a signature failure, not arbitrary attacker-chosen ones.
+    if (verify.ok || UNSIGNED_KEPT_HEADERS.test(k)) headersObj[k] = v;
+  });
   const wrongProfile = verify.ok && profileMismatch(rail, order);
   let processingNote: string | null = null;
   if (!verify.ok) processingNote = `signature_invalid: ${verify.reason}`;
@@ -136,7 +145,7 @@ export async function handleMoneriumWebhook(
     orderId: order?.id ?? null,
     eventType,
     signatureOk: verify.ok,
-    payload: rawBody,
+    payload: verify.ok ? rawBody : rawBody.slice(0, UNSIGNED_PAYLOAD_KEEP),
     headersJson: JSON.stringify(headersObj),
     sidExtracted: sid,
     sidResolved,
@@ -219,11 +228,15 @@ export async function handleMoneriumWebhook(
       // Idempotency: order.updated may fire more than once. The live-forward
       // latch on insertForward (migration 0016) lets exactly one through; a
       // prior `failed` forward is allowed to retry.
+      //
+      // No router key is NOT a reason to skip (MT-02): forwardViaSafe answers
+      // `router_disabled`, so handleForward records a `failed` row and alerts
+      // — instead of a processed order silently sitting in the Safe.
       if (
         order.kind === 'issue'
         && eventType === 'order.updated'
-        && order.state === 'processed'
-        && rail.signer.privateKey
+        // BW-23: same state reading as the reconcile (top-level or meta).
+        && orderState(order) === 'processed'
       ) {
         deps.waitUntil(deps.forward(order));
       }

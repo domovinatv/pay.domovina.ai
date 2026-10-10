@@ -8,7 +8,8 @@
     "reference": "Payment reference",
     "referenceWarning": "If you pay manually, enter the payment reference exactly as shown — it is how we match your order.",
     "openPage": "Open payment page",
-    "autoRefresh": "This updates by itself as soon as the payment arrives."
+    "autoRefresh": "This updates by itself as soon as the payment arrives.",
+    "reload": "Reload the page to see the latest payment status."
   },
   "received": {
     "heading": "Payment received",

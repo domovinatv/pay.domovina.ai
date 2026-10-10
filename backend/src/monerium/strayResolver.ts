@@ -27,13 +27,20 @@ export interface StrayCandidate {
   state: 'pending' | 'expired' | 'paid';
   created_at: number;
   expires_at: number;
+  /// SR-01: destination on the tenant's STATIC whitelist (admin / non-wallet
+  /// seed) or the intent was created with the tenant's secret key. Only
+  /// trusted candidates may catch a stray — anyone can open an intent to a
+  /// self-registered wallet Safe without a key.
+  trusted: boolean;
 }
 
 export type StrayResolution =
   /// All candidates point at one destination. `sids` is the claim order —
   /// the forward takes the first one nobody else has claimed yet.
   | { kind: 'match'; target: string; sids: string[]; ambiguousIntent: boolean }
-  | { kind: 'none' }
+  /// `untrusted`: candidates left out because they were not trusted — the
+  /// operator may still pick one by hand (reroute).
+  | { kind: 'none'; untrusted?: number }
   /// Candidates disagree on where the money should go — park.
   | { kind: 'conflict'; candidates: StrayCandidate[] };
 
@@ -64,8 +71,14 @@ export function resolveStray(
   candidates: StrayCandidate[],
   placedAtUnix: number,
 ): StrayResolution {
-  const live = candidates.filter((c) => c.state === 'pending' || c.state === 'expired');
-  if (live.length === 0) return { kind: 'none' };
+  const unsettled = candidates.filter((c) => c.state === 'pending' || c.state === 'expired');
+  // SR-01: untrusted candidates take part in neither tier — they can neither
+  // catch the money nor force a conflict.
+  const live = unsettled.filter((c) => c.trusted);
+  if (live.length === 0) {
+    const untrusted = unsettled.length;
+    return untrusted > 0 ? { kind: 'none', untrusted } : { kind: 'none' };
+  }
 
   const open = live.filter((c) => c.expires_at >= placedAtUnix);
   const tier = open.length > 0 ? open : live;

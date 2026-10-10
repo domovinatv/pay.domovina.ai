@@ -189,11 +189,18 @@ export class MoneriumClient {
         ...(args.secret ? { secret: args.secret } : {}),
       }),
     });
-    // Workaround: POST silently dropped our types. PATCH to apply them.
-    return this.call<MoneriumWebhookSubscription>(`/webhooks/${created.id}`, {
-      method: 'PATCH',
-      body: JSON.stringify({ types }),
-    });
+    // Workaround: POST silently dropped our types. PATCH to apply them. If
+    // the PATCH fails the subscription still EXISTS — return it flagged, so
+    // the caller stores its id (MT-05) instead of losing track of it.
+    try {
+      return await this.call<MoneriumWebhookSubscription>(`/webhooks/${created.id}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ types }),
+      });
+    } catch (e) {
+      console.error(`monerium webhook ${created.id}: PATCH types failed: ${(e as Error).message}`);
+      return { ...created, typesApplied: false };
+    }
   }
 
   /// Disables a webhook subscription (no DELETE endpoint exists).

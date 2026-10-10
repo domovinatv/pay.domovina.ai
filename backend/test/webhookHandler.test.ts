@@ -138,6 +138,17 @@ describe('per-tenant webhook — attribution', () => {
     expect(rec.records[0]).toMatchObject({ signatureOk: false, tenantId: 'zupa-a' });
   });
 
+  it('MT-04: an unsigned delivery keeps at most 4 KB of payload and only signature-related headers', async () => {
+    const { deps, rec } = harness();
+    const headers = new Headers({ 'webhook-id': 'x', 'webhook-signature': 'v1,bad', 'webhook-timestamp': '1', 'x-junk': 'y'.repeat(500) });
+    await handleMoneriumWebhook(deps, rail(), 'z'.repeat(20_000), headers);
+    expect(rec.records[0].signatureOk).toBe(false);
+    expect(rec.records[0].payload.length).toBe(4096);
+    const kept = JSON.parse(rec.records[0].headersJson);
+    expect(kept['webhook-id']).toBe('x');
+    expect(kept['x-junk']).toBeUndefined();
+  });
+
   it("rejects ITalk's secret on a tenant URL", async () => {
     const { deps, rec } = harness();
     const d = await delivery(SECRET_ITALK, { type: 'order.updated', data: processedOrder() });
@@ -218,12 +229,12 @@ describe('legacy (ITalk) webhook — behaviour unchanged', () => {
     expect(rec.lifecycle).toBe(1);
   });
 
-  it('does not forward when no router key is configured', async () => {
+  it('MT-02: still runs the forward path when no router key is configured (→ failed + alert, not silence)', async () => {
     const { deps, rec, settle } = harness();
     const d = await delivery(SECRET_ITALK, { type: 'order.updated', data: processedOrder() });
     await handleMoneriumWebhook(deps, { ...italk, signer: { ...italk.signer, privateKey: '' } }, d.body, d.headers);
     await settle();
-    expect(rec.forwards).toBe(0);
+    expect(rec.forwards).toBe(1);
   });
 
   it('acks subscription.created without touching orders', async () => {

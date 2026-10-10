@@ -33,7 +33,9 @@ export interface OutboxEvent {
   id: string;
   type: string;
   payload: Record<string, unknown>;
-  tenantId?: string | null;
+  /// Required (MT-01): every event names its tenant so it can only ever go to
+  /// that tenant's endpoint. NULL = default tenant (legacy rows).
+  tenantId: string | null;
 }
 
 export interface OutboxRow {
@@ -219,7 +221,7 @@ export function makeOutboxDeps(env: Env): OutboxDeps {
 export async function enqueueWebhook(env: Env, evt: OutboxEvent): Promise<void> {
   // No endpoint for this tenant → nothing is stored or sent. Checked per
   // event, never against the global endpoint (no cross-tenant leak).
-  if (!(await endpointFor(env, evt.tenantId ?? null))) return;
+  if (!(await endpointFor(env, evt.tenantId))) return;
   try {
     const r = await enqueueAndDeliver(makeOutboxDeps(env), evt, Math.floor(Date.now() / 1000));
     if (r !== 'delivered' && r !== 'duplicate') {

@@ -12,7 +12,7 @@ import {
   verifyShopifyWebhook,
 } from '../src/crypto';
 import { moneyToCents } from '../src/shopify';
-import { classifyIntent, gatewayMatches, nextStatus } from '../src/sync';
+import { classifyIntent, extOrderAccess, gatewayMatches, GUEST_ORDER_WINDOW_S, mayAutoCancel, nextStatus, settleAgainstOutstanding } from '../src/sync';
 import type { Env, MptIntent } from '../src/types';
 
 const SECRET = 'shpss_test_secret';
@@ -74,17 +74,21 @@ describe('deriveSid', () => {
     expect(a).toBe(await deriveSid('k', 'a.myshopify.com', 'gid://shopify/Order/1'));
     expect(a).not.toBe(await deriveSid('k', 'b.myshopify.com', 'gid://shopify/Order/1'));
     expect(a).not.toBe(await deriveSid('k2', 'a.myshopify.com', 'gid://shopify/Order/1'));
-    expect(a).toMatch(/^[A-Za-z0-9_-]{6,64}$/);
+    expect(a).toMatch(/^[A-Za-z0-9_-]{6,32}$/); // MPT SID_RE (bytes32 on-chain)
   });
 });
 
 describe('secret encryption', () => {
   it('round-trips and uses a fresh IV', async () => {
     const kek = randomBytes(32).toString('base64');
-    const a = await encryptSecret(kek, 'shpat_123');
-    expect(a).not.toBe(await encryptSecret(kek, 'shpat_123'));
-    expect(await decryptSecret(kek, a)).toBe('shpat_123');
-    await expect(decryptSecret(randomBytes(32).toString('base64'), a)).rejects.toThrow();
+    const aad = 'shops|a.myshopify.com|access_token';
+    const a = await encryptSecret(kek, 'shpat_123', aad);
+    expect(a).not.toBe(await encryptSecret(kek, 'shpat_123', aad));
+    expect(await decryptSecret(kek, a, aad)).toBe('shpat_123');
+    await expect(decryptSecret(randomBytes(32).toString('base64'), a, aad)).rejects.toThrow();
+    // SH-05: transplanted into another shop's row / another column → refused.
+    await expect(decryptSecret(kek, a, 'shops|b.myshopify.com|access_token')).rejects.toThrow();
+    await expect(decryptSecret(kek, a, 'shops|a.myshopify.com|mpt_api_key')).rejects.toThrow();
   });
 });
 
@@ -126,6 +130,11 @@ describe('classifyIntent', () => {
 
   it('never calls an underpayment paid', () => {
     expect(classifyIntent(intent({ state: 'paid', paid_at: '2026-10-09T10:00:00Z', amount_received_cents: 999 }), 1000)).toBe('underpaid');
+  });
+
+  it('BW-01: an underpayment MPT recorded without paid_at is underpaid, even after expiry', () => {
+    expect(classifyIntent(intent({ monerium_order_id: 'ord-1', amount_received_cents: 500, status: { stage: 'settled', amount_mismatch: 'under' } }), 1000)).toBe('underpaid');
+    expect(classifyIntent(intent({ state: 'expired', monerium_order_id: 'ord-1', amount_received_cents: 500, status: { stage: 'expired' } }), 1000)).toBe('underpaid');
   });
 
   it('treats a late settlement on an expired intent as paid', () => {
@@ -173,5 +182,47 @@ describe('multiple Shopify apps', () => {
     expect(sharedApp(env('', 's'))).toBeNull();
     expect(sharedApp(env(shared.clientId, undefined))).toBeNull();
     expect(sharedApp(env(shared.clientId, 'shpss_shared'))?.clientId).toBe(shared.clientId);
+  });
+});
+
+describe('SH-01: /ext/order access', () => {
+  const NOW = 1_800_000_000;
+  const own = { customer_gid: 'gid://shopify/Customer/7', order_created_at: NOW - 10 };
+  it('a logged-in customer sees only their own order', () => {
+    expect(extOrderAccess(own, 'gid://shopify/Customer/7', NOW)).toBe('ok');
+    expect(extOrderAccess(own, 'gid://shopify/Customer/8', NOW)).toBe('order_not_yours');
+    expect(extOrderAccess({ ...own, customer_gid: null }, 'gid://shopify/Customer/7', NOW)).toBe('order_not_yours');
+  });
+  it('a guest sees only a fresh order', () => {
+    expect(extOrderAccess(own, null, NOW)).toBe('ok');
+    expect(extOrderAccess({ ...own, order_created_at: NOW - GUEST_ORDER_WINDOW_S - 1 }, null, NOW)).toBe('order_not_yours');
+    expect(extOrderAccess({ ...own, order_created_at: null }, null, NOW)).toBe('order_not_yours');
+  });
+});
+
+describe('SH-02: settle against what the order owes now', () => {
+  it('order grew after the QR (120 owed, 100 received) → underpaid', () => {
+    expect(settleAgainstOutstanding(10_000, 12_000, false)).toBe('underpaid');
+  });
+  it('order shrank → overpaid (still marked paid)', () => {
+    expect(settleAgainstOutstanding(10_000, 8_000, false)).toBe('overpaid');
+  });
+  it('exact, unknown, or already paid (a retry after markAsPaid) → paid', () => {
+    expect(settleAgainstOutstanding(10_000, 10_000, false)).toBe('paid');
+    expect(settleAgainstOutstanding(10_000, null, false)).toBe('paid');
+    expect(settleAgainstOutstanding(10_000, 0, true)).toBe('paid');
+  });
+});
+
+describe('SH-03: auto_cancel grace', () => {
+  const NOW = 1_800_000_000;
+  const exp = (stage: string) => intent({ state: 'expired', status: { stage } });
+  it('waits for the grace period', () => {
+    expect(mayAutoCancel(exp('expired'), NOW - 600, 7200, NOW)).toBe(false);
+    expect(mayAutoCancel(exp('expired'), NOW - 7201, 7200, NOW)).toBe(true);
+  });
+  it('never cancels while MPT does not itself say expired', () => {
+    expect(mayAutoCancel(exp('awaiting_payment'), NOW - 99_999, 7200, NOW)).toBe(false);
+    expect(mayAutoCancel(exp('received_processing'), NOW - 99_999, 7200, NOW)).toBe(false);
   });
 });

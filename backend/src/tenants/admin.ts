@@ -1,8 +1,10 @@
 import type { Hono } from 'hono';
 
 import type { Env } from '../types';
+import { actorOf } from '../admin/auth/mount';
 import {
   addCampaign,
+  getCampaign,
   addPayoutAddress,
   getTenant,
   hashApiKey,
@@ -24,26 +26,14 @@ import { renderWhitelistPage } from '../admin/views';
 import { mountRailAdmin } from './railAdmin';
 
 /// Admin surface for the tenant payout whitelist. Mounted under `/admin/*`,
-/// which the existing Basic Auth middleware in ../admin/app.ts already gates —
+/// which the admin session middleware (../admin/auth/mount.ts) already gates —
 /// there is no public route here by design.
 ///
 /// Every mutation writes a tenant_audit_log row (who / when / which address),
-/// with the actor taken from the Basic Auth username on the request.
+/// with the actor taken from the admin session e-mail (actorOf).
 
 const ADDR_RE = /^0x[0-9a-fA-F]{40}$/;
 const ID_RE = /^[A-Za-z0-9_-]{2,64}$/;
-
-/// Basic Auth username of the caller, for the audit trail. The middleware has
-/// already verified the credentials — we only decode them for attribution.
-export function actorFrom(header: string | undefined): string {
-  if (!header?.startsWith('Basic ')) return 'admin:unknown';
-  try {
-    const user = atob(header.slice(6)).split(':')[0];
-    return `admin:${user || 'unknown'}`;
-  } catch {
-    return 'admin:unknown';
-  }
-}
 
 export function mountTenantAdmin(app: Hono<{ Bindings: Env }>): void {
   mountRailAdmin(app);
@@ -80,7 +70,7 @@ export function mountTenantAdmin(app: Hono<{ Bindings: Env }>): void {
     }
     const address = (body.address ?? '').trim();
     if (!ADDR_RE.test(address)) return c.json({ error: 'invalid_address' }, 400);
-    const actor = actorFrom(c.req.header('Authorization'));
+    const actor = actorOf(c);
     const label = (body.label ?? '').trim() || null;
     await addPayoutAddress(c.env, { tenantId, address, label, actor });
     await writeAudit(c.env, {
@@ -97,7 +87,7 @@ export function mountTenantAdmin(app: Hono<{ Bindings: Env }>): void {
     const tenantId = c.req.param('id');
     const address = c.req.param('address');
     if (!ADDR_RE.test(address)) return c.json({ error: 'invalid_address' }, 400);
-    const actor = actorFrom(c.req.header('Authorization'));
+    const actor = actorOf(c);
     const revoked = await revokePayoutAddress(c.env, { tenantId, address, actor });
     if (!revoked) return c.json({ error: 'not_found_or_already_revoked' }, 404);
     await writeAudit(c.env, {
@@ -143,7 +133,12 @@ export function mountTenantAdmin(app: Hono<{ Bindings: Env }>): void {
     const safeAddress = (body.safe_address ?? '').trim();
     if (!ID_RE.test(campaignId)) return c.json({ error: 'invalid_campaign_id' }, 400);
     if (!ADDR_RE.test(safeAddress)) return c.json({ error: 'invalid_safe_address' }, 400);
-    const actor = actorFrom(c.req.header('Authorization'));
+    // BW-24: a campaign id belongs to one tenant for good.
+    const existing = await getCampaign(c.env, campaignId);
+    if (existing && existing.tenant_id !== tenantId) {
+      return c.json({ error: 'campaign_owned_by_other_tenant' }, 409);
+    }
+    const actor = actorOf(c);
     const label = (body.label ?? '').trim() || null;
     await addCampaign(c.env, { tenantId, campaignId, safeAddress, label, actor });
     // A campaign Safe is a payout destination — register it on the whitelist
@@ -167,8 +162,8 @@ export function mountTenantAdmin(app: Hono<{ Bindings: Env }>): void {
   app.delete('/admin/api/tenants/:id/campaigns/:campaignId', async (c) => {
     const tenantId = c.req.param('id');
     const campaignId = c.req.param('campaignId');
-    const actor = actorFrom(c.req.header('Authorization'));
-    const revoked = await revokeCampaign(c.env, { campaignId, actor });
+    const actor = actorOf(c);
+    const revoked = await revokeCampaign(c.env, { tenantId, campaignId, actor });
     if (!revoked) return c.json({ error: 'not_found_or_already_revoked' }, 404);
     await writeAudit(c.env, {
       tenantId,
@@ -211,7 +206,7 @@ export function mountTenantAdmin(app: Hono<{ Bindings: Env }>): void {
     const keyHash = await hashApiKey(raw);
     const label = (body.label ?? '').trim() || null;
     await insertApiKey(c.env, { tenantId, keyHash, kind, label });
-    const actor = actorFrom(c.req.header('Authorization'));
+    const actor = actorOf(c);
     await writeAudit(c.env, {
       tenantId,
       action: 'key.issue',
@@ -224,12 +219,12 @@ export function mountTenantAdmin(app: Hono<{ Bindings: Env }>): void {
   app.delete('/admin/api/tenants/:id/keys/:keyHash', async (c) => {
     const keyHash = c.req.param('keyHash');
     if (!/^[0-9a-f]{64}$/.test(keyHash)) return c.json({ error: 'invalid_key_hash' }, 400);
-    const revoked = await revokeApiKey(c.env, keyHash);
+    const revoked = await revokeApiKey(c.env, keyHash, c.req.param('id'));
     if (!revoked) return c.json({ error: 'not_found_or_already_revoked' }, 404);
     await writeAudit(c.env, {
       tenantId: c.req.param('id'),
       action: 'key.revoke',
-      actor: actorFrom(c.req.header('Authorization')),
+      actor: actorOf(c),
       detail: JSON.stringify({ key_hash_short: `${keyHash.slice(0, 12)}…` }),
     });
     return c.json({ ok: true });
@@ -242,7 +237,7 @@ export function mountTenantAdmin(app: Hono<{ Bindings: Env }>): void {
   /// chat id (e.g. after a group → supergroup migration silently changes the
   /// id) stays invisible until the first real blocked forward.
   app.post('/admin/api/alert-test', async (c) => {
-    const actor = actorFrom(c.req.header('Authorization'));
+    const actor = actorOf(c);
     const result = await trySendAlert(
       c.env,
       '🔔 <b>MPT alert test</b>\n' +

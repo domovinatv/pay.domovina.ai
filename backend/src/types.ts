@@ -74,8 +74,13 @@ export interface Env {
   // has its own Monerium account, webhook and signer in `tenant_rail`.
   MULTI_TENANT_RAIL: string;          // "1" → tenant rails live; anything else → only the default tenant
   TENANT_SECRETS_KEK: string;         // SECRET — base64 of 32 bytes; AES-GCM key for tenant_rail *_enc columns
+  TENANT_SECRETS_KEK_PREV?: string;   // SECRET, only during a KEK rotation: the previous KEK, read-only (docs/runbook/kek-rotation.md)
   INTENT_SSE: string;                 // "1" → GET /api/intents/:sid/stream serves SSE; else 404 as before
   STRAY_RESOLVER?: string;            // "1" → reference-less payments are matched to an intent by amount + time (src/monerium/strayResolver.ts)
+  WATCH_HEARTBEAT_URL?: string;        // secret: dead-man ping after every healthy theft-detector tick (TD-02), e.g. healthchecks.io
+  RECONCILE_FORWARDS?: string;         // "1" → the reconcile cron runs the forward path on a processed order with no forward row (SR-05)
+  LEGACY_REQUIRE_MINT_AT?: string;     // "1" → ITalk forwards only orders minted at SAFE_ADDRESS (MT-03), like every tenant rail
+  MAX_OPEN_INTENTS_PER_TARGET?: string; // SR-01 cap on open intents per non-trusted destination (default 20); sk_ callers exempt
   /// Durable Object namespace holding one SSE hub per sid (src/intents/stream.ts).
   /// Optional so environments without the binding (tests, old deploys) keep
   /// the 404 + polling behaviour.

@@ -9,12 +9,17 @@ import type { Env } from "../../types";
 export const SESSION_COOKIE = "__Host-mpt_admin";
 export const SESSION_TTL_SECONDS = 12 * 3600;
 export const CHALLENGE_TTL_SECONDS = 300;
+/// AD-04: a session nobody used for this long is over, whatever its expiry.
+export const SESSION_IDLE_SECONDS = 2 * 3600;
+const LAST_SEEN_RESOLUTION_SECONDS = 300;
 
 export type SessionMethod = "passkey" | "access";
 export interface Session {
   email: string;
   method: SessionMethod;
   expiresAt: string;
+  /// ISO; when the login happened. Passkey registration needs a fresh one (AD-03).
+  createdAt: string;
 }
 
 function randomToken(): string {
@@ -60,12 +65,21 @@ export async function getSession(env: Env, cookieHeader: string | null): Promise
   const token = readCookie(cookieHeader, SESSION_COOKIE);
   if (!token) return null;
   const row = await env.DB.prepare(
-    "SELECT email, method, expires_at FROM admin_sessions WHERE token_hash = ? AND expires_at > ?",
+    "SELECT email, method, created_at, expires_at, last_seen_at FROM admin_sessions WHERE token_hash = ? AND expires_at > ?",
   )
     .bind(await sha256Hex(token), new Date().toISOString())
-    .first<{ email: string; method: SessionMethod; expires_at: string }>();
+    .first<{ email: string; method: SessionMethod; created_at: string; expires_at: string; last_seen_at?: string | null }>();
   if (!row || !adminEmails(env).has(row.email)) return null;
-  return { email: row.email, method: row.method, expiresAt: row.expires_at };
+  const nowMs = Date.now();
+  const lastSeenMs = Date.parse(row.last_seen_at ?? row.created_at);
+  if (Number.isFinite(lastSeenMs) && nowMs - lastSeenMs > SESSION_IDLE_SECONDS * 1000) return null;
+  if (!Number.isFinite(lastSeenMs) || nowMs - lastSeenMs > LAST_SEEN_RESOLUTION_SECONDS * 1000) {
+    await env.DB.prepare("UPDATE admin_sessions SET last_seen_at = ? WHERE token_hash = ?")
+      .bind(new Date(nowMs).toISOString(), await sha256Hex(token))
+      .run()
+      .catch(() => {});
+  }
+  return { email: row.email, method: row.method, expiresAt: row.expires_at, createdAt: row.created_at };
 }
 
 export async function deleteSession(env: Env, cookieHeader: string | null): Promise<void> {

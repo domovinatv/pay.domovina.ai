@@ -79,6 +79,33 @@ export async function emitPaymentLateWebhook(
   });
 }
 
+/// Settled for LESS than the intent asked for (BW-01). The EURe did reach the
+/// recipient; the intent stays `pending` (and later expires) — the merchant
+/// decides whether to ask for the difference or refund. Never `intent.paid`.
+export async function emitPaymentUnderpaidWebhook(
+  env: Env,
+  intent: PaymentIntentRow,
+  sender?: { iban: string | null; name: string | null },
+): Promise<void> {
+  const id = `undp_${intent.sid}`;
+  const received = intent.amount_received_cents;
+  await enqueueWebhook(env, {
+    id,
+    type: 'payment.underpaid',
+    tenantId: intent.tenant_id,
+    payload: {
+      type: 'payment.underpaid',
+      event_id: id,
+      occurred_at: nowIso(),
+      ...settledIntentFields(intent, sender),
+      expected_cents: intent.amount_cents,
+      received_cents: received,
+      delta_cents: received === null ? null : intent.amount_cents - received,
+      funds_location: 'recipient',
+    },
+  });
+}
+
 function settledIntentFields(
   intent: PaymentIntentRow,
   sender?: { iban: string | null; name: string | null },
@@ -88,6 +115,11 @@ function settledIntentFields(
     state: intent.state,
     amount_cents: intent.amount_cents,
     amount_received_cents: intent.amount_received_cents,
+    // > 0 only when the payer sent MORE than asked (the intent is still paid).
+    overpaid_cents:
+      intent.amount_received_cents !== null && intent.amount_received_cents > intent.amount_cents
+        ? intent.amount_received_cents - intent.amount_cents
+        : 0,
     currency: intent.currency,
     target_address: intent.target_address,
     monerium_order_id: intent.monerium_order_id,
@@ -193,12 +225,16 @@ export async function emitCampaignContributionWebhook(
     forwardTxHash: string | null;
     senderIban?: string | null;
     senderName?: string | null;
+    /// Tenant whose rail carried the forward (MT-01) — the event, with the
+    /// donor's IBAN and name, goes only to that tenant's endpoint.
+    tenantId: string | null;
   },
 ): Promise<void> {
   const id = `cmp_${args.orderId}`;
   await enqueueWebhook(env, {
     id,
     type: 'contribution.sepa',
+    tenantId: args.tenantId,
     payload: {
       type: 'contribution.sepa',
       event_id: id,

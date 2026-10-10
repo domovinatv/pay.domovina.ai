@@ -4,6 +4,7 @@ import worker from '../src/index';
 import { readTenantKey, resolveRequestTenant } from '../src/tenants/auth';
 import { hashApiKey } from '../src/tenants/db';
 import { enqueueWebhook } from '../src/intents/outbox';
+import { emitCampaignContributionWebhook } from '../src/intents/outbound';
 import { notifyOrderLifecycle } from '../src/intents/lifecycle';
 import { loadStageContext } from '../src/intents/stage';
 import type { PaymentIntentRow } from '../src/intents/db';
@@ -123,6 +124,19 @@ describe('outbound webhooks stay with their tenant', () => {
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
+  it('MT-01: a campaign contribution (donor IBAN + name) of a tenant without an endpoint goes nowhere', async () => {
+    const f: Fake = { sql: [], rows: {} };
+    const fetchSpy = vi.fn();
+    vi.stubGlobal('fetch', fetchSpy);
+    await emitCampaignContributionWebhook(env(f), {
+      campaignId: 'camp1', orderId: 'ord-9', amountCents: 500, currency: 'eur',
+      targetAddress: '0xa000000000000000000000000000000000000002', forwardTxHash: '0x1',
+      senderIban: 'HR1210010051863000160', senderName: 'Darovatelj', tenantId: 'zupa-a',
+    });
+    expect(f.sql.some((q) => q.includes('webhook_outbox'))).toBe(false);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
   it('still delivers the default tenant’s events to the global endpoint', async () => {
     const f: Fake = { sql: [], rows: {} };
     const fetchSpy = vi.fn(async () => new Response('ok', { status: 200 }));
@@ -177,5 +191,45 @@ describe("an order on tenant X's IBAN never advances tenant Y's intent", () => {
     };
     const legacyIntent = { ...intentOfB, tenant_id: null } as unknown as PaymentIntentRow;
     expect((await loadStageContext(env(f), legacyIntent)).order?.id).toBe('ord-1');
+  });
+});
+
+describe('SR-03: a stray order rerouted to another intent never shows as this intent settled', () => {
+  const intentA = {
+    sid: 'sid-a', tenant_id: 'italk', target_address: '0xa0', state: 'pending', monerium_order_id: null,
+  } as unknown as PaymentIntentRow;
+  const ord = { id: 'ord-x', tenant_id: 'italk', state: 'processed' };
+
+  it("order via sid_resolved=A, forward confirmed for B → A shows no order/forward", async () => {
+    const f: Fake = {
+      sql: [],
+      rows: {
+        'FROM monerium_orders o': ord,
+        'FROM monerium_forwards WHERE order_id': { id: 1, order_id: 'ord-x', sid: 'sid-b', status: 'confirmed' },
+      },
+    };
+    const ctx = await loadStageContext(env(f), intentA);
+    expect(ctx.order).toBeNull();
+    expect(ctx.forward).toBeNull();
+  });
+
+  it('forward for A itself → kept', async () => {
+    const f: Fake = {
+      sql: [],
+      rows: {
+        'FROM monerium_orders o': ord,
+        'FROM monerium_forwards WHERE order_id': { id: 1, order_id: 'ord-x', sid: 'sid-a', status: 'confirmed' },
+      },
+    };
+    const ctx = await loadStageContext(env(f), intentA);
+    expect(ctx.order?.id).toBe('ord-x');
+    expect(ctx.forward?.sid).toBe('sid-a');
+  });
+
+  it('no forward yet → order kept (received/minted)', async () => {
+    const f: Fake = { sql: [], rows: { 'FROM monerium_orders o': ord } };
+    const ctx = await loadStageContext(env(f), intentA);
+    expect(ctx.order?.id).toBe('ord-x');
+    expect(ctx.forward).toBeNull();
   });
 });

@@ -5,11 +5,12 @@ import { gnosis, gnosisChiado } from 'viem/chains';
 import type { Env } from '../types';
 import { MoneriumClient, type MoneriumIban } from '../monerium/client';
 import { sendAlert } from '../alerts';
-import { encryptSecret, importKek, type SecretField } from './secrets';
+import { decryptSecret, encryptSecret, importKek, importKeks, type SecretField } from './secrets';
 import { getTenant, type TenantRow } from './db';
 import {
   getTenantRail,
   getTenantRailRow,
+  legacyRail,
   listRailTenantIds,
   moneriumBaseUrl,
   parseChain,
@@ -172,6 +173,37 @@ async function enc(env: Env, tenantId: string, field: SecretField, plaintext: st
   return encryptSecret(await importKek(env.TENANT_SECRETS_KEK), tenantId, field, plaintext);
 }
 
+const ENC_COLUMNS: Array<[column: string, field: SecretField]> = [
+  ['client_secret_enc', 'client_secret'],
+  ['refresh_token_enc', 'refresh_token'],
+  ['router_key_enc', 'router_key'],
+  ['webhook_secret_enc', 'webhook_secret'],
+  ['outbound_webhook_secret_enc', 'outbound_webhook_secret'],
+];
+
+/// KEK rotation (MT-06): re-encrypt every stored secret of one tenant under
+/// the CURRENT TENANT_SECRETS_KEK, reading with current-or-previous. Values
+/// are unchanged, so the rail keeps working throughout. Returns how many
+/// columns were rewritten.
+export async function rewrapTenantSecrets(env: Env, tenantId: string): Promise<number> {
+  const row = await getTenantRailRow(env, tenantId);
+  if (!row) throw new Error('rail_not_found');
+  const keks = await importKeks(env);
+  const r = row as unknown as Record<string, string | null>;
+  let n = 0;
+  for (const [column, field] of ENC_COLUMNS) {
+    const blob = r[column];
+    if (!blob) continue;
+    const plain = await decryptSecret(keks, tenantId, field, blob);
+    const fresh = await encryptSecret(keks[0], tenantId, field, plain);
+    await env.DB.prepare(`UPDATE tenant_rail SET ${column} = ?, updated_at = ? WHERE tenant_id = ?`)
+      .bind(fresh, now(), tenantId)
+      .run();
+    n++;
+  }
+  return n;
+}
+
 /// Insert or update the tenant's rail. Secrets are encrypted here and never
 /// stored or returned in clear. Any change clears the verification.
 export async function upsertRail(env: Env, tenantId: string, v: RailInput, existing: TenantRailRow | null): Promise<void> {
@@ -296,7 +328,22 @@ export async function registerTenantWebhook(
   env: Env,
   tenantId: string,
   origin: string,
-): Promise<{ url: string; subscriptionId: string }> {
+): Promise<{ url: string; subscriptionId: string; typesApplied: boolean; disabledPrevious: string | null }> {
+  // MT-05: the previous subscription would keep delivering every event signed
+  // with the OLD secret (→ 401 + 12 h of Monerium retries). Disable it first;
+  // best effort — a failure is logged and reported, not fatal.
+  let disabledPrevious: string | null = null;
+  const before = await getTenantRailRow(env, tenantId);
+  if (before?.webhook_subscription_id) {
+    const prevRail = await railFromStoredRow(env, before);
+    try {
+      if (!prevRail) throw new Error('rail unusable');
+      await new MoneriumClient(env, prevRail.monerium).disableWebhookSubscription(before.webhook_subscription_id);
+      disabledPrevious = before.webhook_subscription_id;
+    } catch (e) {
+      console.error(`tenant ${tenantId}: disabling webhook ${before.webhook_subscription_id} failed: ${(e as Error).message}`);
+    }
+  }
   const secret = newWebhookSecret();
   await env.DB.prepare(
     `UPDATE tenant_rail
@@ -314,7 +361,9 @@ export async function registerTenantWebhook(
   await env.DB.prepare(`UPDATE tenant_rail SET webhook_subscription_id = ?, updated_at = ? WHERE tenant_id = ?`)
     .bind(sub.id, now(), tenantId)
     .run();
-  return { url, subscriptionId: sub.id };
+  // typesApplied false: the subscription exists with Monerium's default
+  // types; verify's webhook check shows it, re-register to fix.
+  return { url, subscriptionId: sub.id, typesApplied: sub.typesApplied !== false, disabledPrevious };
 }
 
 // ---- verify ----------------------------------------------------------------------
@@ -331,13 +380,21 @@ export interface VerifyDeps {
   listIbans(profileId: string): Promise<MoneriumIban[]>;
   getCode(address: string): Promise<string | undefined>;
   isModuleEnabled(safe: string, module: string): Promise<boolean>;
+  /// Every module enabled on the Safe (first page of 20 is plenty — more
+  /// than one is already a finding).
+  listModules(safe: string): Promise<string[]>;
   avatar(module: string): Promise<string>;
   target(module: string): Promise<string>;
   balanceWei(address: string): Promise<bigint>;
   activeWhitelistCount(): Promise<number>;
 }
 
-const SAFE_ABI = parseAbi(['function isModuleEnabled(address module) view returns (bool)']);
+const SAFE_ABI = parseAbi([
+  'function isModuleEnabled(address module) view returns (bool)',
+  'function getModulesPaginated(address start, uint256 pageSize) view returns (address[] array, address next)',
+]);
+/// Safe's linked-list sentinel for getModulesPaginated.
+const SENTINEL_MODULES = '0x0000000000000000000000000000000000000001';
 const MODIFIER_ABI = parseAbi([
   'function avatar() view returns (address)',
   'function target() view returns (address)',
@@ -363,6 +420,15 @@ export function makeVerifyDeps(env: Env, tenantId: string, rail: Pick<TenantRail
     getCode: (address) => chain.getCode({ address: address as Address }),
     isModuleEnabled: (safe, module) =>
       chain.readContract({ address: safe as Address, abi: SAFE_ABI, functionName: 'isModuleEnabled', args: [module as Address] }),
+    listModules: async (safe) => {
+      const [modules] = await chain.readContract({
+        address: safe as Address,
+        abi: SAFE_ABI,
+        functionName: 'getModulesPaginated',
+        args: [SENTINEL_MODULES as Address, 20n],
+      });
+      return modules.map((m) => m.toLowerCase());
+    },
     avatar: (module) => chain.readContract({ address: module as Address, abi: MODIFIER_ABI, functionName: 'avatar' }),
     target: (module) => chain.readContract({ address: module as Address, abi: MODIFIER_ABI, functionName: 'target' }),
     balanceWei: (address) => chain.getBalance({ address: address as Address }),
@@ -429,6 +495,16 @@ export async function runVerify(
     if (!enabled) return [false, 'Modifier nije uključen kao modul na Safeu'];
     if (!sameAddr(av, safe) || !sameAddr(tg, safe)) return [false, `avatar ${av} / target ${tg} ≠ Safe ${safe}`];
     return [true, 'uključen modul, avatar = target = Safe'];
+  });
+  // TD-05: any other module can move EURe out of the Safe without the role
+  // (the theft detector would at least shout 🚨 module_unknown, but only after).
+  await check('only_module_is_roles', async () => {
+    if (!row.roles_modifier) return [false, 'roles_modifier nije upisan'];
+    const modules = await deps.listModules(safe);
+    const others = modules.filter((m) => !sameAddr(m, row.roles_modifier));
+    return others.length === 0
+      ? [true, 'jedini modul na Safeu je Roles modifier']
+      : [false, `Safe ima i druge module: ${others.join(', ')} — ukloniti (disableModule) prije aktivacije`];
   });
   await check('role_key', async () =>
     row.role_key ? [true, row.role_key] : [false, 'role_key nije upisan'],
@@ -515,9 +591,10 @@ export async function loadTenantAndRail(
 /// without gas turns every forward into `failed` + a manual retry.
 export async function checkRouterGas(env: Env): Promise<number> {
   let low = 0;
-  for (const tenantId of await listRailTenantIds(env)) {
+  // MT-07: ITalk's router too — it carries all live traffic today.
+  for (const tenantId of [null, ...(await listRailTenantIds(env))]) {
     try {
-      const rail = await getTenantRail(env, tenantId);
+      const rail = tenantId === null ? legacyRail(env) : await getTenantRail(env, tenantId);
       if (!rail?.signer.privateKey) continue;
       const address = privateKeyToAccount(rail.signer.privateKey as Hex).address;
       const chain = createPublicClient({
@@ -530,12 +607,12 @@ export async function checkRouterGas(env: Env): Promise<number> {
         await sendAlert(
           env,
           `⛽ <b>Router tenanta ostaje bez gasa</b>\n` +
-            `tenant: <code>${tenantId}</code> · router: <code>${getAddress(address)}</code>\n` +
+            `tenant: <code>${rail.tenantId}</code> · router: <code>${getAddress(address)}</code>\n` +
             `saldo: <code>${bal}</code> wei (prag ${MIN_ROUTER_GAS_WEI}). Dopuniti xDAI.`,
         );
       }
     } catch (e) {
-      console.error(`router gas check ${tenantId}: ${(e as Error).message}`);
+      console.error(`router gas check ${tenantId ?? 'legacy'}: ${(e as Error).message}`);
     }
   }
   return low;

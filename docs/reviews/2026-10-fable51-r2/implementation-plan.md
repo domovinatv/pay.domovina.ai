@@ -9,6 +9,40 @@ označeno ✅; ovdje se referira kao „prethodni P0-x".
 
 Opseg: **S** ≤ pola dana · **M** 1–2 dana · **L** > 2 dana.
 
+## Stanje implementacije (Opus 5.5, 2026-10-10, grana `fix/fable51-r2-fixes`)
+
+Sve ispod je na grani, **nije deployano**. Backend 412/412 testova, Shopify
+worker 26/26, `tsc` čist u oba. Novi testovi na pravom SQLiteu sa svim
+migracijama (`backend/test/helpers/sqliteD1.ts`, `node:sqlite`).
+
+| Zadatak | Stanje | Commit |
+|---|---|---|
+| P0-1 SR-01 trusted kandidati | ✅ (+ migracija 0022; kapica samo za netrusted odredišta) | `e1e6299` |
+| P0-2 SR-02 + BW-01 | ✅ | `0e8239e`, `c312ac2` |
+| P0-3 MT-01 | ✅ | `d99e50d` |
+| P0-4 TD-01/03 | ✅ (provjereno na stvarnom forward tx-u) | `8298529` |
+| P0-5 SR-03 | ✅ | `44f33b7` |
+| P0-6 MT-04/09 | ✅ u kodu; WAF samo dokumentiran | `9968e4e` |
+| P0-7 AD-01 | ✅ | `57f00b8` |
+| P0-8 MT-02 | ✅ | `83a0fb7` |
+| P1-1 SR-05 | ✅ (`RECONCILE_FORWARDS` zadano isključen) | `25fb251` |
+| P1-2 TD-02/04 | ✅ (heartbeat secret treba postaviti) | `c8694ce` |
+| P1-3 MT-10 | ✅ | `4378c64` |
+| P1-4 SH-01..04 | ✅ (bez IP rate-limita) | `08786a1` |
+| P1-5 MT-03/07/08 | ✅ (`LEGACY_REQUIRE_MINT_AT="1"`) | `16e0b18` |
+| P1-6 AD-02/03 | ✅ (stari bearer URL-ovi još jedan ciklus) | `0570a84` |
+| P1-7 OF-01/02 | ✅ (+ migracija 0023) | `44d7460` |
+| P1-8 MT-05/06 | ✅ | `920a169` |
+| P1-9 prethodni P1-1 (dropped tx), P1-6 (guardovi) | ✅ | `8e07983`, `7a48733` |
+| P1-9 prethodni P0-7 (strogi istek) | ⏸ **odluka Matije** — mijenja `paid` → `payment.late` za uplate nakon isteka | — |
+| P2-1 SH-05/06/08/09/10, TD-05, SR-06 (parser), AD-04 | ✅ | `ecb7065`, `19dfd7a`, `8cb7426`, `7058689` |
+| P2-1 SR-06 (preview iza dedupa), AD-05 (4-eyes) | ⏸ (AD-05 je odluka Matije) | — |
+| P2-2 wallet (dokaz posjeda, embed, klijent ne vjeruje backendu) | ⏸ nije dirano | — |
+| P2-3 ADR 0018 tekst | ✅ (§Zašto je to sigurno, dopuna SR-05) | `e1e6299`, `25fb251` |
+
+Prije deploya: `wrangler d1 migrations apply` (0022, 0023, 0024); WAF pravila
+iz `docs/runbook/rate-limits.md`; `WATCH_HEARTBEAT_URL` secret.
+
 ## NE DIRAJ (regresija ako se promijeni)
 
 - Atribucija webhooka: potpis **samo** tajnom tenanta iz URL-a; nikad probati

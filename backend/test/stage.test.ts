@@ -58,6 +58,20 @@ function step(result: ReturnType<typeof computeStage>, key: string) {
 }
 
 describe('computeStage', () => {
+  it("SR-03: another intent's confirmed forward is not this intent's settlement", () => {
+    const foreign = computeStage({
+      intent: baseIntent({ sid: 'sid-a' }), order: processedOrder(),
+      forward: forward({ status: 'confirmed', sid: 'sid-b' }), now: NOW,
+    });
+    expect(foreign.stage).not.toBe('settled');
+    expect(foreign.forward_tx_hash).toBeNull();
+    const own = computeStage({
+      intent: baseIntent({ sid: 'sid-a' }), order: processedOrder(),
+      forward: forward({ status: 'confirmed', sid: 'sid-a' }), now: NOW,
+    });
+    expect(own.stage).toBe('settled');
+  });
+
   it('no order → awaiting_payment (blind window, elapsed only)', () => {
     const r = computeStage({ intent: baseIntent(), order: null, forward: null, now: NOW });
     expect(r.stage).toBe('awaiting_payment');

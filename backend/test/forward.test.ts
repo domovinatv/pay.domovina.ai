@@ -101,6 +101,49 @@ describe('handleForward — authorised', () => {
     expect(rec.polls).toBe(0);
   });
 
+  it('MT-10: one retry after a nonce collision, then submitted', async () => {
+    let calls = 0;
+    const { deps, rec } = harness({
+      sleep: async () => {},
+      forward: async () => (++calls === 1
+        ? { ok: false, error: 'nonce too low: next nonce 42' }
+        : { ok: true, txHash: '0xbeef' as `0x${string}` }),
+    });
+    await handleForward(deps, order(`mpt:${PAYEE}?sid=abc123def456`));
+    expect(calls).toBe(2);
+    expect(rec.updates[0].patch).toMatchObject({ status: 'submitted', tx_hash: '0xbeef' });
+  });
+
+  it('MT-10: never retries "already known" (the node has our tx)', async () => {
+    let calls = 0;
+    const { deps, rec } = harness({
+      sleep: async () => {},
+      forward: async () => { calls++; return { ok: false, error: 'already known' }; },
+    });
+    await handleForward(deps, order(`mpt:${PAYEE}?sid=abc123def456`));
+    expect(calls).toBe(1);
+    expect(rec.updates[0].patch).toMatchObject({ status: 'failed' });
+  });
+
+  it('BW-23: a non-EUR issue order is parked, never forwarded as EURe', async () => {
+    const { deps, rec } = harness();
+    await handleForward(deps, order(`mpt:${PAYEE}?sid=abc123def456`, { currency: 'usd' } as Partial<MoneriumOrder>));
+    expect(rec.forwards).toHaveLength(0);
+    expect(rec.inserts[0]).toMatchObject({ status: 'blocked' });
+    expect(rec.blocked[0].reason).toBe('unsupported_currency');
+  });
+
+  it('MT-02: no router key → failed row + alert, never silence', async () => {
+    const { deps, rec } = harness({
+      forward: async () => ({ ok: false, error: 'router_disabled: no ROUTER_PRIVATE_KEY' }),
+    });
+    await handleForward(deps, order(`mpt:${PAYEE}?sid=abc123def456`));
+
+    expect(rec.updates[0].patch).toMatchObject({ status: 'failed', error: 'router_disabled: no ROUTER_PRIVATE_KEY' });
+    expect(rec.alerts).toHaveLength(1);
+    expect(rec.alerts[0]).toContain('router_disabled');
+  });
+
   it('treats a memo pointing at the Safe as a no-op and settles the intent', async () => {
     const { deps, rec } = harness({
       authorize: {
@@ -312,5 +355,20 @@ describe('eurToWei', () => {
     expect(eurToWei('12.34')).toBe(12_340_000_000_000_000_000n);
     expect(eurToWei('0.01')).toBe(10_000_000_000_000_000n);
     expect(eurToWei('1.19')).toBe(1_190_000_000_000_000_000n);
+  });
+});
+
+describe('parseAmountCents (SR-06)', async () => {
+  const { parseAmountCents } = await import('../src/monerium/forward');
+  it('is exact and rejects what eurToWei rejects', () => {
+    expect(parseAmountCents('12.34')).toBe(1234);
+    expect(parseAmountCents('1.1')).toBe(110);
+    expect(parseAmountCents('100')).toBe(10000);
+    expect(parseAmountCents('0.29')).toBe(29); // 0.29*100 = 28.999… in floats
+    expect(parseAmountCents('1.005')).toBe(101);
+    expect(parseAmountCents('1e2')).toBeNull();
+    expect(parseAmountCents('-5')).toBeNull();
+    expect(parseAmountCents('1,00')).toBeNull();
+    expect(parseAmountCents(undefined)).toBeNull();
   });
 });

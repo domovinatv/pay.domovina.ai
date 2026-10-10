@@ -173,3 +173,140 @@ describe('safeNext', () => {
     expect(safeNext(null)).toBe('/admin');
   });
 });
+
+describe('audit actor (AD-01)', () => {
+  it('is the session e-mail, not a header the caller controls', async () => {
+    const binds: Array<{ q: string; args: unknown[] }> = [];
+    const exec = (q: string, args: unknown[] = []) => ({
+      first: async () => {
+        if (q.includes('FROM admin_sessions')) return { email: 'ops@domovina.ai', method: 'passkey', expires_at: '2999-01-01T00:00:00Z' };
+        if (q.includes('FROM tenants')) return { id: 'italk', name: 'ITalk', status: 'active' };
+        return null;
+      },
+      all: async () => ({ results: [] }),
+      run: async () => { binds.push({ q, args }); return { meta: { changes: 1 } }; },
+    });
+    const e = env(undefined, {
+      DB: {
+        prepare: (q: string) => ({ bind: (...args: unknown[]) => exec(q, args), ...exec(q) }),
+        batch: async () => [],
+      } as unknown as Env['DB'],
+    });
+    const res = await worker.fetch(
+      req('/admin/api/tenants/italk/addresses', {
+        method: 'POST',
+        cookie: true,
+        headers: {
+          origin: HOST,
+          'content-type': 'application/json',
+          authorization: 'Basic ' + btoa('attacker:x'),
+        },
+        body: JSON.stringify({ address: '0x' + 'ab'.repeat(20), label: 'test' }),
+      }),
+      e,
+      ctx,
+    );
+    expect(res.status).toBe(200);
+    const audit = binds.find((b) => b.q.includes('INSERT INTO tenant_audit_log'));
+    expect(audit?.args[4]).toBe('ops@domovina.ai');
+  });
+});
+
+describe('reroute (SR-02)', () => {
+  it('force without a written reason is refused before anything moves', async () => {
+    const res = await worker.fetch(
+      req('/admin/api/orders/ord-1/reroute', {
+        method: 'POST',
+        cookie: true,
+        headers: { origin: HOST, 'content-type': 'application/json' },
+        body: JSON.stringify({ sid: 'abc', force: true, reason: 'jer da' }),
+      }),
+      env({ email: 'ops@domovina.ai' }),
+      ctx,
+    );
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: 'reason_required' });
+  });
+});
+
+describe('ops routes (AD-02)', () => {
+  it('Monerium admin under /admin/api needs the session', async () => {
+    const res = await worker.fetch(req('/admin/api/monerium/webhooks'), env(), ctx);
+    expect(res.status).toBe(401);
+  });
+
+  it('a subscription can only point at our own webhook URL — session or legacy token', async () => {
+    const body = JSON.stringify({ url: 'https://attacker.example/hook' });
+    const viaSession = await worker.fetch(
+      req('/admin/api/monerium/webhooks', {
+        method: 'POST', cookie: true,
+        headers: { origin: HOST, 'content-type': 'application/json' }, body,
+      }),
+      env({ email: 'ops@domovina.ai' }),
+      ctx,
+    );
+    expect(viaSession.status).toBe(400);
+    expect(await viaSession.json()).toEqual({ error: 'url_not_ours' });
+    const viaToken = await worker.fetch(
+      req('/api/monerium/admin/webhooks', {
+        method: 'POST',
+        headers: { authorization: 'Bearer tok-123', 'content-type': 'application/json' }, body,
+      }),
+      env(undefined, { ADMIN_TOKEN: 'tok-123' } as Partial<Env>),
+      ctx,
+    );
+    expect(viaToken.status).toBe(400);
+  });
+});
+
+describe('passkey registration (AD-03)', () => {
+  function envWith(createdAt: string, passkeys: number): Env {
+    const exec = (q: string) => ({
+      first: async () => {
+        if (q.includes('FROM admin_sessions')) {
+          return { email: 'ops@domovina.ai', method: 'access', created_at: createdAt, expires_at: '2999-01-01T00:00:00Z' };
+        }
+        if (q.includes('COUNT(*) AS n FROM admin_passkeys')) return { n: passkeys };
+        return null;
+      },
+      all: async () => ({ results: [] }),
+      run: async () => ({ meta: { changes: 1 } }),
+    });
+    return env(undefined, {
+      DB: { prepare: (q: string) => ({ bind: () => exec(q), ...exec(q) }), batch: async () => [] } as unknown as Env['DB'],
+    });
+  }
+  const register = (e: Env) => worker.fetch(
+    req('/admin/passkey/register/options', { method: 'POST', cookie: true, headers: { origin: HOST } }), e, ctx,
+  );
+
+  it('needs a login from the last 10 minutes', async () => {
+    const res = await register(envWith(new Date(Date.now() - 3600_000).toISOString(), 0));
+    expect(res.status).toBe(403);
+    expect((await res.json()).error).toContain('svježa');
+  });
+
+  it('caps passkeys per e-mail at 5', async () => {
+    const res = await register(envWith(new Date().toISOString(), 5));
+    expect(res.status).toBe(403);
+    expect((await res.json()).error).toContain('Najviše 5');
+  });
+});
+
+describe('session idle timeout (AD-04)', () => {
+  it('a session unused for over 2 h is over, even before it expires', async () => {
+    const exec = (q: string) => ({
+      first: async () => q.includes('FROM admin_sessions')
+        ? { email: 'ops@domovina.ai', method: 'passkey', created_at: '2026-01-01T00:00:00Z',
+            last_seen_at: new Date(Date.now() - 3 * 3600_000).toISOString(), expires_at: '2999-01-01T00:00:00Z' }
+        : null,
+      all: async () => ({ results: [] }),
+      run: async () => ({ meta: { changes: 1 } }),
+    });
+    const e = env(undefined, {
+      DB: { prepare: (q: string) => ({ bind: () => exec(q), ...exec(q) }), batch: async () => [] } as unknown as Env['DB'],
+    });
+    const res = await worker.fetch(req('/admin/api/forwards', { cookie: true }), e, ctx);
+    expect(res.status).toBe(401);
+  });
+});

@@ -5,9 +5,13 @@
 /// key-encryption key held in the Worker secret `TENANT_SECRETS_KEK`
 /// (base64 of 32 random bytes — `openssl rand -base64 32`).
 ///
-/// Wire format: `v1:<iv base64>:<ciphertext+tag base64>`. The `v1` prefix
-/// names the KEK generation so a rotation can decrypt old rows with the old
-/// key while writing new ones under the new key.
+/// Wire format: `v1:<iv base64>:<ciphertext+tag base64>` (format version).
+///
+/// KEK rotation (MT-06, docs/runbook/kek-rotation.md): put the new key in
+/// TENANT_SECRETS_KEK and the old one in TENANT_SECRETS_KEK_PREV. Decryption
+/// tries the current key, then the previous one — GCM authentication says
+/// which is right, so no key id is needed in the blob. New writes always use
+/// the current key; `rewrap` re-encrypts stored rows, after which PREV can go.
 ///
 /// AAD = `<tenantId>|<field>`. A ciphertext is therefore only decryptable as
 /// the exact field of the exact tenant it was written for: copying tenant Y's
@@ -64,6 +68,17 @@ export async function importKek(raw: string | undefined): Promise<CryptoKey> {
   ]);
 }
 
+/// Current KEK first, then TENANT_SECRETS_KEK_PREV if set. A malformed PREV
+/// is an error (a typo must not silently make old rows unreadable later).
+export async function importKeks(env: {
+  TENANT_SECRETS_KEK?: string;
+  TENANT_SECRETS_KEK_PREV?: string;
+}): Promise<CryptoKey[]> {
+  const keys = [await importKek(env.TENANT_SECRETS_KEK)];
+  if ((env.TENANT_SECRETS_KEK_PREV ?? '').trim()) keys.push(await importKek(env.TENANT_SECRETS_KEK_PREV));
+  return keys;
+}
+
 function aad(tenantId: string, field: SecretField): Uint8Array {
   return new TextEncoder().encode(`${tenantId}|${field}`);
 }
@@ -85,7 +100,7 @@ export async function encryptSecret(
 }
 
 export async function decryptSecret(
-  kek: CryptoKey,
+  kek: CryptoKey | CryptoKey[],
   tenantId: string,
   field: SecretField,
   blob: string,
@@ -94,21 +109,23 @@ export async function decryptSecret(
   if (parts.length !== 3 || parts[0] !== VERSION) {
     throw new SecretsError(`unsupported secret format for ${tenantId}.${field}`);
   }
-  let pt: ArrayBuffer;
-  try {
-    pt = await crypto.subtle.decrypt(
-      {
-        name: 'AES-GCM',
-        iv: b64decode(parts[1]) as BufferSource,
-        additionalData: aad(tenantId, field) as BufferSource,
-      },
-      kek,
-      b64decode(parts[2]) as BufferSource,
-    );
-  } catch {
-    // Wrong KEK, tampered ciphertext, or a blob that belongs to another
-    // tenant/field. Deliberately one message: never hint which.
-    throw new SecretsError(`cannot decrypt ${tenantId}.${field}`);
+  for (const key of Array.isArray(kek) ? kek : [kek]) {
+    try {
+      const pt = await crypto.subtle.decrypt(
+        {
+          name: 'AES-GCM',
+          iv: b64decode(parts[1]) as BufferSource,
+          additionalData: aad(tenantId, field) as BufferSource,
+        },
+        key,
+        b64decode(parts[2]) as BufferSource,
+      );
+      return new TextDecoder().decode(pt);
+    } catch {
+      // Try the next key (rotation window).
+    }
   }
-  return new TextDecoder().decode(pt);
+  // Wrong KEK(s), tampered ciphertext, or a blob that belongs to another
+  // tenant/field. Deliberately one message: never hint which.
+  throw new SecretsError(`cannot decrypt ${tenantId}.${field}`);
 }

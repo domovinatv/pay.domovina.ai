@@ -1,4 +1,4 @@
-import { decryptSecret, encryptSecret } from './crypto';
+import { decryptSecret, encryptSecret, secretAad } from './crypto';
 import { now } from './db';
 import type { Env } from './types';
 
@@ -36,7 +36,7 @@ export function sharedApp(env: Env): AppCreds | null {
 
 async function fromRow(env: Env, row: AppRow | null): Promise<AppCreds | null> {
   if (!row) return null;
-  return { clientId: row.client_id, secret: await decryptSecret(env.TOKEN_KEK, row.client_secret_enc), shop: row.shop };
+  return { clientId: row.client_id, secret: await decryptSecret(env.TOKEN_KEK, row.client_secret_enc, secretAad('apps', row.client_id, 'client_secret')), shop: row.shop };
 }
 
 export async function appByClientId(env: Env, clientId: string): Promise<AppCreds | null> {
@@ -80,7 +80,7 @@ export async function upsertApp(env: Env, a: { clientId: string; shop: string; s
        label = excluded.label,
        updated_at = excluded.updated_at`,
   )
-    .bind(a.clientId, a.shop, await encryptSecret(env.TOKEN_KEK, a.secret), a.label, ts, ts)
+    .bind(a.clientId, a.shop, await encryptSecret(env.TOKEN_KEK, a.secret, secretAad('apps', a.clientId, 'client_secret')), a.label, ts, ts)
     .run();
 }
 

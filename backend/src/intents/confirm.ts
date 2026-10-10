@@ -8,13 +8,15 @@ import {
   listSubmittedForwardsOlderThan,
   updateForward,
 } from '../monerium/db';
-import { getForwardStatus } from '../router/safe';
+import { getForwardStatus, type ForwardTxStatus } from '../router/safe';
+import { sendAlert } from '../alerts';
 import { publishIntentChange } from './stream';
 import { parseCampaignIdFromText, type SenderInfo } from '../monerium/sid';
 import type { PaymentIntentRow } from './db';
-import { getIntent, markIntentLate, markIntentPaid } from './db';
+import { getIntent, markIntentLate, markIntentPaid, markIntentUnderpaid } from './db';
 import {
   emitCampaignContributionWebhook,
+  emitPaymentUnderpaidWebhook,
   emitIntentPaidWebhook,
   emitPaymentLateWebhook,
 } from './outbound';
@@ -46,13 +48,24 @@ export type SettleableForward = Pick<
 };
 
 export interface ConfirmDeps {
-  getForwardStatus(txHash: Hex, tenantId?: string | null): Promise<'pending' | 'confirmed' | 'failed' | 'unknown'>;
+  getForwardStatus(txHash: Hex, tenantId?: string | null): Promise<ForwardTxStatus>;
   /// Atomic `submitted → confirmed` flip; true only for the caller that won.
   confirmForwardOnce(forwardId: number): Promise<boolean>;
   markForwardFailed(forwardId: number, error: string): Promise<void>;
   getOrder(orderId: string): Promise<MoneriumOrderRow | null>;
   getIntent(sid: string): Promise<PaymentIntentRow | null>;
   markIntentPaid(
+    sid: string,
+    args: {
+      moneriumOrderId: string;
+      forwardId: number;
+      forwardTxHash: string | null;
+      amountReceivedCents: number | null;
+    },
+  ): Promise<boolean>;
+  /// Record a settlement for less than the intent amount on a still-pending
+  /// intent (BW-01; no state change). True only for the first caller.
+  markIntentUnderpaid(
     sid: string,
     args: {
       moneriumOrderId: string;
@@ -75,6 +88,7 @@ export interface ConfirmDeps {
   ): Promise<boolean>;
   emitIntentPaid(intent: PaymentIntentRow, sender: SenderInfo): Promise<void>;
   emitPaymentLate(intent: PaymentIntentRow, sender: SenderInfo): Promise<void>;
+  emitPaymentUnderpaid(intent: PaymentIntentRow, sender: SenderInfo): Promise<void>;
   emitCampaignContribution(args: {
     campaignId: string;
     orderId: string;
@@ -84,8 +98,14 @@ export interface ConfirmDeps {
     forwardTxHash: string | null;
     senderIban?: string | null;
     senderName?: string | null;
+    tenantId: string | null;
   }): Promise<void>;
   listSubmittedForwards(olderThanUnix: number): Promise<MoneriumForwardRow[]>;
+  /// Mark a submitted row as checked now, so the reconcile walks the whole
+  /// backlog oldest-check-first instead of re-checking the same 50 (CT-03).
+  touchForward?(forwardId: number): Promise<void>;
+  /// Operator alert (dropped forward). Optional, fail-soft.
+  alert?(text: string): Promise<void>;
   sleep(ms: number): Promise<void>;
   /// Poke the intent's SSE stream after settlement (ADR 0017). Optional and
   /// fail-soft: the stream's own heartbeat re-read is the backstop.
@@ -100,11 +120,19 @@ export function makeConfirmDeps(env: Env): ConfirmDeps {
     getOrder: (orderId) => getMoneriumOrder(env, orderId),
     getIntent: (sid) => getIntent(env, sid),
     markIntentPaid: (sid, args) => markIntentPaid(env, sid, args),
+    markIntentUnderpaid: (sid, args) => markIntentUnderpaid(env, sid, args),
     markIntentLate: (sid, args) => markIntentLate(env, sid, args),
     emitIntentPaid: (intent, sender) => emitIntentPaidWebhook(env, intent, sender),
     emitPaymentLate: (intent, sender) => emitPaymentLateWebhook(env, intent, sender),
+    emitPaymentUnderpaid: (intent, sender) => emitPaymentUnderpaidWebhook(env, intent, sender),
     emitCampaignContribution: (args) => emitCampaignContributionWebhook(env, args),
     listSubmittedForwards: (olderThan) => listSubmittedForwardsOlderThan(env, olderThan),
+    touchForward: async (id) => {
+      await env.DB.prepare(`UPDATE monerium_forwards SET updated_at = ? WHERE id = ? AND status = 'submitted'`)
+        .bind(Math.floor(Date.now() / 1000), id)
+        .run();
+    },
+    alert: (text) => sendAlert(env, text),
     sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
     publish: (sid) => publishIntentChange(env, sid),
   };
@@ -118,6 +146,9 @@ export const CONFIRM_POLL_DELAYS_MS = [5_000, 5_000, 5_000, 10_000, 15_000, 15_0
 /// Cron reconcile only touches `submitted` forwards at least this old, so it
 /// doesn't burn RPC calls racing a primary poll that is still running.
 export const RECONCILE_MIN_AGE_SECONDS = 60;
+
+/// A forward broadcast this long ago that no node knows is dropped (BW-16).
+export const DROPPED_AFTER_SECONDS = 30 * 60;
 
 /// Settle a forward whose TX was observed CONFIRMED on-chain. Returns true
 /// when this call won the atomic flip and fired the effects; false when
@@ -163,6 +194,8 @@ export async function settleConfirmedForward(
         forwardTxHash: fwd.tx_hash,
         senderIban: sender.iban,
         senderName: sender.name,
+        // NULL = legacy row = default tenant, same as the endpoint lookup.
+        tenantId: fwd.tenant_id ?? null,
       });
     }
   }
@@ -231,6 +264,19 @@ export async function reconcileSubmittedForwards(
     } else if (status === 'failed') {
       await deps.markForwardFailed(fwd.id, 'onchain_revert');
       failed++;
+    } else if (status === 'dropped' && fwd.created_at < nowUnix - DROPPED_AFTER_SECONDS) {
+      // BW-16: the tx left every mempool we can see — the EURe never moved.
+      // `failed` makes it retryable from /admin/forwards (the retry re-checks
+      // the hash on-chain first).
+      await deps.markForwardFailed(fwd.id, 'dropped_from_mempool');
+      failed++;
+      await deps.alert?.(
+        `❌ <b>MPT forward ispao iz mempoola</b>\n` +
+          `order: <code>${fwd.order_id}</code> · tx: <code>${fwd.tx_hash}</code>\n` +
+          `EURe je i dalje u Safe-u. /admin/forwards → Pokušaj ponovno.`,
+      ).catch(() => {});
+    } else {
+      await deps.touchForward?.(fwd.id);
     }
   }
   return { checked: rows.length, confirmed, failed };
@@ -261,16 +307,24 @@ async function flipPaidAndNotify(
     if (intent) await deps.emitIntentPaid(intent, args.sender);
     return true;
   }
-  // Not flipped: already paid (a duplicate settle — nothing to do) or the
-  // intent had EXPIRED before the money settled. The latter used to be
-  // silent: the EURe was forwarded but the merchant never heard about it
-  // (intent 2abjke6unj5u, 2026-05-23). Record it and send `payment.late`.
-  const late = await deps.markIntentLate(args.sid, {
+  const settlement = {
     moneriumOrderId: args.orderId,
     forwardId: args.forwardId,
     forwardTxHash: args.forwardTxHash,
     amountReceivedCents: args.amountCents,
-  });
+  };
+  // Not flipped because the payer sent LESS than asked (BW-01): record it on
+  // the still-pending intent and tell the merchant — never `paid`.
+  if (await deps.markIntentUnderpaid(args.sid, settlement)) {
+    const intent = await deps.getIntent(args.sid);
+    if (intent) await deps.emitPaymentUnderpaid(intent, args.sender);
+    return false;
+  }
+  // Not flipped: already paid (a duplicate settle — nothing to do) or the
+  // intent had EXPIRED before the money settled. The latter used to be
+  // silent: the EURe was forwarded but the merchant never heard about it
+  // (intent 2abjke6unj5u, 2026-05-23). Record it and send `payment.late`.
+  const late = await deps.markIntentLate(args.sid, settlement);
   if (late) {
     const intent = await deps.getIntent(args.sid);
     if (intent) await deps.emitPaymentLate(intent, args.sender);
