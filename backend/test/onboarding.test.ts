@@ -36,6 +36,7 @@ function deps(over: Partial<VerifyDeps> = {}): VerifyDeps {
     listIbans: async () => [{ iban: 'HR1210010051863000160', profile: 'prof-a', address: SAFE, chain: 'gnosis' }],
     getCode: async () => '0x6080',
     isModuleEnabled: async () => true,
+    listModules: async () => [MOD.toLowerCase()],
     avatar: async () => SAFE,
     target: async () => SAFE,
     balanceWei: async () => MIN_ROUTER_GAS_WEI,
@@ -100,7 +101,7 @@ describe('runVerify', () => {
     const checks = await runVerify(deps(), tenant, row(), true);
     expect(checks.filter((c) => !c.ok)).toEqual([]);
     expect(checks.map((c) => c.key)).toEqual([
-      'monerium_profile', 'iban_linked_to_safe', 'safe_deployed', 'roles_modifier',
+      'monerium_profile', 'iban_linked_to_safe', 'safe_deployed', 'roles_modifier', 'only_module_is_roles',
       'role_key', 'router_gas', 'webhook', 'whitelist', 'forward_cap',
     ]);
   });
@@ -114,6 +115,7 @@ describe('runVerify', () => {
     ['modifier avatar is another Safe', { avatar: async () => ROUTER }, 'roles_modifier'],
     ['router without gas', { balanceWei: async () => 1n }, 'router_gas'],
     ['empty whitelist', { activeWhitelistCount: async () => 0 }, 'whitelist'],
+    ['TD-05: another module enabled on the Safe', { listModules: async () => [MOD.toLowerCase(), '0x' + '77'.repeat(20)] }, 'only_module_is_roles'],
     ['RPC throws', { getCode: async () => { throw new Error('rpc down'); } }, 'safe_deployed'],
   ])('fails only %s', async (_n, over, failing) => {
     const checks = await runVerify(deps(over as Partial<VerifyDeps>), tenant, row(), true);

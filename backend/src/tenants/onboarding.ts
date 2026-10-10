@@ -380,13 +380,21 @@ export interface VerifyDeps {
   listIbans(profileId: string): Promise<MoneriumIban[]>;
   getCode(address: string): Promise<string | undefined>;
   isModuleEnabled(safe: string, module: string): Promise<boolean>;
+  /// Every module enabled on the Safe (first page of 20 is plenty — more
+  /// than one is already a finding).
+  listModules(safe: string): Promise<string[]>;
   avatar(module: string): Promise<string>;
   target(module: string): Promise<string>;
   balanceWei(address: string): Promise<bigint>;
   activeWhitelistCount(): Promise<number>;
 }
 
-const SAFE_ABI = parseAbi(['function isModuleEnabled(address module) view returns (bool)']);
+const SAFE_ABI = parseAbi([
+  'function isModuleEnabled(address module) view returns (bool)',
+  'function getModulesPaginated(address start, uint256 pageSize) view returns (address[] array, address next)',
+]);
+/// Safe's linked-list sentinel for getModulesPaginated.
+const SENTINEL_MODULES = '0x0000000000000000000000000000000000000001';
 const MODIFIER_ABI = parseAbi([
   'function avatar() view returns (address)',
   'function target() view returns (address)',
@@ -412,6 +420,15 @@ export function makeVerifyDeps(env: Env, tenantId: string, rail: Pick<TenantRail
     getCode: (address) => chain.getCode({ address: address as Address }),
     isModuleEnabled: (safe, module) =>
       chain.readContract({ address: safe as Address, abi: SAFE_ABI, functionName: 'isModuleEnabled', args: [module as Address] }),
+    listModules: async (safe) => {
+      const [modules] = await chain.readContract({
+        address: safe as Address,
+        abi: SAFE_ABI,
+        functionName: 'getModulesPaginated',
+        args: [SENTINEL_MODULES as Address, 20n],
+      });
+      return modules.map((m) => m.toLowerCase());
+    },
     avatar: (module) => chain.readContract({ address: module as Address, abi: MODIFIER_ABI, functionName: 'avatar' }),
     target: (module) => chain.readContract({ address: module as Address, abi: MODIFIER_ABI, functionName: 'target' }),
     balanceWei: (address) => chain.getBalance({ address: address as Address }),
@@ -478,6 +495,16 @@ export async function runVerify(
     if (!enabled) return [false, 'Modifier nije uključen kao modul na Safeu'];
     if (!sameAddr(av, safe) || !sameAddr(tg, safe)) return [false, `avatar ${av} / target ${tg} ≠ Safe ${safe}`];
     return [true, 'uključen modul, avatar = target = Safe'];
+  });
+  // TD-05: any other module can move EURe out of the Safe without the role
+  // (the theft detector would at least shout 🚨 module_unknown, but only after).
+  await check('only_module_is_roles', async () => {
+    if (!row.roles_modifier) return [false, 'roles_modifier nije upisan'];
+    const modules = await deps.listModules(safe);
+    const others = modules.filter((m) => !sameAddr(m, row.roles_modifier));
+    return others.length === 0
+      ? [true, 'jedini modul na Safeu je Roles modifier']
+      : [false, `Safe ima i druge module: ${others.join(', ')} — ukloniti (disableModule) prije aktivacije`];
   });
   await check('role_key', async () =>
     row.role_key ? [true, row.role_key] : [false, 'role_key nije upisan'],
