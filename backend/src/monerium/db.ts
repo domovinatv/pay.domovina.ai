@@ -96,6 +96,10 @@ export async function isKnownPayer(
   env: Env,
   iban: string | null,
   excludeOrderId: string,
+  /// MT-08: Monerium screens per profile, i.e. per tenant — and one tenant
+  /// must not learn that an IBAN paid another. NULL rows = default tenant.
+  tenantId: string,
+  defaultTenantId: string,
 ): Promise<boolean | null> {
   const norm = normalizeIban(iban);
   if (!norm) return null;
@@ -103,9 +107,10 @@ export async function isKnownPayer(
     `SELECT 1 AS hit FROM monerium_orders
       WHERE kind = 'issue' AND state = 'processed' AND id <> ?
         AND REPLACE(UPPER(counterpart_iban), ' ', '') = ?
+        AND COALESCE(tenant_id, ?) = ?
       LIMIT 1`,
   )
-    .bind(excludeOrderId, norm)
+    .bind(excludeOrderId, norm, defaultTenantId, tenantId)
     .first<{ hit: number }>();
   return row !== null;
 }

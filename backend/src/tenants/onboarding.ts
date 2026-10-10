@@ -10,6 +10,7 @@ import { getTenant, type TenantRow } from './db';
 import {
   getTenantRail,
   getTenantRailRow,
+  legacyRail,
   listRailTenantIds,
   moneriumBaseUrl,
   parseChain,
@@ -515,9 +516,10 @@ export async function loadTenantAndRail(
 /// without gas turns every forward into `failed` + a manual retry.
 export async function checkRouterGas(env: Env): Promise<number> {
   let low = 0;
-  for (const tenantId of await listRailTenantIds(env)) {
+  // MT-07: ITalk's router too — it carries all live traffic today.
+  for (const tenantId of [null, ...(await listRailTenantIds(env))]) {
     try {
-      const rail = await getTenantRail(env, tenantId);
+      const rail = tenantId === null ? legacyRail(env) : await getTenantRail(env, tenantId);
       if (!rail?.signer.privateKey) continue;
       const address = privateKeyToAccount(rail.signer.privateKey as Hex).address;
       const chain = createPublicClient({
@@ -530,12 +532,12 @@ export async function checkRouterGas(env: Env): Promise<number> {
         await sendAlert(
           env,
           `⛽ <b>Router tenanta ostaje bez gasa</b>\n` +
-            `tenant: <code>${tenantId}</code> · router: <code>${getAddress(address)}</code>\n` +
+            `tenant: <code>${rail.tenantId}</code> · router: <code>${getAddress(address)}</code>\n` +
             `saldo: <code>${bal}</code> wei (prag ${MIN_ROUTER_GAS_WEI}). Dopuniti xDAI.`,
         );
       }
     } catch (e) {
-      console.error(`router gas check ${tenantId}: ${(e as Error).message}`);
+      console.error(`router gas check ${tenantId ?? 'legacy'}: ${(e as Error).message}`);
     }
   }
   return low;

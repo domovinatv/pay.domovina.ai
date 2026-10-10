@@ -357,7 +357,7 @@ export async function loadStageContext(
   }
   // Only worth a query while Monerium still holds the funds.
   const knownPayer = order && order.state !== 'processed' && order.state !== 'rejected'
-    ? await isKnownPayer(env, order.counterpart_iban, order.id)
+    ? await isKnownPayer(env, order.counterpart_iban, order.id, order.tenant_id ?? defaultTenantId(env), defaultTenantId(env))
     : null;
   return { order, forward, knownPayer };
 }

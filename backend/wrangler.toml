@@ -115,6 +115,11 @@ INTENT_SSE = "1"
 # at the same whitelisted destination. "0": park as no_routing_target (old).
 STRAY_RESOLVER = "1"
 
+# MT-03 (Fable 5.1 r2): ITalk forwards only issue orders minted at SAFE_ADDRESS,
+# as tenant rails always did. Pre-check 2026-10-10: every ITalk issue order
+# since 2026-05-21 minted at the Safe. "0" = old behaviour (rollback switch).
+LEGACY_REQUIRE_MINT_AT = "1"
+
 # /admin prijava (src/admin/auth/mount.ts, docs/admin-auth.md) — isti model kao
 # bank-push-gateway: Cloudflare Access (OTP na e-mail) na /admin/sso ili passkey.
 # Nisu tajne. Oduzimanje pristupa: makni e-mail odavde (djeluje odmah, i na

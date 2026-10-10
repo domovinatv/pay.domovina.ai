@@ -114,7 +114,9 @@ export function makeAuthorizeDeps(env: Env, rail: TenantRail): AuthorizeDeps {
     safeAddress: rail.receivingSafe,
     defaultTenantId: defaultTenantId(env),
     railTenantId: rail.tenantId,
-    requireMintAt: rail.legacy ? null : rail.receivingSafe,
+    // MT-03: ITalk too, behind a flag for one deploy cycle (pre-check
+    // 2026-10-10: every ITalk issue order since the Safe exists minted there).
+    requireMintAt: rail.legacy && env.LEGACY_REQUIRE_MINT_AT !== '1' ? null : rail.receivingSafe,
     maxForwardCents: rail.maxForwardCents,
   };
 }

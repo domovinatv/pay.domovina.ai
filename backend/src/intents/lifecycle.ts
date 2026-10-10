@@ -39,7 +39,7 @@ export async function notifyOrderLifecycle(
       console.warn(`lifecycle: order ${order.id} on tenant ${railTenantId} names ${owner}'s ${intent ? 'intent' : 'campaign'} — not notified`);
       return;
     }
-    const knownPayer = await isKnownPayer(env, extractSenderFromOrder(order).iban, order.id);
+    const knownPayer = await isKnownPayer(env, extractSenderFromOrder(order).iban, order.id, railTenantId, defaultTenantId(env));
     await emitOrderLifecycleWebhook(env, order, {
       sid: intent?.sid ?? null,
       campaignId: campaign?.campaign_id ?? null,

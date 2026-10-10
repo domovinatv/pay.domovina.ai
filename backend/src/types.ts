@@ -76,6 +76,7 @@ export interface Env {
   TENANT_SECRETS_KEK: string;         // SECRET — base64 of 32 bytes; AES-GCM key for tenant_rail *_enc columns
   INTENT_SSE: string;                 // "1" → GET /api/intents/:sid/stream serves SSE; else 404 as before
   STRAY_RESOLVER?: string;            // "1" → reference-less payments are matched to an intent by amount + time (src/monerium/strayResolver.ts)
+  LEGACY_REQUIRE_MINT_AT?: string;     // "1" → ITalk forwards only orders minted at SAFE_ADDRESS (MT-03), like every tenant rail
   MAX_OPEN_INTENTS_PER_TARGET?: string; // SR-01 cap on open intents per non-trusted destination (default 20); sk_ callers exempt
   /// Durable Object namespace holding one SSE hub per sid (src/intents/stream.ts).
   /// Optional so environments without the binding (tests, old deploys) keep
