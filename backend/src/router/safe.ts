@@ -5,6 +5,7 @@ import {
   encodeFunctionData,
   http,
   isAddress,
+  nonceManager,
   numberToHex,
   pad,
   size,
@@ -143,7 +144,10 @@ export async function forwardViaSafe(
   if (!isAddress(args.target)) return { ok: false, error: `invalid target: ${args.target}` };
   if (args.amountWei <= 0n) return { ok: false, error: `invalid amount: ${args.amountWei}` };
 
-  const account = privateKeyToAccount(normalizeHex(signer.privateKey) as Hex);
+  // MT-10: nonces handed out per (address, chain) inside this isolate, so two
+  // forwards in the same isolate never collide. Across isolates a collision
+  // stays possible → handleForward retries once on a nonce error.
+  const account = privateKeyToAccount(normalizeHex(signer.privateKey) as Hex, { nonceManager });
   const wallet = createWalletClient({ account, chain: viemChain(signer.chain), transport: http(signer.rpcUrl) });
 
   const useRegistry =

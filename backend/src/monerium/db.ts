@@ -392,6 +392,16 @@ export async function listSubmittedForwardsOlderThan(
   return res.results;
 }
 
+export async function getForwardById(
+  env: Env,
+  id: number,
+): Promise<MoneriumForwardRow | null> {
+  const row = await env.DB.prepare(`SELECT * FROM monerium_forwards WHERE id = ?`)
+    .bind(id)
+    .first<MoneriumForwardRow>();
+  return row ?? null;
+}
+
 export async function getForwardByOrder(
   env: Env,
   orderId: string,

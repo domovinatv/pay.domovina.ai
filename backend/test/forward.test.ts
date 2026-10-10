@@ -101,6 +101,30 @@ describe('handleForward — authorised', () => {
     expect(rec.polls).toBe(0);
   });
 
+  it('MT-10: one retry after a nonce collision, then submitted', async () => {
+    let calls = 0;
+    const { deps, rec } = harness({
+      sleep: async () => {},
+      forward: async () => (++calls === 1
+        ? { ok: false, error: 'nonce too low: next nonce 42' }
+        : { ok: true, txHash: '0xbeef' as `0x${string}` }),
+    });
+    await handleForward(deps, order(`mpt:${PAYEE}?sid=abc123def456`));
+    expect(calls).toBe(2);
+    expect(rec.updates[0].patch).toMatchObject({ status: 'submitted', tx_hash: '0xbeef' });
+  });
+
+  it('MT-10: never retries "already known" (the node has our tx)', async () => {
+    let calls = 0;
+    const { deps, rec } = harness({
+      sleep: async () => {},
+      forward: async () => { calls++; return { ok: false, error: 'already known' }; },
+    });
+    await handleForward(deps, order(`mpt:${PAYEE}?sid=abc123def456`));
+    expect(calls).toBe(1);
+    expect(rec.updates[0].patch).toMatchObject({ status: 'failed' });
+  });
+
   it('MT-02: no router key → failed row + alert, never silence', async () => {
     const { deps, rec } = harness({
       forward: async () => ({ ok: false, error: 'router_disabled: no ROUTER_PRIVATE_KEY' }),

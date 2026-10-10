@@ -908,7 +908,9 @@ async function load() {
       + '<td>'+txCell+'</td>'
       + '<td class="dim note">'
         + (f.error ? '<div class="err" title="'+esc(f.error)+'">'+esc(f.error)+'</div>' : '')
-        + (parked ? '<div class="actions"><button type="button" class="reroute" data-order="'+esc(f.order_id)+'">Preusmjeri…</button>'
+        + (parked ? '<div class="actions">'
+          + (f.status === "failed" ? '<button type="button" class="retry" data-id="'+f.id+'" title="ponovi broadcast istim putem kao webhook">Pokušaj ponovno</button>' : '')
+          + '<button type="button" class="reroute" data-order="'+esc(f.order_id)+'">Preusmjeri…</button>'
           + '<button type="button" class="offrail" data-order="'+esc(f.order_id)+'">Riješeno ručno…</button></div>' : '')
         + '</td>'
       + '</tr>'
@@ -956,6 +958,23 @@ document.getElementById("rows").addEventListener("click", async (e) => {
     } catch (err) {
       msg.textContent = "Greška: " + err.message;
       btn.disabled = false; delete btn.dataset.armed; btn.textContent = "Označi riješenim";
+    }
+    return;
+  }
+  if (btn.classList.contains("retry")) {
+    if (!btn.dataset.armed) { btn.dataset.armed = "1"; btn.textContent = "Potvrdi ponovni pokušaj"; return; }
+    btn.disabled = true;
+    btn.textContent = "Šaljem…";
+    try {
+      const r = await fetch("/admin/api/forwards/"+encodeURIComponent(btn.dataset.id)+"/retry", {
+        method: "POST", credentials: "same-origin",
+      });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(d.error || ("HTTP "+r.status));
+      btn.textContent = "Pokrenuto ✓";
+      setTimeout(load, 4000);
+    } catch (err) {
+      btn.textContent = "Greška: "+err.message;
     }
     return;
   }

@@ -8,9 +8,11 @@ import {
   listMoneriumOrders,
   listMoneriumWebhookEvents,
   getMoneriumOrder,
+  getForwardById,
+  getForwardByOrder,
 } from '../monerium/db';
 import { listIntents, listRerouteCandidates } from '../intents/db';
-import { checkReroute, handleForward, makeForwardDeps } from '../monerium/forward';
+import { checkReroute, handleForward, makeForwardDeps, maybeForward } from '../monerium/forward';
 import { STRAY_LOOKBACK_SECONDS } from '../monerium/strayResolver';
 import type { MoneriumOrder } from '../monerium/types';
 import { getTenantRail, isLegacyTenant, legacyRail, type TenantRail } from '../tenants/rail';
@@ -144,6 +146,36 @@ export function mountAdminUi(app: Hono<{ Bindings: Env }>): void {
     // The forward polls for confirmation (~75 s) — don't hold the request.
     c.executionCtx.waitUntil(handleForward(deps, loaded.order, { sid }));
     return c.json({ accepted: true, order_id: loaded.order.id, sid }, 202);
+  });
+  // Retry a forward whose BROADCAST failed (RPC down, gas, nonce) — MT-10 /
+  // prethodni P0-6. Same path as the webhook; the live-forward latch (0016)
+  // makes two concurrent retries broadcast once. A `blocked` (policy) row is
+  // not retried here — that is what reroute is for.
+  app.post('/admin/api/forwards/:id/retry', async (c) => {
+    const id = Number(c.req.param('id'));
+    if (!Number.isInteger(id)) return c.json({ error: 'bad_id' }, 400);
+    const row = await getForwardById(c.env, id);
+    if (!row) return c.json({ error: 'forward_not_found' }, 404);
+    if (row.status !== 'failed') return c.json({ error: 'not_failed', status: row.status }, 409);
+    const latest = await getForwardByOrder(c.env, row.order_id);
+    if (latest && latest.id !== row.id) return c.json({ error: 'superseded', latest_id: latest.id, latest_status: latest.status }, 409);
+    const loaded = await loadParkedOrder(c.env, row.order_id);
+    if ('error' in loaded) return c.json({ error: loaded.error }, 404);
+    const deps = makeForwardDeps(c.env, loaded.rail);
+    await writeAudit(c.env, {
+      tenantId: loaded.tenantId,
+      action: 'forward.retry',
+      address: row.target_address,
+      actor: actorOf(c),
+      detail: JSON.stringify({ forward_id: row.id, order_id: row.order_id, sid: row.sid, previous_error: row.error }),
+    });
+    // An operator's earlier pick stays the pick; everything else re-runs the
+    // normal decision (memo, or the resolver for a stray).
+    const run = row.memo_prefix === 'manual' && row.sid
+      ? handleForward(deps, loaded.order, { sid: row.sid })
+      : maybeForward(deps, loaded.order);
+    c.executionCtx.waitUntil(run);
+    return c.json({ accepted: true, forward_id: row.id, order_id: row.order_id }, 202);
   });
   // Parked order whose money was moved by hand outside the rail (2/3 owners).
   // The tx is verified on-chain; afterwards the order can never be rerouted.

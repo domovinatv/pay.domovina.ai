@@ -50,6 +50,8 @@ export interface ForwardDeps {
   insertForward(args: Parameters<typeof insertForward>[1]): Promise<number>;
   updateForward(id: number, patch: Parameters<typeof updateForward>[2]): Promise<void>;
   forward(args: ForwardArgs): Promise<ForwardResult>;
+  /// Wait before the one nonce-collision retry. Defaults to setTimeout.
+  sleep?(ms: number): Promise<void>;
   settleNonRoutedPaid(args: {
     sid: string;
     orderId: string;
@@ -304,14 +306,23 @@ export async function handleForward(
   for (const other of claimSids ?? []) {
     if (other !== claimed.sid) await safely(deps.publish?.(other) ?? Promise.resolve());
   }
-  const result = await deps.forward({
+  const forwardArgs: ForwardArgs = {
     target: target as Address,
     amountWei,
     // When PAYMENT_REGISTRY_ADDRESS + MULTISEND_ADDRESS are set, the rail
     // batches `registry.record(...)` alongside the transfer so each forward
     // emits an onchain `Payment` event. Null → legacy single-transfer path.
     sessionId: routing.sid,
-  });
+  };
+  let result = await deps.forward(forwardArgs);
+  // MT-10: two isolates picked the same router nonce. Our tx was NOT
+  // accepted, so one more broadcast (fresh nonce) cannot pay twice. Never on
+  // "already known" — that means the node HAS our tx.
+  if (!result.ok && NONCE_COLLISION_RE.test(result.error ?? '')) {
+    console.warn(`forward ${order.id} nonce collision (${result.error}) — one retry`);
+    await (deps.sleep ?? defaultSleep)(NONCE_RETRY_DELAY_MS);
+    result = await deps.forward(forwardArgs);
+  }
   if (!result.ok) {
     await deps.updateForward(forwardId, {
       status: 'failed',
@@ -528,6 +539,10 @@ async function claimForward(
 }
 
 const LIVE = new Set(['pending', 'submitted', 'confirmed']);
+
+const NONCE_COLLISION_RE = /nonce too low|replacement transaction underpriced/i;
+const NONCE_RETRY_DELAY_MS = 5_000;
+const defaultSleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
 /// Operator reroute (admin UI): push a PARKED order onto the intent the
 /// operator picked. Refuses when the order already has a live forward. The
