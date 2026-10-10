@@ -7,10 +7,12 @@ import { extractRoutingTarget, parseSidFromText } from '../src/monerium/sid';
 /// docs/research/aircash/05-hub3-format-provjera.md.
 
 const ITALK = { beneficiaryName: 'ITalk d.o.o.', iban: 'EE707777000162921128' };
+/// ITalk's HPB account: HUB3 only works with a Croatian payee IBAN.
+const ITALK_HR = { beneficiaryName: 'ITalk d.o.o.', iban: 'HR6023900011500157044' };
 
 describe('buildHub3Text', () => {
-  it('emits 14 fields, each terminated by LF (spec: graničnik after every field)', () => {
-    const out = buildHub3Text({ ...ITALK, amountEur: 1.02, purposeCode: 'OTHR', description: 'Lukavec' })!;
+  it('emits 14 fields each ending in LF, for a Croatian payee IBAN', () => {
+    const out = buildHub3Text({ ...ITALK_HR, amountEur: 1.02, purposeCode: 'OTHR', description: 'Lukavec' })!;
     expect(out.endsWith('\n')).toBe(true);
     expect(out.split('\n')).toEqual([
       'HRVHUB30',
@@ -22,7 +24,7 @@ describe('buildHub3Text', () => {
       'ITalk d.o.o.',
       '',
       '',
-      'EE707777000162921128',
+      'HR6023900011500157044',
       'HR99',
       '',
       'OTHR',
@@ -50,9 +52,10 @@ describe('buildHub3Text', () => {
     );
   });
 
-  it('accepts an EE IBAN (20 chars fits the 21-char field) and refuses longer ones', () => {
-    expect(buildHub3Text({ ...ITALK, amountEur: 1 })).not.toBeNull();
-    expect(buildHub3Text({ ...ITALK, iban: 'DE89370400440532013000', amountEur: 1 })).toBeNull();
+  it('only a Croatian IBAN: EE and DE give no HUB3 code (apps refuse them)', () => {
+    expect(buildHub3Text({ ...ITALK_HR, amountEur: 1 })).not.toBeNull();
+    expect(buildHub3Text({ ...ITALK, amountEur: 1 })).toBeNull();
+    expect(buildHub3Text({ ...ITALK_HR, iban: 'DE89370400440532013000', amountEur: 1 })).toBeNull();
   });
 
   it('refuses amounts that are not positive', () => {
@@ -60,16 +63,16 @@ describe('buildHub3Text', () => {
     expect(buildHub3Text({ ...ITALK, amountEur: -1 })).toBeNull();
   });
 
-  it('drops the reference when the model is HR99 (no reference)', () => {
-    const lines = buildHub3Text({ ...ITALK, amountEur: 1, model: 'HR99', reference: '123' })!.split('\n');
+  it('HR99 means no reference, also for an HR payee', () => {
+    const lines = buildHub3Text({ ...ITALK_HR, amountEur: 1, model: 'HR99', reference: '123' })!.split('\n');
     expect(lines[10]).toBe('HR99');
     expect(lines[11]).toBe('');
   });
 
-  it('cuts every field to its spec length', () => {
+  it('cuts every field to its spec length (HR payee)', () => {
     const lines = buildHub3Text({
       beneficiaryName: 'A very long beneficiary name d.o.o.',
-      iban: ITALK.iban,
+      iban: ITALK_HR.iban,
       amountEur: 1,
       description: 'x'.repeat(80),
     })!.split('\n');
@@ -89,8 +92,8 @@ describe('hub3Text', () => {
 });
 
 describe('HUB3 description vs routing', () => {
-  it('the default description is a stray, not an unroutable sid/address memo', () => {
-    const desc = buildHub3Text({ ...ITALK, amountEur: 1, description: 'Uplata' })!.split('\n')[13];
+  it('default description is a stray, not an unroutable memo (HR payee)', () => {
+    const desc = buildHub3Text({ ...ITALK_HR, amountEur: 1, description: 'Uplata' })!.split('\n')[13];
     const r = extractRoutingTarget(desc);
     expect(r.diagnosticTarget).toBeNull();
     expect(parseSidFromText(desc)).toBeNull();
@@ -98,7 +101,7 @@ describe('HUB3 description vs routing', () => {
 });
 
 describe('checkout page HUB3 tab', () => {
-  it('renders the PDF417 next to the EPC QR for an EE IBAN', async () => {
+  it('renders the PDF417 next to the EPC QR for a Croatian IBAN', async () => {
     const { renderCheckoutPage } = await import('../src/checkout/page');
     const html = renderCheckoutPage(
       {
@@ -110,13 +113,13 @@ describe('checkout page HUB3 tab', () => {
         state: 'pending',
       } as never,
       { stage: 'awaiting_payment' } as never,
-      { ...ITALK, bic: 'LHVBEE22' },
+      { ...ITALK_HR, bic: 'HPBZHR2X' },
     );
     expect(html).toContain('id="hub3Pane"');
     expect(html).toMatch(/id="hub3Box"><svg[^>]*viewBox/);
   });
 
-  it('offers no HUB3 tab when the IBAN does not fit the field', async () => {
+  it('offers no HUB3 tab for a non-Croatian IBAN (EE, DE)', async () => {
     const { renderCheckoutPage } = await import('../src/checkout/page');
     const html = renderCheckoutPage(
       { sid: 'abcdefghijkm', target_address: '0x0000000000000000000000000000000000000001', amount_cents: 100, currency: 'EUR', label: null, state: 'pending' } as never,
