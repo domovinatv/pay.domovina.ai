@@ -473,6 +473,11 @@ function renderStatusBar(s) {
   } else if (stage === 'rejected') {
     cls = 'expired';
     inner = '<span style="font-size:1.1em">⚠</span> Uplata je odbijena — novac se vraća na tvoj račun.';
+  } else if (stage === 'settled' && status && status.amount_mismatch === 'under') {
+    // BW-01: the money arrived, but less than asked — not "paid".
+    cls = 'expired';
+    inner = '<span style="font-size:1.1em">⚠</span> Primljeno ' + eurCents(status.amount_received_cents) +
+      ' od ' + s.amount_eur + ' EUR — manje od traženog iznosa. Primatelj je obaviješten.';
   } else if (stage === 'settled') {
     cls = 'paid';
     inner = '<span style="font-size:1.1em">✓</span> Uplata potvrđena — EURe kod primatelja';
@@ -513,6 +518,10 @@ function applyState(s) {
   }
 }
 
+function eurCents(c) {
+  return c == null ? '?' : (c / 100).toFixed(2);
+}
+
 function isReceived(stage) {
   return stage === 'received_processing' || stage === 'minted' || stage === 'forwarding';
 }
@@ -539,7 +548,9 @@ function updateSuccess(s) {
   const note = $('successNote');
   if (stage === 'settled') {
     note.className = 'settle-note done';
-    note.innerHTML = '✓ EURe je stigao na primateljev Gnosis wallet.';
+    note.innerHTML = status.amount_mismatch === 'under'
+      ? '⚠ EURe je stigao primatelju, ali iznos je manji od traženog (' + eurCents(status.amount_received_cents) + ' od ' + s.amount_eur + ' EUR).'
+      : '✓ EURe je stigao na primateljev Gnosis wallet.';
     const tx = (status && status.forward_tx_hash) || s.forward_tx_hash;
     if (tx) {
       $('txLink').href = 'https://gnosisscan.io/tx/' + tx;

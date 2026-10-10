@@ -76,6 +76,11 @@ export interface StageResult {
   /// applicable or unknown. A prediction from our own order history — Monerium
   /// itself only reports its verdict (meta.evaluation) after processing.
   review_expected: boolean | null;
+  /// Settled amount differs from what the intent asked for (BW-01): 'under'
+  /// keeps the intent unpaid (merchant got `payment.underpaid`), 'over' is
+  /// paid. Lets the checkout say "Primljeno 30,00 od 50,00 EUR".
+  amount_mismatch: 'under' | 'over' | null;
+  amount_received_cents: number | null;
 }
 
 /// Narrow row slices so the pure computation is unit-testable without D1.
@@ -86,6 +91,9 @@ export type StageIntent = Pick<
   /// When given, a forward claimed by a DIFFERENT sid never counts for this
   /// intent (SR-03).
   sid?: string;
+  /// For amount_mismatch (BW-01). Optional so narrow test rows still work.
+  amount_cents?: number;
+  amount_received_cents?: number | null;
 };
 export type StageOrder = Pick<
   MoneriumOrderRow,
@@ -159,7 +167,16 @@ export function computeStage(input: StageInput): StageResult {
     rejected_reason: rejectedReason,
     review_expected:
       stage === 'received_processing' && input.knownPayer != null ? !input.knownPayer : null,
+    amount_mismatch: amountMismatch(intent),
+    amount_received_cents: intent.amount_received_cents ?? null,
   };
+}
+
+function amountMismatch(intent: StageIntent): 'under' | 'over' | null {
+  const want = intent.amount_cents;
+  const got = intent.amount_received_cents;
+  if (want == null || got == null) return null;
+  return got < want ? 'under' : got > want ? 'over' : null;
 }
 
 function isForeignForward(forward: StageForward | null, intentSid: string | undefined): boolean {

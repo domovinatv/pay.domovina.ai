@@ -12,9 +12,10 @@ import { getForwardStatus } from '../router/safe';
 import { publishIntentChange } from './stream';
 import { parseCampaignIdFromText, type SenderInfo } from '../monerium/sid';
 import type { PaymentIntentRow } from './db';
-import { getIntent, markIntentLate, markIntentPaid } from './db';
+import { getIntent, markIntentLate, markIntentPaid, markIntentUnderpaid } from './db';
 import {
   emitCampaignContributionWebhook,
+  emitPaymentUnderpaidWebhook,
   emitIntentPaidWebhook,
   emitPaymentLateWebhook,
 } from './outbound';
@@ -61,6 +62,17 @@ export interface ConfirmDeps {
       amountReceivedCents: number | null;
     },
   ): Promise<boolean>;
+  /// Record a settlement for less than the intent amount on a still-pending
+  /// intent (BW-01; no state change). True only for the first caller.
+  markIntentUnderpaid(
+    sid: string,
+    args: {
+      moneriumOrderId: string;
+      forwardId: number;
+      forwardTxHash: string | null;
+      amountReceivedCents: number | null;
+    },
+  ): Promise<boolean>;
   /// Record settlement on an intent that had already EXPIRED (no state
   /// change). True only for the first caller — same single-fire contract as
   /// markIntentPaid.
@@ -75,6 +87,7 @@ export interface ConfirmDeps {
   ): Promise<boolean>;
   emitIntentPaid(intent: PaymentIntentRow, sender: SenderInfo): Promise<void>;
   emitPaymentLate(intent: PaymentIntentRow, sender: SenderInfo): Promise<void>;
+  emitPaymentUnderpaid(intent: PaymentIntentRow, sender: SenderInfo): Promise<void>;
   emitCampaignContribution(args: {
     campaignId: string;
     orderId: string;
@@ -101,9 +114,11 @@ export function makeConfirmDeps(env: Env): ConfirmDeps {
     getOrder: (orderId) => getMoneriumOrder(env, orderId),
     getIntent: (sid) => getIntent(env, sid),
     markIntentPaid: (sid, args) => markIntentPaid(env, sid, args),
+    markIntentUnderpaid: (sid, args) => markIntentUnderpaid(env, sid, args),
     markIntentLate: (sid, args) => markIntentLate(env, sid, args),
     emitIntentPaid: (intent, sender) => emitIntentPaidWebhook(env, intent, sender),
     emitPaymentLate: (intent, sender) => emitPaymentLateWebhook(env, intent, sender),
+    emitPaymentUnderpaid: (intent, sender) => emitPaymentUnderpaidWebhook(env, intent, sender),
     emitCampaignContribution: (args) => emitCampaignContributionWebhook(env, args),
     listSubmittedForwards: (olderThan) => listSubmittedForwardsOlderThan(env, olderThan),
     sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
@@ -264,16 +279,24 @@ async function flipPaidAndNotify(
     if (intent) await deps.emitIntentPaid(intent, args.sender);
     return true;
   }
-  // Not flipped: already paid (a duplicate settle — nothing to do) or the
-  // intent had EXPIRED before the money settled. The latter used to be
-  // silent: the EURe was forwarded but the merchant never heard about it
-  // (intent 2abjke6unj5u, 2026-05-23). Record it and send `payment.late`.
-  const late = await deps.markIntentLate(args.sid, {
+  const settlement = {
     moneriumOrderId: args.orderId,
     forwardId: args.forwardId,
     forwardTxHash: args.forwardTxHash,
     amountReceivedCents: args.amountCents,
-  });
+  };
+  // Not flipped because the payer sent LESS than asked (BW-01): record it on
+  // the still-pending intent and tell the merchant — never `paid`.
+  if (await deps.markIntentUnderpaid(args.sid, settlement)) {
+    const intent = await deps.getIntent(args.sid);
+    if (intent) await deps.emitPaymentUnderpaid(intent, args.sender);
+    return false;
+  }
+  // Not flipped: already paid (a duplicate settle — nothing to do) or the
+  // intent had EXPIRED before the money settled. The latter used to be
+  // silent: the EURe was forwarded but the merchant never heard about it
+  // (intent 2abjke6unj5u, 2026-05-23). Record it and send `payment.late`.
+  const late = await deps.markIntentLate(args.sid, settlement);
   if (late) {
     const intent = await deps.getIntent(args.sid);
     if (intent) await deps.emitPaymentLate(intent, args.sender);

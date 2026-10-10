@@ -142,7 +142,7 @@ app.post('/webhooks/shopify', async (c) => {
 
 // ── MPT outbound webhooks (tenant outbound_webhook_url points here) ─────────
 
-const MPT_EVENTS = new Set(['intent.paid', 'payment.late', 'payment.received', 'payment.rejected']);
+const MPT_EVENTS = new Set(['intent.paid', 'payment.late', 'payment.underpaid', 'payment.received', 'payment.rejected']);
 
 app.post('/webhooks/mpt', async (c) => {
   const raw = await c.req.text();

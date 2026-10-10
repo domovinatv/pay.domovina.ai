@@ -128,6 +128,11 @@ describe('classifyIntent', () => {
     expect(classifyIntent(intent({ state: 'paid', paid_at: '2026-10-09T10:00:00Z', amount_received_cents: 999 }), 1000)).toBe('underpaid');
   });
 
+  it('BW-01: an underpayment MPT recorded without paid_at is underpaid, even after expiry', () => {
+    expect(classifyIntent(intent({ monerium_order_id: 'ord-1', amount_received_cents: 500, status: { stage: 'settled', amount_mismatch: 'under' } }), 1000)).toBe('underpaid');
+    expect(classifyIntent(intent({ state: 'expired', monerium_order_id: 'ord-1', amount_received_cents: 500, status: { stage: 'expired' } }), 1000)).toBe('underpaid');
+  });
+
   it('treats a late settlement on an expired intent as paid', () => {
     expect(classifyIntent(intent({ state: 'expired', paid_at: '2026-10-09T10:00:00Z', amount_received_cents: 1000 }), 1000)).toBe('paid');
   });

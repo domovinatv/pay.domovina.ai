@@ -88,9 +88,17 @@ const TERMINAL: ReadonlySet<OrderStatus> = new Set(['paid', 'underpaid', 'reject
 /// Pure: what the intent says about the order right now. Settlement wins over
 /// expiry — a late SEPA payment (`payment.late`) is still money in the Safe.
 export function classifyIntent(intent: MptIntent, amountCents: number): OrderStatus {
+  const got = intent.amount_received_cents;
   if (intent.paid_at) {
-    const got = intent.amount_received_cents;
     return got !== null && got !== undefined && got < amountCents ? 'underpaid' : 'paid';
+  }
+  // BW-01: MPT records an underpayment without paid_at (the intent is not
+  // paid) — settled money, so it wins over expiry like a late payment.
+  if (
+    intent.status?.amount_mismatch === 'under'
+    || (intent.monerium_order_id && got !== null && got !== undefined && got < amountCents)
+  ) {
+    return 'underpaid';
   }
   const stage = intent.status?.stage;
   if (stage === 'rejected') return 'rejected';

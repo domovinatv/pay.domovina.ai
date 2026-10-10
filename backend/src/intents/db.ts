@@ -93,7 +93,8 @@ export async function markIntentPaid(
             forward_tx_hash = ?,
             amount_received_cents = ?
       WHERE sid = ?
-        AND state = 'pending'`,
+        AND state = 'pending'
+        AND ? IS NOT NULL AND ? >= amount_cents`,
   )
     .bind(
       now,
@@ -102,6 +103,48 @@ export async function markIntentPaid(
       args.forwardTxHash,
       args.amountReceivedCents,
       sid,
+      // BW-01: less than the intent asked for never flips `paid`.
+      args.amountReceivedCents,
+      args.amountReceivedCents,
+    )
+    .run();
+  return (res.meta?.changes ?? 0) > 0;
+}
+
+/// Settlement for LESS than the intent asked for (BW-01). The money did reach
+/// the recipient (the forward does not look at the intent amount), so the
+/// settlement data is recorded, but the intent stays `pending` — the merchant
+/// gets `payment.underpaid` and decides. No paid_at. Single-fire: only the
+/// first caller sees true (monerium_order_id IS NULL).
+export async function markIntentUnderpaid(
+  env: Env,
+  sid: string,
+  args: {
+    moneriumOrderId: string;
+    forwardId: number;
+    forwardTxHash: string | null;
+    amountReceivedCents: number | null;
+  },
+): Promise<boolean> {
+  const res = await env.DB.prepare(
+    `UPDATE payment_intents
+        SET monerium_order_id = ?,
+            forward_id = ?,
+            forward_tx_hash = ?,
+            amount_received_cents = ?
+      WHERE sid = ?
+        AND state = 'pending'
+        AND monerium_order_id IS NULL
+        AND (? IS NULL OR ? < amount_cents)`,
+  )
+    .bind(
+      args.moneriumOrderId,
+      args.forwardId,
+      args.forwardTxHash,
+      args.amountReceivedCents,
+      sid,
+      args.amountReceivedCents,
+      args.amountReceivedCents,
     )
     .run();
   return (res.meta?.changes ?? 0) > 0;

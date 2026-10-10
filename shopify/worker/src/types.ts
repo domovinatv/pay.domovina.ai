@@ -81,5 +81,8 @@ export interface MptIntent {
   paid_at: string | null;
   forward_tx_hash: string | null;
   amount_received_cents: number | null;
-  status?: { stage: string; review_expected?: boolean | null };
+  /// Set once the rail settled a payment for this intent — including an
+  /// underpayment, which (BW-01) leaves paid_at null and the state pending.
+  monerium_order_id?: string | null;
+  status?: { stage: string; review_expected?: boolean | null; amount_mismatch?: 'under' | 'over' | null };
 }
