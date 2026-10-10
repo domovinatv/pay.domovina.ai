@@ -1,4 +1,4 @@
-import { Hono } from 'hono';
+import { Hono, type Context, type Next } from 'hono';
 import { cors } from 'hono/cors';
 import { bearerAuth } from 'hono/bearer-auth';
 import { HTTPException } from 'hono/http-exception';
@@ -7,25 +7,21 @@ import type { Env } from './types';
 import { getProvider } from './providers';
 import {
   getAccount,
-  insertAuthorization,
   listAccounts,
-  listAuthorizations,
   listTransactions,
   updateAuthorizationSession,
   upsertAccount,
   upsertTransactions,
 } from './db';
-import { MoneriumClient } from './monerium/client';
-import { verifyWebhookSignature } from './monerium/webhook';
 import {
   getMoneriumOrder,
   listMoneriumOrders,
   recordMoneriumWebhookEvent,
-  upsertMoneriumOrder,
 } from './monerium/db';
 import { handleMoneriumWebhook, makeWebhookDeps } from './monerium/webhookHandler';
 import { getTenantRail, isLegacyTenant, legacyRail, multiTenantEnabled } from './tenants/rail';
 import { mountAdminUi } from './admin/app';
+import { buildHpbOps, buildMoneriumOps } from './admin/opsRoutes';
 import { buildIntentApi, buildIntentStatus } from './intents/api';
 import { buildWalletApi } from './wallets/api';
 import { buildGnosisPayApi } from './gnosispay/api';
@@ -222,125 +218,22 @@ app.get('/api/monerium/orders/:id', async (c) => {
   return c.json({ order });
 });
 
-// ---- Admin endpoints ----
-
-const admin = new Hono<{ Bindings: Env }>();
-admin.use('*', async (c, next) =>
-  bearerAuth({ token: c.env.ADMIN_TOKEN })(c, next),
-);
-
-admin.post('/connect', async (c) => {
-  const body = await c.req.json<{
-    institution_id: string;
-    reference?: string;
-  }>();
-  if (!body.institution_id) {
-    return c.json({ error: 'institution_id required' }, 400);
-  }
-  const provider = getProvider(c.env);
-  const reference = body.reference ?? `pdai-${Date.now()}`;
-  const redirectUrl =
-    provider.name === 'enable_banking'
-      ? c.env.ENABLE_BANKING_REDIRECT_URL
-      : c.env.GOCARDLESS_REDIRECT_URL;
-  const r = await provider.createAuthorization({
-    institutionId: body.institution_id,
-    reference,
-    redirectUrl,
-  });
-  await insertAuthorization(c.env, {
-    id: r.id,
-    provider: provider.name,
-    institutionId: body.institution_id,
-    reference,
-    status: r.status,
-    link: r.link,
-  });
-  return c.json({ id: r.id, link: r.link, status: r.status });
-});
-
-admin.post('/refresh', async (c) => {
-  const inserted = await refreshAllAccounts(c.env);
-  return c.json({ inserted });
-});
-
-admin.get('/authorizations', async (c) => {
-  const authorizations = await listAuthorizations(c.env);
-  return c.json({ authorizations });
-});
-
-app.route('/api/hpb/admin', admin);
-
-// ---- Monerium admin (separate sub-app, same bearer auth) ----
-
-const moneriumAdmin = new Hono<{ Bindings: Env }>();
-moneriumAdmin.use('*', async (c, next) =>
-  bearerAuth({ token: c.env.ADMIN_TOKEN })(c, next),
-);
-
-/// Pulls the last N orders from Monerium and upserts them. Useful as a one-shot
-/// backfill or whenever you suspect a webhook was missed.
-moneriumAdmin.post('/sync', async (c) => {
-  const client = new MoneriumClient(c.env);
-  const orders = await client.listOrders();
-  for (const o of orders) await upsertMoneriumOrder(c.env, o);
-  return c.json({ synced: orders.length });
-});
-
-moneriumAdmin.get('/profiles', async (c) => {
-  const client = new MoneriumClient(c.env);
-  const profiles = await client.listProfiles();
-  return c.json({ profiles });
-});
-
-moneriumAdmin.get('/auth-context', async (c) => {
-  const client = new MoneriumClient(c.env);
-  const ctx = await client.getAuthContext();
-  return c.json(ctx);
-});
-
-moneriumAdmin.get('/webhooks', async (c) => {
-  const client = new MoneriumClient(c.env);
-  const subs = await client.listWebhookSubscriptions();
-  return c.json({ subscriptions: subs });
-});
-
-/// Replays the most recent stored webhook event through signature verification
-/// against the CURRENT MONERIUM_WEBHOOK_SECRET. Useful when secret rotated
-/// after the original delivery — shows the diff between received and expected.
-moneriumAdmin.get('/replay-last', async (c) => {
-  const row = await c.env.DB.prepare(
-    `SELECT payload, headers_json FROM monerium_webhook_events
-     WHERE headers_json IS NOT NULL ORDER BY id DESC LIMIT 1`,
-  ).first<{ payload: string; headers_json: string }>();
-  if (!row) return c.json({ error: 'no events with headers stored' }, 404);
-  const headers = new Headers();
-  for (const [k, v] of Object.entries(JSON.parse(row.headers_json))) {
-    if (typeof v === 'string') headers.set(k, v);
-  }
-  const verify = await verifyWebhookSignature(
-    row.payload,
-    headers,
-    c.env.MONERIUM_WEBHOOK_SECRET,
-  );
-  return c.json({ verify, body: row.payload, headers: JSON.parse(row.headers_json) });
-});
-
-/// One-time setup: registers our /api/monerium/webhook endpoint with Monerium.
-/// Body: { "url": "https://...", "types": ["order.created","order.updated"] }
-moneriumAdmin.post('/webhooks', async (c) => {
-  const body = await c.req.json<{ url: string; types?: string[] }>();
-  if (!body.url) return c.json({ error: 'url required' }, 400);
-  const client = new MoneriumClient(c.env);
-  const sub = await client.createWebhookSubscription({
-    url: body.url,
-    types: body.types,
-    secret: c.env.MONERIUM_WEBHOOK_SECRET || undefined,
-  });
-  return c.json({ subscription: sub });
-});
-
-app.route('/api/monerium/admin', moneriumAdmin);
+// ---- Ops endpoints (HPB bank connect, Monerium admin) ----
+//
+// AD-02: the same routes live under /admin/api/hpb and /admin/api/monerium
+// (admin session + CSRF + audit, see admin/app.ts). These bearer-token URLs
+// stay ONE more deploy cycle for curl scripts — every mutation is audited
+// with actor 'admin-token' and the webhook URL is pinned to our own hosts.
+// Delete after the cycle and rotate ADMIN_TOKEN.
+const bearer = (c: Context<{ Bindings: Env }>, next: Next) => bearerAuth({ token: c.env.ADMIN_TOKEN })(c, next);
+const legacyHpb = new Hono<{ Bindings: Env }>();
+legacyHpb.use('*', bearer);
+legacyHpb.route('/', buildHpbOps({ actor: () => 'admin-token', refreshAllAccounts }));
+app.route('/api/hpb/admin', legacyHpb);
+const legacyMonerium = new Hono<{ Bindings: Env }>();
+legacyMonerium.use('*', bearer);
+legacyMonerium.route('/', buildMoneriumOps({ actor: () => 'admin-token' }));
+app.route('/api/monerium/admin', legacyMonerium);
 
 // Public payment-intents API (unauthenticated; rate-limit in Phase 2).
 app.route('/api/intents', buildIntentApi());
@@ -393,7 +286,7 @@ app.get('/checkout/:sid', async (c) => {
 });
 
 // Branded HTML dashboard at /admin (Basic Auth gated).
-mountAdminUi(app);
+mountAdminUi(app, { refreshAllAccounts });
 
 app.onError((err, c) => {
   // basicAuth / bearerAuth + any Hono-thrown HTTPException already carries
@@ -414,7 +307,7 @@ async function refreshAccountsForAuthorization(
   return refreshAccounts(env, filtered);
 }
 
-async function refreshAllAccounts(env: Env): Promise<number> {
+export async function refreshAllAccounts(env: Env): Promise<number> {
   const all = await listAccounts(env);
   return refreshAccounts(env, all);
 }

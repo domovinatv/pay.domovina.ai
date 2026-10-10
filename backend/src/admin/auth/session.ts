@@ -15,6 +15,8 @@ export interface Session {
   email: string;
   method: SessionMethod;
   expiresAt: string;
+  /// ISO; when the login happened. Passkey registration needs a fresh one (AD-03).
+  createdAt: string;
 }
 
 function randomToken(): string {
@@ -60,12 +62,12 @@ export async function getSession(env: Env, cookieHeader: string | null): Promise
   const token = readCookie(cookieHeader, SESSION_COOKIE);
   if (!token) return null;
   const row = await env.DB.prepare(
-    "SELECT email, method, expires_at FROM admin_sessions WHERE token_hash = ? AND expires_at > ?",
+    "SELECT email, method, created_at, expires_at FROM admin_sessions WHERE token_hash = ? AND expires_at > ?",
   )
     .bind(await sha256Hex(token), new Date().toISOString())
-    .first<{ email: string; method: SessionMethod; expires_at: string }>();
+    .first<{ email: string; method: SessionMethod; created_at: string; expires_at: string }>();
   if (!row || !adminEmails(env).has(row.email)) return null;
-  return { email: row.email, method: row.method, expiresAt: row.expires_at };
+  return { email: row.email, method: row.method, expiresAt: row.expires_at, createdAt: row.created_at };
 }
 
 export async function deleteSession(env: Env, cookieHeader: string | null): Promise<void> {

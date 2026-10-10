@@ -30,6 +30,7 @@ import { publicWalletView } from '../wallets/api';
 import { mountTenantAdmin } from '../tenants/admin';
 import { actorOf, mountAdminAuth } from './auth/mount';
 import { loadTenantTags, tenantWhere } from './tenantTags';
+import { buildHpbOps, buildMoneriumOps } from './opsRoutes';
 import { listOffRailLegs, makeOffRailDeps, markResolvedOffRail } from '../monerium/offrail';
 import {
   renderEventDetailPage,
@@ -48,8 +49,15 @@ import {
 /// kolačiću (./auth/mount.ts, isti model kao bank-push-gateway). Sve pod
 /// /admin, uključujući /admin/api/*, traži tu sesiju; promjene traže i isti
 /// Origin. Dashboard fetch() pozivi nose kolačić same-origin.
-export function mountAdminUi(app: Hono<{ Bindings: Env }>): void {
+export function mountAdminUi(
+  app: Hono<{ Bindings: Env }>,
+  ops: { refreshAllAccounts(env: Env): Promise<number> } = { refreshAllAccounts: async () => 0 },
+): void {
   mountAdminAuth(app);
+  // AD-02: HPB connect + Monerium admin under the admin session (CSRF, audit
+  // with the session e-mail) instead of a shared static bearer token.
+  app.route('/admin/api/hpb', buildHpbOps({ actor: actorOf, refreshAllAccounts: ops.refreshAllAccounts }));
+  app.route('/admin/api/monerium', buildMoneriumOps({ actor: actorOf }));
   app.get('/admin', (c) => c.html(renderEventsPage()));
   app.get('/admin/', (c) => c.html(renderEventsPage()));
   app.get('/admin/events/:id', async (c) => {

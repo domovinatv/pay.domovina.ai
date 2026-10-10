@@ -28,6 +28,7 @@ import {
   type Session,
 } from './session';
 import { PASSKEY_JS } from './static';
+import { sendAlert } from '../../alerts';
 
 type AppEnv = { Bindings: Env; Variables: { adminSession: Session } };
 type Ctx = Context<AppEnv>;
@@ -161,16 +162,29 @@ export function mountAdminAuth(app: Hono<{ Bindings: Env }>): void {
     return startSession(c, email, 'passkey', safeNext(body.next), true);
   });
 
-  a.post('/admin/passkey/register/options', async (c) =>
-    c.json(await registrationOptions(c.env, new URL(c.req.url), c.get('adminSession').email)),
-  );
+  a.post('/admin/passkey/register/options', async (c) => {
+    const refusal = await passkeyRegisterRefusal(c);
+    if (refusal) return c.json({ error: refusal }, 403);
+    return c.json(await registrationOptions(c.env, new URL(c.req.url), c.get('adminSession').email));
+  });
 
   a.post('/admin/passkey/register/verify', async (c) => {
+    const refusal = await passkeyRegisterRefusal(c);
+    if (refusal) return c.json({ error: refusal }, 403);
     const body = await c.req.json<{ response?: RegistrationResponseJSON; label?: string }>().catch(() => null);
     if (!body?.response?.id) return c.json({ error: 'bad_request' }, 400);
-    const ok = await verifyRegistration(
-      c.env, new URL(c.req.url), c.get('adminSession').email, body.response, (body.label ?? '').trim(),
-    );
+    const session = c.get('adminSession');
+    const label = (body.label ?? '').trim();
+    const ok = await verifyRegistration(c.env, new URL(c.req.url), session.email, body.response, label);
+    if (ok) {
+      // A new way in is worth a human look (AD-03).
+      await sendAlert(
+        c.env,
+        `🔑 <b>Dodan admin passkey</b>\n` +
+          `e-mail: <code>${session.email}</code> · oznaka: <code>${label.slice(0, 60) || '-'}</code>\n` +
+          `UA: <code>${(c.req.header('user-agent') ?? '-').slice(0, 120)}</code>`,
+      ).catch(() => {});
+    }
     return ok ? c.json({ ok: true }) : c.json({ error: 'upis nije uspio' }, 400);
   });
 
@@ -194,6 +208,27 @@ export function mountAdminAuth(app: Hono<{ Bindings: Env }>): void {
     c.header('set-cookie', sessionCookie('', 0));
     return c.redirect('/admin/login', 303);
   });
+}
+
+/// AD-03: a stolen session cookie must not become a permanent passkey. Adding
+/// one needs a login from the last PASSKEY_REAUTH_SECONDS, and an e-mail can
+/// hold at most MAX_PASSKEYS_PER_EMAIL.
+const PASSKEY_REAUTH_SECONDS = 10 * 60;
+const MAX_PASSKEYS_PER_EMAIL = 5;
+
+async function passkeyRegisterRefusal(c: Ctx): Promise<string | null> {
+  const s = c.get('adminSession');
+  const age = (Date.now() - Date.parse(s.createdAt)) / 1000;
+  if (!(age <= PASSKEY_REAUTH_SECONDS)) {
+    return 'Za dodavanje passkeya prijava mora biti svježa (< 10 min): odjavi se i prijavi ponovno.';
+  }
+  const row = await c.env.DB.prepare('SELECT COUNT(*) AS n FROM admin_passkeys WHERE email = ?')
+    .bind(s.email)
+    .first<{ n: number }>();
+  if ((row?.n ?? 0) >= MAX_PASSKEYS_PER_EMAIL) {
+    return `Najviše ${MAX_PASSKEYS_PER_EMAIL} passkeya po e-mailu — obriši stari pa dodaj novi.`;
+  }
+  return null;
 }
 
 async function startSession(c: Ctx, email: string, method: 'passkey' | 'access', next: string, asJson = false) {

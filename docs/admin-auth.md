@@ -38,6 +38,8 @@ flowchart LR
 | Access JWT: RS256, issuer `https://<team>.cloudflareaccess.com`, AUD | `src/admin/auth/access.ts` |
 | `/admin/api/*` bez sesije → 401 (ne redirect); Basic Auth zaglavlje više ništa ne otvara | `mount.ts` |
 | Audit actor (`tenant_audit_log.actor`, offrail) = e-mail sesije, nikad zaglavlje zahtjeva | `actorOf` u `mount.ts` |
+| Dodavanje passkeya: prijava mlađa od 10 min, najviše 5 po e-mailu, Telegram alarm 🔑 | `passkeyRegisterRefusal` u `mount.ts` |
+| Monerium admin i HPB connect pod sesijom: `/admin/api/monerium/*`, `/admin/api/hpb/*` (audit `monerium.*`/`hpb.*`); Monerium pretplata samo na naše webhook URL-ove | `src/admin/opsRoutes.ts` |
 
 ## Konfiguracija
 
@@ -84,3 +86,10 @@ zadrži port, pa CSRF provjera odbije svaki POST.
 Access lokalno ne radi. Za lokalnu sesiju upiši je ručno u lokalni D1
 (`admin_sessions`, `token_hash` = sha-256 tokena) i postavi kolačić
 `__Host-mpt_admin=<token>`. Passkey radi na `http://localhost`.
+
+## Stari bearer URL-ovi (AD-02) — ukloniti nakon jednog ciklusa
+
+`/api/monerium/admin/*` i `/api/hpb/admin/*` s `ADMIN_TOKEN` još rade (isti
+kod, audit s actorom `admin-token`, webhook URL zaključan na naše hostove).
+Nakon što curl skripte prijeđu na `/admin/api/…` (kolačić sesije iz
+preglednika): obrisati mount u `src/index.ts` i rotirati `ADMIN_TOKEN`.
