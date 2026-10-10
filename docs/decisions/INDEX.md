@@ -58,6 +58,7 @@ history.
 | [0018](0018-stray-payment-resolver.md) | Uplate bez reference: povezivanje s intentom po tenantu, iznosu i vremenu (+ ručno preusmjeravanje u adminu) | 2026-10-08 | ✅ Accepted | 🟢 Deployano 2026-10-08 (#59, #62): prvi auto stray ~12 s do `paid`, `resolved_offrail`; `client_ref` otvoren |
 | [0019](0019-off-cloud-forward-signer.md) | Forward potpisuje M-of-N kvorum Android uređaja (StrongBox P-256 → signer Safe kao član Roles), Cloudflare samo orkestrira i plaća gas; kapica na iznos odbijena | 2026-10-08 | 📝 Proposed | 🟢 Faza 0 (detektor krađe) deployana (#60); faza 1 spike sljedeća |
 | [0020](0020-hr-iban-listener-bez-minta.md) | MPT kao „payment listener“ za hrvatski IBAN: HUB3 + bank-push-gateway, bez minta (novac izravno na tenantov HR račun, MPT samo dojava i uparivanje) | 2026-10-11 | 📝 Proposed | ⏳ HUB3 za HR IBAN gotov (#77); čeka gateway fazu 1–2 |
+| [0021](0021-mpt-hr-javni-hostovi-i-api-v1.md) | Javni hostovi pod `*.mpt.hr` (`api.` `/v1`, `pay.`, `dashboard.`, `docs.`, `sandbox-api.`); `*.domovina.ai` trajni alias bez redirecta | 2026-10-11 | 📝 Proposed | ⏳ Plan i rubni slučajevi zapisani; faza 0 (priprema zone) sljedeća |
 
 ---
 
