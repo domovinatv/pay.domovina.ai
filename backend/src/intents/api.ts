@@ -4,6 +4,7 @@ import type { Env } from '../types';
 import { countOpenIntentsForTarget, createIntent, getIntent, isTrustedTarget } from './db';
 import { generateSid } from './sid';
 import { buildEpcText } from './epc';
+import { buildHub3Text } from './hub3';
 import { computeStage, confirmForwardIfMined, loadStageContext } from './stage';
 import type { StageResult } from './stage';
 import { openIntentStream, sseEnabled } from './stream';
@@ -240,6 +241,19 @@ export function intentResponseJson(
     remittanceInfo: memo,
     bic: sepa.bic,
   });
+  // HUB3 PDF417 for apps that scan only Croatian uplatnice. No sid in the
+  // description (35 chars, dropped cross-border anyway): such a payment is a
+  // stray and ADR 0018 matches it by tenant + amount + time. See hub3.ts.
+  const hub3Text = buildHub3Text({
+    beneficiaryName: sepa.beneficiaryName,
+    iban: sepa.iban,
+    amountEur: intent.amount_cents / 100,
+    purposeCode: 'OTHR',
+    // A label that looks like routing (an address or a sid token) would turn
+    // the stray into a parked „unroutable" payment, so it is not used.
+    description:
+      intent.label && !/0x[0-9a-f]{6}|\bsid\b|\bid[=.:-]/i.test(intent.label) ? intent.label : 'Uplata',
+  });
   return {
     sid: intent.sid,
     state: intent.state,
@@ -254,6 +268,7 @@ export function intentResponseJson(
     beneficiary_name: sepa.beneficiaryName,
     bic: sepa.bic,
     epc_qr_data: epcText,
+    hub3_data: hub3Text,
     tenant_id: intent.tenant_id,
     checkout_url: `${origin}/checkout/${intent.sid}`,
     status_url: `${origin}/api/intents/${intent.sid}`,
