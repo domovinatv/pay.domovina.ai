@@ -57,11 +57,25 @@ su stil izdavatelja i skeneri ih toleriraju u oba smjera.
 | Kod | Primatelj | PBZ iOS | HPB biz iOS | RBA biz iOS | Aircash |
 |---|---|---|---|---|---|
 | PDF417 s pay.domovina.ai (Flutter, nakon ispravka #75) | ITalk, **HPB `HR…`** | čita | čita | čita | **čita i prihvaća** |
-| EPC QR i HUB3 PDF417 s rail checkouta | ITalk, Monerium **`EE…`** | — | — | — | čita oba, odbija: „Unknown code. Try again.“ |
+| HUB3 PDF417 s rail checkouta / energy | ITalk, Monerium **`EE…`** | čita, **odbija** | čita, **odbija** | čita, **odbija** | čita, odbija: „Unknown code. Try again.“ |
+| EPC QR s rail checkouta | ITalk, Monerium `EE…` | — | — | — | čita, odbija |
 
-Aircash prihvaća isti format s hrvatskim IBAN-om, a odbija ga s estonskim. To potvrđuje da je
-prepreka popis država u „Slikaj i plati“ (uvjeti §11.1), a ne format koda. Varijanta A iz
+**Svi skeneri čitaju kod, ali nijedna aplikacija ne pušta uplatnicu (HUB3) kojoj IBAN primatelja
+nije hrvatski.** S HR IBAN-om rade sve četiri. HUB3 je u praksi „domaći nalog“: aplikacije ga
+vežu uz `HR` IBAN (spec opisuje samo hrvatski IBAN), a Aircash uz to ima i popis država (§11.1).
+Format koda nije problem. Varijanta A iz
 [README](README.md) (HR naplatni IBAN) tehnički radi već danas.
+
+**Posljedica:** HUB3 kartica s Monerium `EE…` IBAN-om (checkout, energy `/beta/`) nikome ne
+pomaže dok naplatni IBAN nije hrvatski.
+
+**Prilika na hrvatskom tržištu:** svaka hrvatska bankovna aplikacija i Aircash čitaju HUB3, a
+većina građana plaća režije upravo tako. Kanal se otvara čim primatelj ima **hrvatski IBAN**:
+- vlastiti HR naplatni račun tenanta + AIS uparivanje (varijanta A; za MPT u ime trećih
+  vrijedi Monerium BToS §16 — vidi `docs/compliance/`);
+- Monerium IBAN s `HR` prefiksom, ako ga Monerium može izdati (pitanje za Monerium);
+- partner s HR IBAN-ima: Aircash (EMI, HNB) ili hrvatska banka kao izdavatelj IBAN-a s
+  automatskim mintom, odnosno model M1/M4 iz [04](04-zasto-aircash-suradnja.md).
 
 ## Pravila iz specifikacije koja su bitna
 

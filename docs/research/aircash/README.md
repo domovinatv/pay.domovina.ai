@@ -22,7 +22,8 @@ Oznake: **VERIFIED** = primarni izvor, **REPORTED** = treća strana, **UNKNOWN**
 
 > **Ažurirano 2026-10-11 (test na uređaju):** Aircash čita EPC QR i HUB3 PDF417 s Monerium
 > `EE…` IBAN-om, ali ih odbija („Unknown code. Try again.“). Isti HUB3 s hrvatskim (HPB) IBAN-om
-> prihvaća. Prepreka je, kako je predviđeno, popis država, a ne format. Detalji:
+> prihvaća. PBZ, HPB i RBA iOS isto: čitaju PDF417 s `EE…` IBAN-om, ali uplatu ne puštaju;
+> s HR IBAN-om rade sve. HUB3 je u praksi vezan uz hrvatski IBAN primatelja. Detalji:
 > [05-hub3-format-provjera.md](05-hub3-format-provjera.md#pokusi-skeniranja-2026-10-11).
 
 Ideja „Apple Pay nadoplata besplatno → Slikaj i plati naš HUB3 → SEPA Instant na Monerium →
