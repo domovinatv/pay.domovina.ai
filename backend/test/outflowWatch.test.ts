@@ -2,9 +2,13 @@ import { describe, expect, it } from 'vitest';
 
 import {
   CONFIRMATION_LAG,
+  EXEC_FROM_MODULE_SUCCESS,
+  EXECUTION_SUCCESS,
   formatEure,
   MAX_RANGE,
+  safeExecFromLogs,
   watchSafeOutflows,
+  type SafeExec,
   type Outflow,
   type OutflowWatchDeps,
 } from '../src/monerium/outflowWatch';
@@ -21,14 +25,15 @@ function harness(opts: {
   cursor: bigint | null;
   outflows?: Outflow[];
   known?: string[];
-  targets?: Record<string, string | null>;
+  /// Per tx: how the Safe executed. Default = through our Roles modifier.
+  exec?: Record<string, SafeExec>;
   unhashed?: boolean;
 }) {
   const rec = { alerts: [] as string[], audits: [] as Array<Record<string, unknown>>, cursor: opts.cursor, ranges: [] as Array<[bigint, bigint]> };
   const deps: OutflowWatchDeps = {
     latestBlock: async () => opts.head,
     outgoingTransfers: async (f, t) => { rec.ranges.push([f, t]); return opts.outflows ?? []; },
-    txTarget: async (h) => opts.targets?.[h] ?? ROLES,
+    safeExecEvents: async (h) => opts.exec?.[h] ?? { viaModules: [ROLES], viaOwners: false },
     isKnownForwardTx: async (h) => (opts.known ?? []).includes(h),
     hasUnhashedForward: async () => opts.unhashed ?? false,
     getCursor: async () => rec.cursor,
@@ -75,10 +80,35 @@ describe('watchSafeOutflows', () => {
   });
 
   it('transfer outside the role (owners 2/3) → ℹ️', async () => {
-    const { deps, rec } = harness({ head: 1000n, cursor: 900n, outflows: [out('0xdd')], targets: { '0xdd': SAFE } });
+    const { deps, rec } = harness({
+      head: 1000n, cursor: 900n, outflows: [out('0xdd')],
+      exec: { '0xdd': { viaModules: [], viaOwners: true } },
+    });
     await watchSafeOutflows(deps, W);
     expect(rec.alerts[0]).toContain('ℹ️');
     expect(rec.audits[0]).toMatchObject({ verdict: 'other' });
+  });
+
+  it('TD-01: role call through a relay contract (tx.to ≠ modifier) is still 🚨', async () => {
+    // The harness never looks at tx.to — only at the Safe's module event.
+    const { deps, rec } = harness({
+      head: 1000n, cursor: 900n, outflows: [out('0xd1', THIEF)],
+      exec: { '0xd1': { viaModules: [ROLES], viaOwners: false } },
+    });
+    await watchSafeOutflows(deps, W);
+    expect(rec.alerts[0]).toContain('🚨');
+    expect(rec.audits[0]).toMatchObject({ verdict: 'role_unknown' });
+  });
+
+  it('TD-01: transfer through a module that is not our Roles modifier → 🚨 module_unknown', async () => {
+    const { deps, rec } = harness({
+      head: 1000n, cursor: 900n, outflows: [out('0xd2', THIEF)],
+      exec: { '0xd2': { viaModules: ['0x' + '77'.repeat(20)], viaOwners: false } },
+    });
+    await watchSafeOutflows(deps, W);
+    expect(rec.alerts[0]).toContain('🚨');
+    expect(rec.alerts[0]).toContain('modul');
+    expect(rec.audits[0]).toMatchObject({ verdict: 'module_unknown' });
   });
 
   it('nothing new below the lag → no scan', async () => {
@@ -107,6 +137,25 @@ describe('watchSafeOutflows', () => {
     await watchSafeOutflows(deps, W);
     expect(rec.audits).toHaveLength(1);
     expect(rec.cursor).toBe(1000n - CONFIRMATION_LAG);
+  });
+});
+
+describe('safeExecFromLogs', () => {
+  const pad = (a: string) => '0x' + '0'.repeat(24) + a.slice(2);
+  it('reads the module from the Safe’s ExecutionFromModuleSuccess, ignoring other emitters', () => {
+    const logs = [
+      { address: '0x' + '99'.repeat(20), topics: [EXEC_FROM_MODULE_SUCCESS, pad(THIEF)] }, // not the Safe
+      { address: SAFE.toUpperCase().replace('0X', '0x'), topics: [EXEC_FROM_MODULE_SUCCESS, pad(ROLES)] },
+    ];
+    expect(safeExecFromLogs(logs, SAFE)).toEqual({ viaModules: [ROLES], viaOwners: false });
+  });
+  it('owner execution', () => {
+    expect(safeExecFromLogs([{ address: SAFE, topics: [EXECUTION_SUCCESS] }], SAFE))
+      .toEqual({ viaModules: [], viaOwners: true });
+  });
+  it('selectors are the Safe v1.3+/v1.4.1 ones', () => {
+    expect(EXEC_FROM_MODULE_SUCCESS).toBe('0x6895c13664aa4f67288b25d7a21d7aaa34916e355fb9b6fae0a139a9085becb8');
+    expect(EXECUTION_SUCCESS).toBe('0x442e715f626346e8c54381002da614f62bee8d27386535b2521ec8540898556e');
   });
 });
 

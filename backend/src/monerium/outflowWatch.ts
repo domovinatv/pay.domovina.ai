@@ -1,4 +1,4 @@
-import { createPublicClient, http, parseAbiItem, type Address, type Hex } from 'viem';
+import { createPublicClient, http, parseAbiItem, toEventSelector, type Address, type Hex } from 'viem';
 import { gnosis, gnosisChiado } from 'viem/chains';
 
 import type { Env } from '../types';
@@ -14,7 +14,14 @@ import { getTenantRail, legacyRail, listRailTenantIds, type TenantRail } from '.
 ///       but not by the rail — the key is being used by someone else
 ///   ⚠️  through the Roles modifier, matching a forward row that never got
 ///       its tx hash written (Worker died between broadcast and update)
-///   ℹ️  any other path, e.g. the human 2/3 owners moving money by hand
+///   🚨  through a Safe module that is not our Roles modifier
+///   ℹ️  owner-signed (the human 2/3 owners moving money by hand), or no Safe
+///       execution event at all
+///
+/// The path is read from the Safe's own execution events in the receipt
+/// (TD-01), not from `tx.to`: a thief with the forwarder key can call the
+/// modifier through any relay/multicall contract, and `tx.to` is then the
+/// relay — but the Safe still emits ExecutionFromModuleSuccess(modifier).
 ///
 /// It cannot PREVENT a theft (the role still allows transfer to anyone, see
 /// ADR 0019); it shortens the time to "revoke the role" from "whenever
@@ -24,6 +31,13 @@ import { getTenantRail, legacyRail, listRailTenantIds, type TenantRail } from '.
 /// cursor does not move, so the next tick rescans the same blocks.
 
 const TRANSFER = parseAbiItem('event Transfer(address indexed from, address indexed to, uint256 value)');
+/// Safe ≥1.3: module path / owner path. Computed, not hardcoded.
+export const EXEC_FROM_MODULE_SUCCESS = toEventSelector('ExecutionFromModuleSuccess(address)');
+export const EXECUTION_SUCCESS = toEventSelector('ExecutionSuccess(bytes32,uint256)');
+/// A forward row without tx hash only explains an outflow while it is young
+/// and still `pending` (TD-03): a months-old `failed` row must not turn a
+/// theft into ⚠️.
+export const UNHASHED_FORWARD_MAX_AGE_SECONDS = 15 * 60;
 
 /// Blocks behind head we do not look at yet. ~60 s on Gnosis: lets the forward
 /// path write its tx hash after broadcast before we judge the transfer.
@@ -42,8 +56,9 @@ export interface Outflow {
 export interface OutflowWatchDeps {
   latestBlock(): Promise<bigint>;
   outgoingTransfers(fromBlock: bigint, toBlock: bigint): Promise<Outflow[]>;
-  /// `to` of the transaction that carried the transfer (lowercase), or null.
-  txTarget(txHash: string): Promise<string | null>;
+  /// How the watched Safe executed in this tx, from its own receipt events:
+  /// modules that ran a transaction (lowercase), and whether owners did.
+  safeExecEvents(txHash: string): Promise<SafeExec>;
   /// A forward row with exactly this tx hash exists (any status).
   isKnownForwardTx(txHash: string): Promise<boolean>;
   /// A forward row to `to` for `amountWei` is still waiting for its tx hash.
@@ -60,7 +75,12 @@ export interface WatchedSafe {
   rolesModifier: string;
 }
 
-export type OutflowVerdict = 'known' | 'role_unknown' | 'role_unhashed' | 'other';
+export interface SafeExec {
+  viaModules: string[];
+  viaOwners: boolean;
+}
+
+export type OutflowVerdict = 'known' | 'role_unknown' | 'role_unhashed' | 'module_unknown' | 'other';
 
 export async function watchSafeOutflows(
   deps: OutflowWatchDeps,
@@ -106,10 +126,11 @@ export async function classify(
   o: Outflow,
 ): Promise<OutflowVerdict> {
   if (await deps.isKnownForwardTx(o.txHash)) return 'known';
-  const target = await deps.txTarget(o.txHash);
-  if (target !== null && target === w.rolesModifier.toLowerCase()) {
+  const exec = await deps.safeExecEvents(o.txHash);
+  if (exec.viaModules.includes(w.rolesModifier.toLowerCase())) {
     return (await deps.hasUnhashedForward(o.to, o.value.toString())) ? 'role_unhashed' : 'role_unknown';
   }
+  if (exec.viaModules.length > 0) return 'module_unknown';
   return 'other';
 }
 
@@ -127,6 +148,14 @@ function alertText(w: WatchedSafe, o: Outflow, v: OutflowVerdict): string {
       `(Roles.assignRoles(router, [roleKey], [false])) i rotiraju ROUTER_PRIVATE_KEY.`
     );
   }
+  if (v === 'module_unknown') {
+    return (
+      `🚨 <b>EURe izašao iz MPT Safe-a kroz modul koji nije naš Roles modifier</b>\n` +
+      `${facts}\n` +
+      `Safe ima modul koji ne bi smio imati. Odmah: 2/3 vlasnika provjeravaju ` +
+      `getModulesPaginated i uklanjaju nepoznati modul (disableModule).`
+    );
+  }
   if (v === 'role_unhashed') {
     return (
       `⚠️ <b>Forward je na chainu, ali rail nije zapisao tx hash</b>\n` +
@@ -138,7 +167,8 @@ function alertText(w: WatchedSafe, o: Outflow, v: OutflowVerdict): string {
   return (
     `ℹ️ <b>Izlazni EURe iz MPT Safe-a mimo raila</b>\n` +
     `${facts}\n` +
-    `Nije prošao kroz forwarder rolu (npr. ručni 2/3 transfer vlasnika). Ako ga nitko nije radio — istražiti.`
+    `Nije prošao kroz forwarder rolu ni kroz drugi modul (ručni 2/3 transfer vlasnika ili ` +
+    `transfer bez Safe izvršenja). Ako ga nitko nije radio — istražiti.`
   );
 }
 
@@ -154,6 +184,26 @@ async function safely(p: Promise<unknown>): Promise<void> {
   } catch (e) {
     console.error(`outflow watch side-effect failed: ${(e as Error).message}`);
   }
+}
+
+/// Safe execution events emitted BY `safe` in a receipt. Module address is the
+/// indexed topic of ExecutionFromModuleSuccess.
+export function safeExecFromLogs(
+  logs: ReadonlyArray<{ address: string; topics: ReadonlyArray<string | null> }>,
+  safe: string,
+): SafeExec {
+  const viaModules: string[] = [];
+  let viaOwners = false;
+  for (const l of logs) {
+    if (l.address.toLowerCase() !== safe.toLowerCase()) continue;
+    const t0 = l.topics[0]?.toLowerCase();
+    if (t0 === EXEC_FROM_MODULE_SUCCESS && l.topics[1]) {
+      viaModules.push(`0x${l.topics[1].slice(-40)}`.toLowerCase());
+    } else if (t0 === EXECUTION_SUCCESS) {
+      viaOwners = true;
+    }
+  }
+  return { viaModules, viaOwners };
 }
 
 // ---- wiring ----------------------------------------------------------------
@@ -183,9 +233,9 @@ export function makeOutflowWatchDeps(env: Env, rail: TenantRail): OutflowWatchDe
         value: l.args.value ?? 0n,
       }));
     },
-    txTarget: async (txHash) => {
-      const tx = await client.getTransaction({ hash: txHash as Hex });
-      return tx.to ? tx.to.toLowerCase() : null;
+    safeExecEvents: async (txHash) => {
+      const receipt = await client.getTransactionReceipt({ hash: txHash as Hex });
+      return safeExecFromLogs(receipt.logs, safe);
     },
     isKnownForwardTx: async (txHash) => {
       const row = await env.DB.prepare(
@@ -196,8 +246,13 @@ export function makeOutflowWatchDeps(env: Env, rail: TenantRail): OutflowWatchDe
     hasUnhashedForward: async (to, amountWei) => {
       const row = await env.DB.prepare(
         `SELECT 1 AS hit FROM monerium_forwards
-          WHERE tx_hash IS NULL AND lower(target_address) = ? AND amount_wei = ? LIMIT 1`,
-      ).bind(to.toLowerCase(), amountWei).first<{ hit: number }>();
+          WHERE tx_hash IS NULL AND status = 'pending' AND created_at > ?
+            AND lower(target_address) = ? AND amount_wei = ? LIMIT 1`,
+      ).bind(
+        Math.floor(Date.now() / 1000) - UNHASHED_FORWARD_MAX_AGE_SECONDS,
+        to.toLowerCase(),
+        amountWei,
+      ).first<{ hit: number }>();
       return row !== null;
     },
     getCursor: async () => {
