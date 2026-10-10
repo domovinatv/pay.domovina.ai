@@ -10,6 +10,8 @@ HEAD `ef6622c`. Oznake kao u `rail-multi-tenant-stray.md`.
 
 ### TD-01 [SEC] Klasifikacija po `tx.to === rolesModifier` — krađa kroz pomoćni ugovor dobiva ℹ️ „ručni 2/3 transfer" umjesto 🚨
 
+> ✅ Napravljeno 2026-10-10 (`8298529`, grana `fix/fable51-r2-fixes`)
+
 **Gdje.** `monerium/outflowWatch.ts:103-114` `classify`: `txTarget(txHash)`
 (:186-189 → `tx.to`) uspoređuje s modifierom; sve ostalo je `'other'` →
 `alertText` ℹ️ „Nije prošao kroz forwarder rolu (npr. ručni 2/3 transfer)".
@@ -41,6 +43,8 @@ i `tx.to = 0xRelay` → 🚨; receipt s `ExecutionSuccess` → ℹ️; receipt s
 
 ### TD-02 [RISK] Detektor živi u Workeru kojem po modelu prijetnje ne vjerujemo; nema vanjskog dead-man signala
 
+> ✅ Napravljeno 2026-10-10 (`c8694ce`, grana `fix/fable51-r2-fixes`) — heartbeat u kodu; WATCH_HEARTBEAT_URL još treba postaviti (docs/runbook/theft-detector.md)
+
 **Gdje.** `index.ts:486-491` — cron u istom Workeru; `outflowWatch.ts:23-24`
 „fail-open: RPC error skips this tick". Nema zapisa „tick se dogodio" osim
 `console.warn` kad ima nalaza.
@@ -65,6 +69,8 @@ vidi. Operater ne razlikuje „nema krađe" od „detektor ne radi".
 
 ### TD-03 [LOW] `role_unhashed` (⚠️) se može namjestiti preko trajnih `failed` redova bez tx hasha
 
+> ✅ Napravljeno 2026-10-10 (`8298529`, grana `fix/fable51-r2-fixes`)
+
 **Gdje.** `outflowWatch.ts:196-202` `hasUnhashedForward(to, amountWei)` —
 `tx_hash IS NULL AND target_address = ? AND amount_wei = ?`, bez uvjeta na
 `status`/starost. `failed` red nakon neuspjelog broadcasta ima `tx_hash NULL`
@@ -83,6 +89,8 @@ Test: `failed` red star 1 dan → 🚨, `pending` red star 1 min → ⚠️.
 
 ### TD-04 [RISK] Raspon `getLogs` do 2000 blokova na javnom RPC-u; trajni neuspjeh = tihi stall
 
+> ✅ Napravljeno 2026-10-10 (`c8694ce`, grana `fix/fable51-r2-fixes`)
+
 **Gdje.** `outflowWatch.ts:33, 79-81` — `MAX_RANGE = 2000n`; greška →
 `watchAllRailOutflows` catch → `console.error`, kursor stoji (:97-99).
 
@@ -99,6 +107,8 @@ chain" (KV brojač). Uz XD-02 (RPC fallback, otvoreno) problem gotovo nestaje.
 
 ### TD-05 [LOW] Prvi tick za novi tenant Safe počinje od `head`, bez provjere povijesti
 
+> ✅ Napravljeno 2026-10-10 (`19dfd7a`, grana `fix/fable51-r2-fixes`)
+
 **Gdje.** `outflowWatch.ts:73-76`. Za novi tenant Safe to je ispravno
 (nema naše povijesti), ali verify (`onboarding.ts:386-458`) ne provjerava ima
 li Safe **druge module** osim Roles modifiera (`getModulesPaginated`). Modul
@@ -110,6 +120,8 @@ vidi kao ℹ️ (TD-01 fix → 🚨). Dodati verify check `only_module_is_roles`
 ## B. `resolved_offrail` (`offrail.ts`)
 
 ### OF-01 [LOW] Odabir „koji transfer u batchu zatvara order" je heuristika; evidentirani `to`/`value` mogu biti kriva noga
+
+> ✅ Napravljeno 2026-10-10 (`44d7460`, grana `fix/fable51-r2-fixes`)
 
 **Gdje.** `monerium/offrail.ts:75-80` — memo cilj ako postoji, inače
 **najveći** transfer u tx-u; zapis `to/value_wei` u red i audit.
@@ -134,6 +146,8 @@ override kad `value_wei` noge == iznos ordera i noga nije iskorištena.
 
 ### OF-02 [LOW] Provjera „EURe izlaz iz Safe-a" ne provjerava **iznos** prema orderu
 
+> ✅ Napravljeno 2026-10-10 (`44d7460`, grana `fix/fable51-r2-fixes`)
+
 **Gdje.** `offrail.ts:72-90` — prihvaća bilo koji iznos. Operater može
 „zatvoriti" order od 500 € tx-om od 1 €; order više nije moguće preusmjeriti, a
 499 € ostaje u Safe-u bez traga. Zahtijevati `pick.valueWei === eurToWei(order.amount)`
@@ -144,6 +158,8 @@ ili `force` + razlog u auditu (isti obrazac kao SR-02).
 ## C. Admin prijava i admin API
 
 ### AD-01 [BUG → audit] Nakon ukidanja Basic Autha svaki audit zapis tenant/rail admina ima `actor = 'admin:unknown'`
+
+> ✅ Napravljeno 2026-10-10 (`57f00b8`, grana `fix/fable51-r2-fixes`)
 
 **Gdje.** `tenants/admin.ts:38-46` `actorFrom(header)` dekodira **Basic**
 zaglavlje; pozivi u `tenants/admin.ts:83, 100, 146, 170, 214, 232, 245` i
@@ -164,6 +180,8 @@ nosi e-mail iz sesije.
 ---
 
 ### AD-02 [RISK] `ADMIN_TOKEN` statični bearer i dalje otvara Monerium admin rute (registracija webhooka, sync) i PII rute, mimo sesijskog modela i bez audita
+
+> ✅ Napravljeno 2026-10-10 (`0570a84`, grana `fix/fable51-r2-fixes`) — stari bearer URL-ovi ostaju jedan ciklus (s auditom i zaključanim webhook URL-om)
 
 **Gdje.** `index.ts:196-198` (`/api/monerium/orders*`), `:213-216`
 (`/api/hpb/admin/*`), `:262-264` (`/api/monerium/admin/*`: `/sync`,
@@ -187,6 +205,8 @@ grep — po ADR 0017 nitko ga ne zove → obrisati rutu).
 
 ### AD-03 [LOW] Passkey registracija nema potvrdu identiteta (re-auth) i nema gornje granice broja ključeva
 
+> ✅ Napravljeno 2026-10-10 (`0570a84`, grana `fix/fable51-r2-fixes`)
+
 **Gdje.** `admin/auth/mount.ts:157-168` — svaka valjana sesija (i ona iz
 Accessa od prije 11 h) može dodati novi passkey. Ukradena sesija (XSS je
 blokiran CSP-om, ali kolačić na kompromitiranom računalu) → trajni pristup i
@@ -200,6 +220,8 @@ e-mailu.
 ---
 
 ### AD-04 [LOW] Sesija bez idle-timeouta i bez rotacije; `admin_sessions` čisti se samo pri loginu
+
+> ✅ Napravljeno 2026-10-10 (`7058689`, grana `fix/fable51-r2-fixes`)
 
 **Gdje.** `admin/auth/session.ts:10, 40-57` — 12 h apsolutno, `DELETE expired`
 samo u `createSession`. Prihvatljivo; predlažem idle 2 h (`last_seen_at` update

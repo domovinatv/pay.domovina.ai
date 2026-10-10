@@ -17,6 +17,8 @@ Redoslijed i acceptance kriteriji su u `implementation-plan.md`.
 
 ### SR-01 [SEC → MONEY] Svatko s registriranim wallet Safe-om može „uhvatiti" uplate bez reference: resolver + otvoren intent API + `wallet_registry` auto-whitelista
 
+> ✅ Napravljeno 2026-10-10 (`e1e6299`, grana `fix/fable51-r2-fixes`) — kapica otvorenih intenata samo za netrusted odredišta (namjerno, vidi commit); WAF nije upisan
+
 **Gdje.**
 - `intents/api.ts:54-57` + `tenants/auth.ts:48-51` — bez ključa → `DEFAULT_TENANT_ID` (`italk`), `INTENT_REQUIRE_TENANT_KEY = "0"` (`wrangler.toml:98`). **Svatko na internetu stvara ITalk intente.**
 - `tenants/db.ts:146-161` — za ITalk `allow_sources = '["wallet_registry"]'` (`migrations/0014:32`): svaki `safe_address` iz `wallet_registry` / `wallet_accounts` je whitelistiran.
@@ -90,6 +92,8 @@ na istu adresu → 429.
 
 ### SR-02 [MONEY] Ručni reroute ne provjerava iznos ni stanje intenta; uz otvoren BW-01 1 € može flipati intent od 500 € u `paid`
 
+> ✅ Napravljeno 2026-10-10 (`0e8239e`, grana `fix/fable51-r2-fixes`)
+
 **Gdje.**
 - `admin/app.ts:90-102` → `forward.ts:529-544` `checkReroute`: provjerava
   `issue`+`processed`, živi forward, `resolved_offrail`, i **samo postojanje**
@@ -136,6 +140,8 @@ testovi iz prethodnog plana (50/30 → nije paid, `payment.underpaid` jednom).
 
 ### SR-03 [BUG → lažno „plaćeno"] `sid_resolved` preview može prikazati `settled` na susjednom intentu čiji novac je otišao drugom intentu
 
+> ✅ Napravljeno 2026-10-10 (`44f33b7`, grana `fix/fable51-r2-fixes`)
+
 **Gdje.**
 - `monerium/webhookHandler.ts:128-135` — na `order.created` bez reference upisuje
   `sidResolved` (read-only pick) u `monerium_webhook_events`.
@@ -181,6 +187,8 @@ confirmed → A je `awaiting_payment`/`expired`, ne `settled`; forward `sid=A` �
 
 ### SR-04 [RISK] `findStrayCandidates` LIMIT 20 (najnoviji prvi) odbacuje starije kandidate; pod spamom legitimni istekli intent ispada iz prozora
 
+> ✅ Napravljeno 2026-10-10 (`e1e6299`, grana `fix/fable51-r2-fixes`)
+
 **Gdje.** `intents/db.ts:237-238` — `ORDER BY created_at DESC LIMIT 20`.
 
 **Kako puca.** Uz SR-01 scenarij, napadač s >20 otvorenih intenata istog iznosa
@@ -195,6 +203,8 @@ nad cijelim skupom. Uz SR-01 (trusted only) skup je ionako malen.
 ---
 
 ### SR-05 [MONEY-RISK] Reconcile ne alarmira za zalutalu (bez reference) obrađenu uplatu bez forwarda; alarm za memo-uplate ima prozor od točno jednog intervala i ovisi o `somethingInFlight`
+
+> ✅ Napravljeno 2026-10-10 (`25fb251`, grana `fix/fable51-r2-fixes`)
 
 **Gdje.**
 - `monerium/reconcile.ts:130-139` `isStuckWithoutForward`: `if (!/^(mpt|cmp):/i.test(order.memo ?? '')) return false` — order bez memoa nikad ne alarmira.
@@ -234,6 +244,8 @@ isti order drugi put unutar 6 h → bez alarma; s `RECONCILE_FORWARDS=1` →
 
 ### SR-06 [LOW] Sitnice resolvera
 
+> ✅ Napravljeno 2026-10-10 (`8cb7426`, grana `fix/fable51-r2-fixes`) — egzaktni parser; premještanje previewa iza dedupa NIJE napravljeno
+
 - `webhookHandler.ts:128-135` — preview se izvršava **prije** dedup claima
   (`alreadyProcessed`, :159-166) i za svaki event tip; Monerium retry iste
   isporuke plaća D1 upit kandidata uzalud. Premjestiti iza dedupa (rezultat se
@@ -253,6 +265,8 @@ isti order drugi put unutar 6 h → bez alarma; s `RECONCILE_FORWARDS=1` →
 ## B. Multi-tenant rail (ADR 0017)
 
 ### MT-01 [SEC-PII] `contribution.sepa` se enqueuea bez `tenantId` → kampanjski eventi tenanta (IBAN + ime darovatelja) idu na ITalkov globalni endpoint (pinka)
+
+> ✅ Napravljeno 2026-10-10 (`d99e50d`, grana `fix/fable51-r2-fixes`)
 
 **Gdje.**
 - `intents/confirm.ts:152-167` `settleConfirmedForward` → `emitCampaignContribution({...})` bez tenanta.
@@ -277,6 +291,8 @@ kompajliranju). Test: tenant forward `cmp` → outbox red s `tenant_id='zupa-x'`
 
 ### MT-02 [RISK → MONEY] Bez router ključa webhook tiho preskače forward: ni park red, ni alarm
 
+> ✅ Napravljeno 2026-10-10 (`83a0fb7`, grana `fix/fable51-r2-fixes`)
+
 **Gdje.** `monerium/webhookHandler.ts:223-230` — `&& rail.signer.privateKey` u
 gateu; grana `else` ne postoji. `tenants/rail.ts:196` — ključ je `''` kad
 `router_key_enc` nedostaje **ili** kad dešifriranje padne (`railFromStoredRow`
@@ -300,6 +316,8 @@ no router key") preokrenuti u „records failed + alerts".
 
 ### MT-03 [RISK] ITalk rail ima `requireMintAt: null` — provjera mint adrese ugašena za jedinog živog tenanta
 
+> ✅ Napravljeno 2026-10-10 (`16e0b18`, grana `fix/fable51-r2-fixes`)
+
 **Gdje.** `tenants/whitelist.ts:101` `requireMintAt: rail.legacy ? null : rail.receivingSafe`;
 `authorizeForward` :122-124.
 
@@ -316,6 +334,8 @@ u planu). Test: legacy order s `address ≠ SAFE_ADDRESS` → `mint_address_mism
 ---
 
 ### MT-04 [SEC-DoS] Neautentificirane webhook rute trajno spremaju tijelo bilo koje veličine; `/t/:tenantId` to radi i za nepostojeće tenante
+
+> ✅ Napravljeno 2026-10-10 (`9968e4e`, grana `fix/fable51-r2-fixes`)
 
 **Gdje.**
 - `index.ts:166-181` — nepoznat tenant: `recordMoneriumWebhookEvent({ payload: rawBody })` pa 404.
@@ -336,6 +356,8 @@ umjesto D1 reda (ili ne spremati uopće; 404 je dovoljno).
 ---
 
 ### MT-05 [OPS] `registerTenantWebhook` rotira tajnu prije registracije i nikad ne gasi prethodnu pretplatu
+
+> ✅ Napravljeno 2026-10-10 (`920a169`, grana `fix/fable51-r2-fixes`)
 
 **Gdje.** `tenants/onboarding.ts:295-318` — novi `whsec_` → `UPDATE`
 (`webhook_subscription_id = NULL`) → `createWebhookSubscription`;
@@ -359,6 +381,8 @@ drugi poziv gasi prvu pretplatu.
 
 ### MT-06 [RISK] Rotacija KEK-a nije moguća bez re-onboardinga; `v1` je jedini prihvaćeni format
 
+> ✅ Napravljeno 2026-10-10 (`920a169`, grana `fix/fable51-r2-fixes`)
+
 **Gdje.** `tenants/secrets.ts:29, 94-96` — `VERSION = 'v1'`, dekripcija odbija
 sve drugo; `importKek` čita samo `TENANT_SECRETS_KEK`.
 
@@ -377,6 +401,8 @@ PREV → OK; `v1` bez PREV → `SecretsError`.
 
 ### MT-07 [OPS] Gas ITalkovog routera nije nadziran; tenant routeri jesu
 
+> ✅ Napravljeno 2026-10-10 (`16e0b18`, grana `fix/fable51-r2-fixes`)
+
 **Gdje.** `tenants/onboarding.ts:516-542` `checkRouterGas` iterira
 `listRailTenantIds` (bez legacy). `alerts.ts`, `reconcile.ts` ne gledaju saldo.
 
@@ -392,6 +418,8 @@ forward nema admin gumb).
 
 ### MT-08 [LOW] `isKnownPayer` je globalan (preko svih tenanata)
 
+> ✅ Napravljeno 2026-10-10 (`16e0b18`, grana `fix/fable51-r2-fixes`)
+
 **Gdje.** `monerium/db.ts:95-111` — nema `tenant_id` filtera; zove se iz
 `lifecycle.ts:42` i `stage.ts:117-119`.
 
@@ -404,6 +432,8 @@ parametar s `COALESCE(tenant_id, default) = ?`.
 ---
 
 ### MT-09 [RISK] SSE Durable Object: bez autentikacije (sid je capability, OK), ali bez kapice na broj sinkova ni na trajanje DO-a
+
+> ✅ Napravljeno 2026-10-10 (`9968e4e`, grana `fix/fable51-r2-fixes`) — kapica sinkova u kodu; WAF pravila samo dokumentirana (docs/runbook/rate-limits.md), nisu upisana
 
 **Gdje.** `intents/stream.ts:209-242` — svaki `/subscribe` dodaje sink;
 `startHeartbeat` radi D1 čitanje svakih 15 s dok postoji ijedan sink;
@@ -421,6 +451,8 @@ klijent pada na polling (već implementirano). CF rate-limit na
 ---
 
 ### MT-10 [RISK] Potpisivanje forwarda i dalje bez `nonceManager`/eksplicitnog gasa; ITalk paralelni forwardi daju `failed` bez retryja
+
+> ✅ Napravljeno 2026-10-10 (`4378c64`, grana `fix/fable51-r2-fixes`)
 
 **Gdje.** `router/safe.ts:146-147, 199-211` — `privateKeyToAccount(key)` bez
 `nonceManager`, `writeContract` bez `gas`/`nonce`. Prethodni P0-2 točka 5 i

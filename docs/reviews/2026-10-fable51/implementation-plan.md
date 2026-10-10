@@ -55,6 +55,8 @@ P2 (kad slegne)
 
 ### P0-1 [S] Amount rekoncilijacija na paid flipu — BW-01 / DB-02
 
+> ✅ Napravljeno 2026-10-10 (`c312ac2`, grana `fix/fable51-r2-fixes`) — kroz r2 P0-2.
+
 **Promjene.**
 1. `backend/src/intents/db.ts` `markIntentPaid`: u isti `UPDATE` dodati `AND ? >= amount_cents` (bind `amountReceivedCents`) tako da **underpayment nikad ne flipa** `paid`. Vraćati `{flipped, reason}`: ako `changes === 0`, drugi SELECT razlikuje `already_paid | expired | underpaid | not_found`.
 2. Novi status za underpayment: `UPDATE payment_intents SET amount_received_cents=?, monerium_order_id=?, forward_id=?, forward_tx_hash=? WHERE sid=? AND state='pending' AND monerium_order_id IS NULL` (bez promjene `state`), + novi outbox event `payment.underpaid` (`undp_<sid>`) s `{expected_cents, received_cents, delta_cents, funds_location:'recipient'}` — novac **jest** proslijeđen primatelju (forward ne gleda intent iznos), merchant odlučuje.
@@ -159,6 +161,8 @@ Kontekst: `credential_id` je javan (`/api/wallets/family/:safe`, `dw_cred` URL p
 
 ### P1-1 [S] Dropped-tx detekcija + reconcile red bez gladovanja — BW-16 / CT-03
 
+> ✅ Napravljeno 2026-10-10 (`8e07983`, grana `fix/fable51-r2-fixes`).
+
 1. `router/safe.ts` `getForwardStatus` → `{kind:'confirmed'|'reverted'|'in_mempool'|'not_found'|'rpc_error', error?}`: `getTransactionReceipt` u try/catch (`TransactionReceiptNotFoundError` → nastavi), zatim `getTransaction` (null → `not_found`).
 2. `intents/confirm.ts`: `not_found && updated_at < now - 30*60` → `markForwardFailed(id, 'dropped_from_mempool')` + alarm; `rpc_error` → log, bez promjene.
 3. `monerium/db.ts` `listSubmittedForwardsOlderThan`: `ORDER BY updated_at ASC`, i nakon svake provjere `updated_at = now` (dodati `touchForward`).
@@ -203,6 +207,8 @@ Backend postaje **cache**, ne izvor istine (ADR 0001). Točne linije u `wallet-c
 **Test** (prvi wallet testovi, vidi P2-4): remote red s tuđim `recovery_owner` → odbačen; remote `safe_address` ≠ predict → odbačen; restore s pubKeyem koji nije kandidat → odbijen.
 
 ### P1-6 [S] Sitni backend guardovi — BW-20, BW-21, BW-23, BW-24, BW-11
+
+> ✅ Napravljeno 2026-10-10 (`7a48733`, grana `fix/fable51-r2-fixes`); Shopify sid skraćen na 32.
 
 1. `SID_RE` → `{6,32}`; Flutter `maxLength: 32` + regex; test koji veže `SID_RE` i `asciiToBytes32`.
 2. CORS `allowHeaders` + `x-mpt-key`.
