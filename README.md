@@ -1,5 +1,7 @@
 # pay.DOMOVINA.ai
 
+[![CI](https://github.com/domovinatv/pay.domovina.ai/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/domovinatv/pay.domovina.ai/actions/workflows/ci.yml)
+
 <p align="center">
   <a href="https://pay.domovina.ai">
     <img src="web/favicon.svg" width="120" alt="Domovina Pay logotip">

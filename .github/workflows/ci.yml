@@ -55,6 +55,9 @@ jobs:
       - run: npm ci
       - run: npx tsc --noEmit
       - run: npx vitest run
+      # The production build (VITE_BRAND=default → wallet.domovina.ai), so a
+      # broken build shows up here and not at deploy time.
+      - run: npm run build:default
 
   flutter:
     name: flutter (analyze, test)
