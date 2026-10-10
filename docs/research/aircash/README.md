@@ -12,6 +12,7 @@ Prilozi sa svim citatima i URL-ovima:
 | [01-proizvod-naknade-limiti.md](01-proizvod-naknade-limiti.md) | Licenca, Slikaj i plati, nadoplate, isplate, KYC, uvjeti |
 | [02-developer-api-sandbox.md](02-developer-api-sandbox.md) | Aircash Pay API rekonstruiran iz plugina, sandbox, Abon, payout |
 | [03-sepa-rail-vop-hub3-vs-revolut.md](03-sepa-rail-vop-hub3-vs-revolut.md) | Sponzorska banka, SCT Inst, VoP, HUB3 → ISO 20022, Revolut usporedba |
+| [04-zasto-aircash-suradnja.md](04-zasto-aircash-suradnja.md) | Za i protiv suradnje iz Aircashove perspektive, modeli M1–M4, dosadašnji kontakt (airKUNA pitch 6/2026) |
 
 Oznake: **VERIFIED** = primarni izvor, **REPORTED** = treća strana, **UNKNOWN** = nema izvora,
 **INFERENCE** = naš zaključak iz provjerenih činjenica.
@@ -26,7 +27,7 @@ resolve intenta" **u objavljenom obliku ne radi**, iz dva neovisna razloga:
    Monerium IBAN je `EE…` (LHVBEE22). Ni isplata na IBAN (HR, SI, AT, DE, ES, CY, GR, RO)
    ne uključuje EE. *VERIFIED popis; INFERENCE da će EE biti odbijen — potreban test na uređaju.*
 2. **Nije instant.** Aircash nije sudionik SCT ni SCT Inst sheme (BIC `AIDOHR22` nije u EPC
-   registrima), ide preko neobjavljene sponzorske banke s cut-offom 13:00 CET: isti ili
+   registrima), ide preko sponzorske banke (prema Matiji PBZ, neobjavljeno) s cut-offom 13:00 CET: isti ili
    sljedeći radni dan. Revolut ide SCT Inst i Monerium minta za ~10 s. *VERIFIED.*
    Uredba 2024/886 obvezuje Aircash na slanje instant plaćanja do **9.4.2027**.
 
