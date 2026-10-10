@@ -74,6 +74,7 @@ export interface Env {
   // has its own Monerium account, webhook and signer in `tenant_rail`.
   MULTI_TENANT_RAIL: string;          // "1" → tenant rails live; anything else → only the default tenant
   TENANT_SECRETS_KEK: string;         // SECRET — base64 of 32 bytes; AES-GCM key for tenant_rail *_enc columns
+  TENANT_SECRETS_KEK_PREV?: string;   // SECRET, only during a KEK rotation: the previous KEK, read-only (docs/runbook/kek-rotation.md)
   INTENT_SSE: string;                 // "1" → GET /api/intents/:sid/stream serves SSE; else 404 as before
   STRAY_RESOLVER?: string;            // "1" → reference-less payments are matched to an intent by amount + time (src/monerium/strayResolver.ts)
   WATCH_HEARTBEAT_URL?: string;        // secret: dead-man ping after every healthy theft-detector tick (TD-02), e.g. healthchecks.io

@@ -12,6 +12,7 @@ import {
   nextStatus,
   redactRail,
   registerTenantWebhook,
+  rewrapTenantSecrets,
   runVerify,
   saveVerifyReport,
   setTenantStatus,
@@ -40,6 +41,25 @@ async function jsonBody(req: { json<T>(): Promise<T> }): Promise<Record<string, 
 
 export function mountRailAdmin(app: Hono<{ Bindings: Env }>): void {
   app.get('/admin/tenants', (c) => c.html(renderTenantsPage()));
+
+  // KEK rotation (MT-06): re-encrypt a tenant's stored secrets under the
+  // current TENANT_SECRETS_KEK. Safe on an active tenant — values unchanged.
+  app.post('/admin/api/tenants/:id/rail/rewrap', async (c) => {
+    const id = c.req.param('id');
+    try {
+      const rewrapped = await rewrapTenantSecrets(c.env, id);
+      await writeAudit(c.env, {
+        tenantId: id,
+        action: 'rail.rewrap',
+        actor: actorOf(c),
+        detail: JSON.stringify({ rewrapped }),
+      });
+      return c.json({ ok: true, tenant_id: id, rewrapped });
+    } catch (e) {
+      const msg = (e as Error).message;
+      return c.json({ error: msg === 'rail_not_found' ? msg : 'rewrap_failed', detail: msg.slice(0, 200) }, msg === 'rail_not_found' ? 404 : 500);
+    }
+  });
 
   app.post('/admin/api/tenants', async (c) => {
     const body = await jsonBody(c.req);
@@ -131,7 +151,13 @@ export function mountRailAdmin(app: Hono<{ Bindings: Env }>): void {
         actor: actorOf(c),
         detail: JSON.stringify(r),
       });
-      return c.json({ ok: true, url: r.url, subscription_id: r.subscriptionId });
+      return c.json({
+        ok: true,
+        url: r.url,
+        subscription_id: r.subscriptionId,
+        types_applied: r.typesApplied,
+        disabled_previous: r.disabledPrevious,
+      });
     } catch (e) {
       return c.json({ error: 'webhook_registration_failed', detail: (e as Error).message.slice(0, 300) }, 502);
     }

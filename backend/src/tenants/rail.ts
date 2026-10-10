@@ -1,5 +1,5 @@
 import type { Env } from '../types';
-import { decryptSecret, importKek, type SecretField } from './secrets';
+import { decryptSecret, importKeks, type SecretField } from './secrets';
 import { defaultTenantId } from './whitelist';
 
 /// The ONE place that knows where a tenant's money infrastructure lives
@@ -231,10 +231,10 @@ export async function getTenantRail(env: Env, tenantId: string): Promise<TenantR
 /// money path goes through `getTenantRail`.
 export async function railFromStoredRow(env: Env, row: TenantRailRow): Promise<TenantRail | null> {
   try {
-    const kek = await importKek(env.TENANT_SECRETS_KEK);
+    const keks = await importKeks(env);
     return await railFromRow(env, row, async (field, blob) => {
       if (!blob) throw new Error(`missing ${field}`);
-      return decryptSecret(kek, row.tenant_id, field, blob);
+      return decryptSecret(keks, row.tenant_id, field, blob);
     });
   } catch (e) {
     console.error(`tenant ${row.tenant_id} rail unusable: ${(e as Error).message}`);

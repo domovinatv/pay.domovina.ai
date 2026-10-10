@@ -5,7 +5,7 @@ import { gnosis, gnosisChiado } from 'viem/chains';
 import type { Env } from '../types';
 import { MoneriumClient, type MoneriumIban } from '../monerium/client';
 import { sendAlert } from '../alerts';
-import { encryptSecret, importKek, type SecretField } from './secrets';
+import { decryptSecret, encryptSecret, importKek, importKeks, type SecretField } from './secrets';
 import { getTenant, type TenantRow } from './db';
 import {
   getTenantRail,
@@ -173,6 +173,37 @@ async function enc(env: Env, tenantId: string, field: SecretField, plaintext: st
   return encryptSecret(await importKek(env.TENANT_SECRETS_KEK), tenantId, field, plaintext);
 }
 
+const ENC_COLUMNS: Array<[column: string, field: SecretField]> = [
+  ['client_secret_enc', 'client_secret'],
+  ['refresh_token_enc', 'refresh_token'],
+  ['router_key_enc', 'router_key'],
+  ['webhook_secret_enc', 'webhook_secret'],
+  ['outbound_webhook_secret_enc', 'outbound_webhook_secret'],
+];
+
+/// KEK rotation (MT-06): re-encrypt every stored secret of one tenant under
+/// the CURRENT TENANT_SECRETS_KEK, reading with current-or-previous. Values
+/// are unchanged, so the rail keeps working throughout. Returns how many
+/// columns were rewritten.
+export async function rewrapTenantSecrets(env: Env, tenantId: string): Promise<number> {
+  const row = await getTenantRailRow(env, tenantId);
+  if (!row) throw new Error('rail_not_found');
+  const keks = await importKeks(env);
+  const r = row as unknown as Record<string, string | null>;
+  let n = 0;
+  for (const [column, field] of ENC_COLUMNS) {
+    const blob = r[column];
+    if (!blob) continue;
+    const plain = await decryptSecret(keks, tenantId, field, blob);
+    const fresh = await encryptSecret(keks[0], tenantId, field, plain);
+    await env.DB.prepare(`UPDATE tenant_rail SET ${column} = ?, updated_at = ? WHERE tenant_id = ?`)
+      .bind(fresh, now(), tenantId)
+      .run();
+    n++;
+  }
+  return n;
+}
+
 /// Insert or update the tenant's rail. Secrets are encrypted here and never
 /// stored or returned in clear. Any change clears the verification.
 export async function upsertRail(env: Env, tenantId: string, v: RailInput, existing: TenantRailRow | null): Promise<void> {
@@ -297,7 +328,22 @@ export async function registerTenantWebhook(
   env: Env,
   tenantId: string,
   origin: string,
-): Promise<{ url: string; subscriptionId: string }> {
+): Promise<{ url: string; subscriptionId: string; typesApplied: boolean; disabledPrevious: string | null }> {
+  // MT-05: the previous subscription would keep delivering every event signed
+  // with the OLD secret (→ 401 + 12 h of Monerium retries). Disable it first;
+  // best effort — a failure is logged and reported, not fatal.
+  let disabledPrevious: string | null = null;
+  const before = await getTenantRailRow(env, tenantId);
+  if (before?.webhook_subscription_id) {
+    const prevRail = await railFromStoredRow(env, before);
+    try {
+      if (!prevRail) throw new Error('rail unusable');
+      await new MoneriumClient(env, prevRail.monerium).disableWebhookSubscription(before.webhook_subscription_id);
+      disabledPrevious = before.webhook_subscription_id;
+    } catch (e) {
+      console.error(`tenant ${tenantId}: disabling webhook ${before.webhook_subscription_id} failed: ${(e as Error).message}`);
+    }
+  }
   const secret = newWebhookSecret();
   await env.DB.prepare(
     `UPDATE tenant_rail
@@ -315,7 +361,9 @@ export async function registerTenantWebhook(
   await env.DB.prepare(`UPDATE tenant_rail SET webhook_subscription_id = ?, updated_at = ? WHERE tenant_id = ?`)
     .bind(sub.id, now(), tenantId)
     .run();
-  return { url, subscriptionId: sub.id };
+  // typesApplied false: the subscription exists with Monerium's default
+  // types; verify's webhook check shows it, re-register to fix.
+  return { url, subscriptionId: sub.id, typesApplied: sub.typesApplied !== false, disabledPrevious };
 }
 
 // ---- verify ----------------------------------------------------------------------
