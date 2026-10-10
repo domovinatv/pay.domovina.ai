@@ -7,7 +7,7 @@ Provjera 2026-10-10. Cilj: smijemo li MPT intent nuditi i kao HUB3 barkod uplatn
 
 - **Specifikacija:** HUB, „HUB 3A obrazac — specifikacija PDF417 barkoda", verzija 6, rujan 2022
   (`hub.hr/sites/default/files/inline-files/2DBK_EUR_Uputa_1.pdf`).
-- **Četiri stvarna računa** iz Matijinog sandučića (KEKS Pay režije i e-računi), dekodirana
+- **Osam stvarnih računa** iz Matijinog sandučića (KEKS Pay režije i e-računi), dekodirana
   zxing-cpp i Apple Vision dekoderom. Podaci platitelja i referenca kupca ovdje su zamijenjeni.
 
 | Izdavatelj | Kraj zapisa | Polje 13 | Dijakritike | Napomena |
@@ -16,9 +16,15 @@ Provjera 2026-10-10. Cilj: smijemo li MPT intent nuditi i kao HUB3 barkod uplatn
 | HEP-Opskrba | `…opis\n` | `ELEC` | ne | — |
 | Telemach | `…opis\r\n` (**CRLF**) | `OTLC` | ne | ECL ~2 %, banke ga ipak čitaju |
 | e-račun (Ekipa Products → ITalk) | bez završnog LF | `COST` | ne | — |
+| VG Čistoća, rujan | `…opis\n` | prazno | ne | isti oblik kao kolovoz |
+| HEP-Opskrba, rujan | `…opis\n` | `ELEC` | ne | isti oblik kao kolovoz |
+| VG Vodoopskrba | `…opis \n` (razmak na kraju opisa) | `WTER` | **da** (`STEPANIĆ`, `GRAĐANI`) | adresa primatelja **32 znaka** (spec 25) |
+| Dječji vrtić (račun 26/…) | `…opis\n` | prazno | **da** (`Školska`, `SMENDROVIĆEVA`) | model `HR64` |
 
-Zaključak iz uzoraka: skeneri su tolerantni (CRLF, bez završnog LF, niski ECL), ali **nitko
-ne koristi dijakritike** i svi poštuju duljine polja.
+Zaključak iz uzoraka: skeneri su tolerantni (CRLF, bez završnog LF, niski ECL, pa i adresa
+preko duljine polja). Dva izdavatelja pišu dijakritike kao UTF-8 i Apple Vision ih i ondje
+vraća kao mojibake (`STEPANIÄ`), dakle bankovne aplikacije same dekodiraju bajtove. Pisanje
+bez dijakritika je zato najsigurnije za sve dekodere. Svih 8 se čita i u zxing i u Visionu.
 
 ## Pravila iz specifikacije koja su bitna
 
@@ -40,9 +46,16 @@ ne koristi dijakritike** i svi poštuju duljine polja.
 | F4 | Nema rezanja na duljine polja ni čišćenja znakova; dijakritike idu kao UTF-8 bez ECI pa ih Vision vraća kao mojibake (`JuÅ¾na`). | Srednja |
 | F5 | PDF417 parametri: ECL 2 (spec 4), broj stupaca po omjeru (spec 9), widget fiksne veličine 420×110. | Niska (uzorci pokazuju toleranciju) |
 
-Flutter generator nisam mijenjao: postojeći testovi (`test/widget_test.dart`) fiksiraju 14 redaka
-bez završnog LF, pa je F3 promjena ponašanja (`behavior-change`), a F1 traži drugi renderer.
-Za intente HUB3 sada sastavlja rail.
+**Ispravljeno (2026-10-11):**
+
+- **F1 — uzrok pronađen:** `_getLeftCodeWord`, klaster 0 računa `(rows - 3) ~/ 3` umjesto
+  `(rows - 1) ~/ 3` (ISO/IEC 15438). Lijevi i desni indikator retka se ne slažu kad je
+  `rows % 3 ≠ 0`; Vision čita samo jednu stranu, zxing ih uspoređuje i odbija simbol.
+  Bug je i na upstream masteru. Paket je vendoran u `third_party/barcode` s jednolinijskom
+  ispravkom (`PATCHES.md`, `dependency_overrides`). Nakon ispravka zxing čita 26/26 duljina.
+- **F2–F4:** `Hub3Payload` sada radi kao rail — LF iza svakog polja, rezanje na duljine,
+  dopušteni znakovi, bez dijakritika. Opis je `MPT sid:<sid>` (HR IBAN put ne ide kroz Monerium).
+- **F5:** renderer na ECL 4 i modul 3:1.
 
 ### Rail (`backend/src/intents/hub3.ts`, novo)
 

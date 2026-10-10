@@ -47,7 +47,7 @@ void main() {
     expect(out.split('\n').length, 7);
   });
 
-  test('HUB3 payload follows 14-field FINA standard with empty payer block', () {
+  test('HUB3 v6: 14 fields each ending in LF, ASCII without diacritics', () {
     final out = const Hub3Payload(
       amount: 1.01,
       name: 'ITalk d.o.o.',
@@ -58,22 +58,60 @@ void main() {
       description: 'Donacija',
     ).build();
 
-    final lines = out.split('\n');
-    expect(lines.length, 14);
-    expect(lines[0], 'HRVHUB30');
-    expect(lines[1], 'EUR');
-    expect(lines[2], '000000000000101');
-    expect(lines[3], '');
-    expect(lines[4], '');
-    expect(lines[5], '');
-    expect(lines[6], 'ITalk d.o.o.');
-    expect(lines[7], 'IX. Južna obala 20');
-    expect(lines[8], 'Zagreb');
-    expect(lines[9], 'HR6023900011500157044');
-    expect(lines[10], 'HR00');
-    expect(lines[11], '1991');
-    expect(lines[12], '');
-    expect(lines[13], 'Donacija');
+    expect(out.endsWith('\n'), isTrue);
+    expect(out.split('\n'), [
+      'HRVHUB30',
+      'EUR',
+      '000000000000101',
+      '',
+      '',
+      '',
+      'ITalk d.o.o.',
+      'IX. Juzna obala 20',
+      'Zagreb',
+      'HR6023900011500157044',
+      'HR00',
+      '1991',
+      '',
+      'Donacija',
+      '', // after the final LF
+    ]);
+  });
+
+  test('HUB3 matches the layout of a real HEP bill byte for byte', () {
+    final out = const Hub3Payload(
+      amount: 46.56,
+      name: 'HEP-OPSKRBA D.O.O.',
+      address: 'Ulica grada Vukovara 37',
+      city: '10000 Zagreb',
+      iban: 'HR2523600001102100146',
+      model: 'HR01',
+      reference: '0012345678-260820-1',
+      purposeCode: 'ELEC',
+      description: 'Racun za 8.2026',
+    ).build();
+
+    expect(
+        out,
+        'HRVHUB30\nEUR\n000000000004656\n\n\n\nHEP-OPSKRBA D.O.O.\n'
+        'Ulica grada Vukovara 37\n10000 Zagreb\nHR2523600001102100146\n'
+        'HR01\n0012345678-260820-1\nELEC\nRacun za 8.2026\n');
+  });
+
+  test('HUB3 cuts fields to spec length and drops disallowed characters', () {
+    final lines = const Hub3Payload(
+      amount: 1,
+      name: 'VG Vodoopskrba d.o.o. Velika Gorica',
+      address: 'Ul. kneza Ljudevita Posavskog 45',
+      city: 'Velika Gorica',
+      iban: 'HR3624070001500319066',
+      description: 'gnosis:0x6693a7D1aaaaaaaaaaaaaaaaaaaaaaaaaaaa?sid=abc123',
+    ).build().split('\n');
+
+    expect(lines[6].length, lessThanOrEqualTo(25));
+    expect(lines[7].length, lessThanOrEqualTo(25));
+    expect(lines[13].length, lessThanOrEqualTo(35));
+    expect(lines[13].contains('='), isFalse);
   });
 
   test('EIP-681 ERC-20 transfer matches reference URI', () {
