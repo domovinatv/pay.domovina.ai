@@ -60,13 +60,30 @@ export function mountAdminUi(app: Hono<{ Bindings: Env }>): void {
   app.get('/admin/orders/:id', async (c) => {
     const order = await getMoneriumOrder(c.env, c.req.param('id'));
     if (!order) return c.text('order not found', 404);
-    return c.html(renderOrderDetailPage(order));
+    const tags = await loadTenantTags(c.env);
+    return c.html(renderOrderDetailPage(order, tags.resolve(order.tenant_id)));
+  });
+  // Tenant + Monerium environment list for the header strip and the tenant
+  // selectors on every admin tab. Display only.
+  app.get('/admin/api/tenant-tags', async (c) => {
+    const tags = await loadTenantTags(c.env);
+    return c.json({ default_tenant_id: tags.defaultId, tenants: tags.list });
   });
   app.get('/admin/forwards', (c) => c.html(renderForwardsPage()));
   app.get('/admin/api/forwards', async (c) => {
     const status = c.req.query('status') || undefined;
-    const { items, total } = await listForwards(c.env, { status, limit: 100 });
-    return c.json({ items, total });
+    const tags = await loadTenantTags(c.env);
+    const tenant = c.req.query('tenant') || undefined;
+    const { items, total } = await listForwards(c.env, {
+      status,
+      tenant: tenant ? tenantWhere(tenant, tags.defaultId) : undefined,
+      limit: 100,
+    });
+    return c.json({
+      items: items.map((it) => ({ ...it, ...tags.resolve(it.tenant_id) })),
+      total,
+      tenants: tags.list,
+    });
   });
   // Parked payment → intent (stray resolver, operator side). The picker lists
   // the order tenant's unsettled intents around the payment time; the POST
@@ -113,14 +130,23 @@ export function mountAdminUi(app: Hono<{ Bindings: Env }>): void {
   // Outbound merchant webhook outbox (migration 0015).
   app.get('/admin/api/outbox', async (c) => {
     const status = c.req.query('status');
+    const tags = await loadTenantTags(c.env);
+    const tenant = c.req.query('tenant') || undefined;
+    const where: string[] = [];
+    const args: unknown[] = [];
+    if (status) { where.push('status = ?'); args.push(status); }
+    if (tenant) { const w = tenantWhere(tenant, tags.defaultId); where.push(w.sql); args.push(...w.args); }
     const res = await c.env.DB.prepare(
       `SELECT id, type, tenant_id, status, attempts, next_attempt_at, last_status,
               last_error, created_at, delivered_at
          FROM webhook_outbox
-        ${status ? 'WHERE status = ?' : ''}
+        ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
         ORDER BY created_at DESC LIMIT 200`,
-    ).bind(...(status ? [status] : [])).all();
-    return c.json({ items: res.results });
+    ).bind(...args).all<{ tenant_id: string | null }>();
+    return c.json({
+      items: res.results.map((it) => ({ ...it, ...tags.resolve(it.tenant_id) })),
+      tenants: tags.list,
+    });
   });
   app.post('/admin/api/outbox/:id/resend', async (c) => {
     const r = await resendWebhook(c.env, c.req.param('id'));
@@ -192,8 +218,14 @@ export function mountAdminUi(app: Hono<{ Bindings: Env }>): void {
     });
   });
   app.get('/admin/api/orders', async (c) => {
-    const orders = await listMoneriumOrders(c.env);
-    return c.json({ orders });
+    const tags = await loadTenantTags(c.env);
+    const tenant = c.req.query('tenant') || undefined;
+    const orders = await listMoneriumOrders(c.env, 100, tenant ? tenantWhere(tenant, tags.defaultId) : undefined);
+    return c.json({
+      // Order's own `chain` (from Monerium) wins over the tenant's rail chain.
+      orders: orders.map((o) => { const t = tags.resolve(o.tenant_id); return { ...t, ...o, tenant_id: t.tenant_id }; }),
+      tenants: tags.list,
+    });
   });
 
   // Self-custody wallet registry — Phase 3 (customer count) + Phase 4a

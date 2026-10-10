@@ -113,13 +113,16 @@ export async function isKnownPayer(
 export async function listMoneriumOrders(
   env: Env,
   limit = 100,
+  /// Tenant filter; NULL tenant_id rows count as the default tenant.
+  tenant?: { sql: string; args: unknown[] },
 ): Promise<MoneriumOrderRow[]> {
   const res = await env.DB.prepare(
     `SELECT * FROM monerium_orders
+     ${tenant ? `WHERE ${tenant.sql}` : ''}
      ORDER BY COALESCE(placed_at, '') DESC, updated_at DESC
      LIMIT ?`,
   )
-    .bind(limit)
+    .bind(...(tenant?.args ?? []), limit)
     .all<MoneriumOrderRow>();
   return res.results;
 }
@@ -399,11 +402,18 @@ export async function getForwardByOrder(
 
 export async function listForwards(
   env: Env,
-  filter: { limit?: number; offset?: number; status?: string } = {},
+  filter: {
+    limit?: number;
+    offset?: number;
+    status?: string;
+    /// Tenant filter; NULL tenant_id rows count as the default tenant.
+    tenant?: { sql: string; args: unknown[] };
+  } = {},
 ): Promise<{ items: MoneriumForwardRow[]; total: number }> {
   const where: string[] = [];
   const args: unknown[] = [];
   if (filter.status) { where.push('status = ?'); args.push(filter.status); }
+  if (filter.tenant) { where.push(filter.tenant.sql); args.push(...filter.tenant.args); }
   const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
   const limit = Math.min(Math.max(filter.limit ?? 50, 1), 200);
   const offset = Math.max(filter.offset ?? 0, 0);

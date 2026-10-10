@@ -136,6 +136,14 @@ tbody tr:last-child td { border-bottom: 0; }
 .pill.env-sandbox { background: #FDF1E0; color: var(--warning); border: 1px dashed var(--warning); }
 .pill.env-unknown { background: var(--surface); color: var(--muted); border: 1px solid var(--border); }
 .tenant-cell { white-space: nowrap; }
+.tenant-strip {
+  display: flex; flex-wrap: wrap; align-items: center; gap: .4rem .9rem;
+  padding: .45rem 1.5rem; border-bottom: 1px solid var(--border);
+  background: var(--surface); font-size: .8rem; color: var(--muted);
+}
+.tenant-strip .scope { font-weight: 600; color: var(--navy); margin-right: .3rem; }
+.tenant-strip .tchip { display: inline-flex; align-items: center; gap: .3rem; }
+.tenant-strip .tchip .mono { color: var(--navy); }
 .tenant-cell .tname { display: block; font-size: .76rem; color: var(--muted); }
 .pager {
   display: flex; justify-content: space-between; align-items: center;
@@ -209,6 +217,8 @@ interface ShellOptions {
   body: string;
   /// E-mail prijavljenog admina; prikazuje se uz odjavu.
   email?: string;
+  /// Kratka napomena u traci tenanta: je li ovaj tab po tenantu ili globalan.
+  scope?: string;
 }
 
 /// Shared CSS + JS injected once per page: snackbar/toast notification
@@ -317,7 +327,7 @@ window.MPTToast = (function() {
 })();
 </script>`;
 
-function renderShell({ title, tab, body, email }: ShellOptions): string {
+function renderShell({ title, tab, body, email, scope }: ShellOptions): string {
   const t = (key: ShellOptions['tab'], label: string, href: string) =>
     `<a href="${href}" class="${tab === key ? 'active' : ''}">${label}</a>`;
   const badgeLabel = tab === 'events' ? 'Webhook audit'
@@ -365,7 +375,12 @@ ${TOAST_JS}
     <button type="submit">Odjava</button>
   </form>
 </nav>
+<div class="tenant-strip" id="tenantStrip">
+  <span class="scope">${escapeHtml(scope ?? 'Po tenantu')}</span>
+  <span id="tenantStripList" class="dim">Tenanti…</span>
+</div>
 <main>${body}</main>
+${TENANT_STRIP_SCRIPT}
 <footer>
   Dio platforme <a href="https://domovina.ai">DOMOVINA.ai</a> ·
   Webhook URL: <span class="mono">https://monerium.domovina.ai/api/monerium/webhook</span>
@@ -374,6 +389,45 @@ ${TOAST_JS}
 </body>
 </html>`;
 }
+
+/// Traka ispod tabova na svakoj admin stranici: svi tenanti s Monerium
+/// okruženjem (prod/sandbox) i chainom, da se uvijek vidi s čime radiš.
+const TENANT_STRIP_SCRIPT = `<script>
+(function() {
+  const el = document.getElementById("tenantStripList");
+  if (!el) return;
+  const e = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+  fetch("/admin/api/tenant-tags", { credentials: "same-origin" })
+    .then((r) => r.ok ? r.json() : Promise.reject(new Error("HTTP " + r.status)))
+    .then((d) => {
+      el.className = "";
+      el.innerHTML = (d.tenants || []).map((t) => {
+        const env = t.monerium_env || "unknown";
+        return '<span class="tchip" title="' + e(t.tenant_name || "") + '"><span class="mono">' + e(t.tenant_id) + '</span>' +
+          (t.tenant_id === d.default_tenant_id ? ' <span class="dim">(zadani)</span>' : '') +
+          ' <span class="pill env-' + e(env) + '">' + e(env === "production" ? "prod" : env) + '</span>' +
+          (t.chain && t.chain !== "gnosis" ? ' <span class="dim">' + e(t.chain) + '</span>' : '') + '</span>';
+      }).join("");
+    })
+    .catch(() => { el.textContent = "tenanti nedostupni"; });
+})();
+</script>`;
+
+/// Tenant id → "prod"/"sandbox" label za selektore na Whitelist i Tenanti.
+const TENANT_ENV_JS = `
+let tenantEnv = {};
+async function loadTenantEnv() {
+  try {
+    const r = await fetch('/admin/api/tenant-tags', { credentials: 'same-origin' });
+    const d = await r.json();
+    tenantEnv = {};
+    for (const t of d.tenants || []) tenantEnv[t.tenant_id] = t;
+  } catch {}
+}
+const envLabel = (id) => { const t = tenantEnv[id]; if (!t) return '?'; return (t.monerium_env === 'production' ? 'prod' : t.monerium_env) + (t.chain && t.chain !== 'gnosis' ? '/' + t.chain : ''); };
+const envPillFor = (id) => { const t = tenantEnv[id]; const v = (t && t.monerium_env) || 'unknown';
+  return '<span class="pill env-' + v + '" title="Monerium ' + v + '">' + (v === 'production' ? 'prod' : v) + '</span>'; };
+`;
 
 const TENANT_JS = `
 const envPill = function(e) {
@@ -582,10 +636,7 @@ export function renderEventDetailPage(ev: {
   payload: string;
   headers_json: string | null;
 }, tag?: { tenant_id: string; tenant_name: string | null; monerium_env: string }): string {
-  const tenantRow = tag
-    ? `<dt>Tenant</dt><dd><span class="mono">${escapeHtml(tag.tenant_id)}</span>${tag.tenant_name ? ` <span class="dim">— ${escapeHtml(tag.tenant_name)}</span>` : ''}</dd>
-  <dt>Monerium</dt><dd><span class="pill env-${escapeHtml(tag.monerium_env)}">${escapeHtml(tag.monerium_env)}</span></dd>`
-    : '';
+  const tenantRow = tenantDetailRows(tag);
   const sigPill = ev.signature_ok
     ? '<span class="pill ok">OK</span>'
     : '<span class="pill bad">FAIL</span>';
@@ -633,6 +684,8 @@ export function renderOrdersPage(): string {
     <option value="issue">issue (SEPA → EURe)</option>
     <option value="redeem">redeem (EURe → SEPA)</option>
   </select>
+  <label for="tenant">Tenant:</label>
+  <select id="tenant"><option value="">Svi</option></select>
   <button type="button" id="refresh">↻ Osvježi</button>
 </div>
 <div class="table-wrap">
@@ -640,6 +693,8 @@ export function renderOrdersPage(): string {
     <thead>
       <tr>
         <th>Placed</th>
+        <th>Tenant</th>
+        <th>Monerium</th>
         <th>Smjer</th>
         <th>Stanje</th>
         <th>Iznos</th>
@@ -648,11 +703,11 @@ export function renderOrdersPage(): string {
         <th>ID</th>
       </tr>
     </thead>
-    <tbody id="rows"><tr><td colspan="7" class="empty">Učitavam…</td></tr></tbody>
+    <tbody id="rows"><tr><td colspan="9" class="empty">Učitavam…</td></tr></tbody>
   </table>
 </div>
 <script>
-let kind = "";
+let kind = "", tenant = "";
 const fmt = function(iso) {
   if (!iso) return "—";
   return new Date(iso).toLocaleString("hr-HR", { dateStyle: "short", timeStyle: "short" });
@@ -662,21 +717,24 @@ const esc = function(s) {
     return ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c];
   });
 };
+${TENANT_JS}
 async function load() {
   const tbody = document.getElementById("rows");
-  tbody.innerHTML = '<tr><td colspan="7" class="empty">Učitavam…</td></tr>';
+  tbody.innerHTML = '<tr><td colspan="9" class="empty">Učitavam…</td></tr>';
   let data;
   try {
-    const r = await fetch("/admin/api/orders", { credentials: "same-origin" });
+    const q = tenant ? "?tenant=" + encodeURIComponent(tenant) : "";
+    const r = await fetch("/admin/api/orders" + q, { credentials: "same-origin" });
     if (!r.ok) throw new Error("HTTP " + r.status);
     data = await r.json();
   } catch (e) {
-    tbody.innerHTML = '<tr><td colspan="7" class="empty">Greška: ' + esc(e.message) + '</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="9" class="empty">Greška: ' + esc(e.message) + '</td></tr>';
     return;
   }
+  fillTenants(data.tenants);
   const items = kind ? data.orders.filter(o => o.kind === kind) : data.orders;
   if (items.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="7" class="empty">Nema ordera.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="9" class="empty">Nema ordera.</td></tr>';
     return;
   }
   let html = "";
@@ -685,6 +743,8 @@ async function load() {
     const memo = (o.memo || o.reference_number || "").slice(0, 80);
     html += '<tr data-href="/admin/orders/' + encodeURIComponent(o.id) + '">' +
       '<td>' + esc(fmt(o.placed_at)) + '</td>' +
+      '<td>' + tenantCell(o) + '</td>' +
+      '<td>' + envPill(o.monerium_env) + '</td>' +
       '<td class="mono">' + esc(o.kind) + '</td>' +
       '<td><span class="pill ' + statePill + '">' + esc(o.state) + '</span></td>' +
       '<td class="amount mono">' + esc(o.amount) + ' ' + esc((o.currency || "").toUpperCase()) + '</td>' +
@@ -696,6 +756,7 @@ async function load() {
   document.getElementById("rows").innerHTML = html;
 }
 document.getElementById("kind").addEventListener("change", function(e) { kind = e.target.value; load(); });
+document.getElementById("tenant").addEventListener("change", function(e) { tenant = e.target.value; load(); });
 document.getElementById("refresh").addEventListener("click", load);
 load();
 </script>`;
@@ -717,13 +778,14 @@ export function renderOrderDetailPage(order: {
   placed_at: string | null;
   processed_at: string | null;
   raw_json: string;
-}): string {
+}, tag?: { tenant_id: string; tenant_name: string | null; monerium_env: string }): string {
   const pretty = prettyJson(order.raw_json);
   const statePill = order.state === 'processed' ? 'ok' : order.state === 'rejected' ? 'bad' : 'warn';
   const body = `
 <a class="back-link" href="/admin/orders">← Svi orderi</a>
 <h1>Order ${escapeHtml(order.id)}</h1>
 <dl class="detail-grid">
+  ${tenantDetailRows(tag)}
   <dt>Smjer</dt><dd class="mono">${escapeHtml(order.kind)}</dd>
   <dt>Stanje</dt><dd><span class="pill ${statePill}">${escapeHtml(order.state)}</span></dd>
   <dt>Iznos</dt><dd class="mono">${escapeHtml(order.amount)} ${escapeHtml((order.currency ?? '').toUpperCase())}</dd>
@@ -758,6 +820,8 @@ export function renderForwardsPage(): string {
     <option value="blocked">blocked (whitelist)</option>
     <option value="resolved_offrail">resolved_offrail (ručno)</option>
   </select>
+  <label for="tenant">Tenant:</label>
+  <select id="tenant"><option value="">Svi</option></select>
   <button type="button" id="refresh">↻ Osvježi</button>
   <button type="button" id="auto">Auto: OFF</button>
 </div>
@@ -767,6 +831,8 @@ export function renderForwardsPage(): string {
       <tr>
         <th>#</th>
         <th>Stvoreno</th>
+        <th>Tenant</th>
+        <th>Monerium</th>
         <th>Status</th>
         <th>Order</th>
         <th>SID</th>
@@ -776,7 +842,7 @@ export function renderForwardsPage(): string {
         <th>Napomena</th>
       </tr>
     </thead>
-    <tbody id="rows"><tr><td colspan="9" class="empty">Učitavam…</td></tr></tbody>
+    <tbody id="rows"><tr><td colspan="11" class="empty">Učitavam…</td></tr></tbody>
   </table>
 </div>
 ${FORWARDS_SCRIPT}`;
@@ -784,28 +850,31 @@ ${FORWARDS_SCRIPT}`;
 }
 
 const FORWARDS_SCRIPT = `<script>
-let status = "", autoTimer = null;
+let status = "", tenant = "", autoTimer = null;
 const fmt = (u) => u ? new Date(u*1000).toLocaleString("hr-HR",{dateStyle:"short",timeStyle:"medium"}) : "—";
 const esc = (s) => String(s==null?"":s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const short = (s,n=10) => s ? s.slice(0,n)+"…" : "—";
 const eur = (cents) => cents==null ? "—" : (cents/100).toFixed(2)+" EUR";
+${TENANT_JS}
 
 async function load() {
   const tbody = document.getElementById("rows");
-  tbody.innerHTML = '<tr><td colspan="9" class="empty">Učitavam…</td></tr>';
+  tbody.innerHTML = '<tr><td colspan="11" class="empty">Učitavam…</td></tr>';
   const q = new URLSearchParams();
   if (status) q.set("status", status);
+  if (tenant) q.set("tenant", tenant);
   let data;
   try {
     const r = await fetch("/admin/api/forwards?"+q.toString(), {credentials:"same-origin"});
     if (!r.ok) throw new Error("HTTP "+r.status);
     data = await r.json();
   } catch (e) {
-    tbody.innerHTML = '<tr><td colspan="9" class="empty">Greška: '+esc(e.message)+'</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="11" class="empty">Greška: '+esc(e.message)+'</td></tr>';
     return;
   }
+  fillTenants(data.tenants);
   if (data.items.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="9" class="empty">Nema forwards.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="11" class="empty">Nema forwards.</td></tr>';
     return;
   }
   // Orders that already have a live forward can't be rerouted again.
@@ -822,16 +891,19 @@ async function load() {
       : f.memo_prefix === "offrail" ? ' <span class="pill" title="novac pomaknut ručno izvan raila (2/3 vlasnici)">izvan raila</span>' : "";
     const pill = (f.status === "confirmed" || f.status === "resolved_offrail") ? "ok"
       : (f.status === "failed" || f.status === "blocked") ? "bad" : "warn";
+    const ex = explorer(f.chain);
     const txCell = f.tx_hash
-      ? '<a class="mono" href="https://gnosisscan.io/tx/'+esc(f.tx_hash)+'" target="_blank" rel="noopener">'+esc(short(f.tx_hash,10))+'</a>'
+      ? '<a class="mono" href="'+ex+'/tx/'+esc(f.tx_hash)+'" target="_blank" rel="noopener">'+esc(short(f.tx_hash,10))+'</a>'
       : '<span class="dim">—</span>';
     html += '<tr>'
       + '<td class="dim mono">#'+f.id+'</td>'
       + '<td class="nowrap">'+esc(fmt(f.created_at))+'</td>'
+      + '<td>'+tenantCell(f)+'</td>'
+      + '<td>'+envPill(f.monerium_env)+'</td>'
       + '<td><span class="pill '+pill+'">'+esc(f.status)+'</span></td>'
       + '<td class="mono dim">'+esc(short(f.order_id,10))+'</td>'
       + '<td class="mono">'+esc(f.sid||"—")+via+'</td>'
-      + '<td class="mono"><a href="https://gnosisscan.io/address/'+esc(f.target_address)+'" target="_blank" rel="noopener">'+esc(short(f.target_address,10))+'</a></td>'
+      + '<td class="mono"><a href="'+ex+'/address/'+esc(f.target_address)+'" target="_blank" rel="noopener">'+esc(short(f.target_address,10))+'</a></td>'
       + '<td class="amount">'+esc(eur(f.amount_cents))+'</td>'
       + '<td>'+txCell+'</td>'
       + '<td class="dim note">'
@@ -840,7 +912,7 @@ async function load() {
           + '<button type="button" class="offrail" data-order="'+esc(f.order_id)+'">Riješeno ručno…</button></div>' : '')
         + '</td>'
       + '</tr>'
-      + (parked ? '<tr class="reroute-row" id="rr-'+esc(f.order_id)+'" style="display:none"><td colspan="9"></td></tr>' : '');
+      + (parked ? '<tr class="reroute-row" id="rr-'+esc(f.order_id)+'" style="display:none"><td colspan="11"></td></tr>' : '');
   }
   tbody.innerHTML = html;
 }
@@ -937,6 +1009,7 @@ document.getElementById("rows").addEventListener("click", async (e) => {
   }
 });
 document.getElementById("status").addEventListener("change", e => { status = e.target.value; load(); });
+document.getElementById("tenant").addEventListener("change", e => { tenant = e.target.value; load(); });
 document.getElementById("refresh").addEventListener("click", load);
 document.getElementById("auto").addEventListener("click", e => {
   if (autoTimer) { clearInterval(autoTimer); autoTimer = null; e.target.textContent="Auto: OFF"; e.target.classList.remove("auto-on"); }
@@ -1092,7 +1165,7 @@ export function renderIntentsPage(): string {
         <th>Forward TX</th>
       </tr>
     </thead>
-    <tbody id="rows"><tr><td colspan="9" class="empty">Učitavam…</td></tr></tbody>
+    <tbody id="rows"><tr><td colspan="11" class="empty">Učitavam…</td></tr></tbody>
   </table>
 </div>
 ${INTENTS_SCRIPT}`;
@@ -1419,7 +1492,7 @@ async function drill(phoneHash) {
 document.getElementById('refresh').addEventListener('click', loadClusters);
 loadClusters();
 </script>`;
-  return renderShell({ title: 'Sybil dashboard', tab: 'sybil', body });
+  return renderShell({ title: 'Sybil dashboard', tab: 'sybil', body, scope: 'Globalno (wallet.domovina.ai, nije po tenantu)' });
 }
 
 export function renderWalletsPage(): string {
@@ -1570,7 +1643,13 @@ document.getElementById("auto").addEventListener("click", e => {
 
 load();
 </script>`;
-  return renderShell({ title: 'Self-custody wallets', tab: 'wallets', body });
+  return renderShell({ title: 'Self-custody wallets', tab: 'wallets', body, scope: 'Globalno (wallet.domovina.ai, nije po tenantu)' });
+}
+
+function tenantDetailRows(tag?: { tenant_id: string; tenant_name: string | null; monerium_env: string }): string {
+  if (!tag) return '';
+  return `<dt>Tenant</dt><dd><span class="mono">${escapeHtml(tag.tenant_id)}</span>${tag.tenant_name ? ` <span class="dim">— ${escapeHtml(tag.tenant_name)}</span>` : ''}</dd>
+  <dt>Monerium</dt><dd><span class="pill env-${escapeHtml(tag.monerium_env)}">${escapeHtml(tag.monerium_env)}</span></dd>`;
 }
 
 function prettyJson(s: string | null): string {
@@ -1601,6 +1680,7 @@ export function renderWhitelistPage(): string {
 <div class="controls">
   <label for="tenant">Tenant:</label>
   <select id="tenant"></select>
+  <span id="tenantEnvPill"></span>
   <button type="button" id="refresh">↻ Osvježi</button>
   <label for="showRevoked" style="margin-left:1rem">
     <input type="checkbox" id="showRevoked" /> prikaži i opozvane
@@ -1665,19 +1745,21 @@ export function renderWhitelistPage(): string {
   </table>
 </div>
 ${WHITELIST_SCRIPT}`;
-  return renderShell({ title: 'Payout whitelist', tab: 'whitelist', body });
+  return renderShell({ title: 'Payout whitelist', tab: 'whitelist', body, scope: 'Po tenantu (odabrani gore)' });
 }
 
 const WHITELIST_SCRIPT = `<script>
 const fmtU = (u) => u ? new Date(u*1000).toLocaleString('hr-HR',{dateStyle:'short',timeStyle:'medium'}) : '—';
 const escW = (s) => String(s==null?'':s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const tenantSel = document.getElementById('tenant');
+${TENANT_ENV_JS}
 
 async function loadTenants() {
   const r = await fetch('/admin/api/tenants');
   const d = await r.json();
+  await loadTenantEnv();
   tenantSel.innerHTML = d.tenants.map(t =>
-    '<option value="' + escW(t.id) + '">' + escW(t.id) + ' — ' + escW(t.name) +
+    '<option value="' + escW(t.id) + '">' + escW(t.id) + ' — ' + escW(t.name) + ' · ' + escW(envLabel(t.id)) +
     ' (' + t.address_count + ' adr, ' + t.campaign_count + ' kmp)' +
     (t.status !== 'active' ? ' ⚠ ' + escW(t.status) : '') + '</option>').join('');
   await loadAll();
@@ -1736,7 +1818,10 @@ async function loadAudit() {
     '<td class="mono" style="font-size:.75rem">' + escW(e.detail) + '</td></tr>').join('');
 }
 
-function loadAll() { return Promise.all([loadAddresses(), loadCampaigns(), loadAudit()]); }
+function loadAll() {
+  document.getElementById('tenantEnvPill').innerHTML = envPillFor(tenant());
+  return Promise.all([loadAddresses(), loadCampaigns(), loadAudit()]);
+}
 
 async function revoke(addr) {
   if (!confirm('Ukloniti ' + addr + ' s whiteliste? Buduće uplate na tu adresu bit će blokirane.')) return;
@@ -1836,6 +1921,7 @@ export function renderTenantsPage(): string {
 <h2 style="margin-top:1.5rem">Tenant</h2>
 <div class="controls">
   <select id="tSel"></select>
+  <span id="tEnvPill"></span>
   <span id="tStatus" class="mono"></span>
   <button type="button" data-act="activate">Aktiviraj</button>
   <button type="button" data-act="suspend">Suspendiraj</button>
@@ -1872,10 +1958,11 @@ export function renderTenantsPage(): string {
   <tbody id="verifyRows"><tr><td colspan="3" class="empty">Još nije pokrenut.</td></tr></tbody>
 </table></div>
 ${TENANTS_SCRIPT}`;
-  return renderShell({ title: 'Tenanti', tab: 'tenants', body });
+  return renderShell({ title: 'Tenanti', tab: 'tenants', body, scope: 'Po tenantu (odabrani dolje)' });
 }
 
 const TENANTS_SCRIPT = `<script>
+${TENANT_ENV_JS}
 const $t = (id) => document.getElementById(id);
 const escT = (s) => String(s==null?'':s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const say = (msg, ok) => { $t('actResult').textContent = msg; $t('actResult').style.color = ok ? '#1b8f3a' : '#c62828'; };
@@ -1889,8 +1976,9 @@ async function api(method, path, body) {
 
 async function loadTenants(select) {
   const { d } = await api('GET', '/admin/api/tenants');
+  await loadTenantEnv();
   $t('tSel').innerHTML = (d.tenants || []).map(t =>
-    '<option value="' + escT(t.id) + '">' + escT(t.id) + ' — ' + escT(t.name) + ' [' + escT(t.status) + ']</option>').join('');
+    '<option value="' + escT(t.id) + '">' + escT(t.id) + ' — ' + escT(t.name) + ' · ' + escT(envLabel(t.id)) + ' [' + escT(t.status) + ']</option>').join('');
   if (select) $t('tSel').value = select;
   await loadRail();
 }
@@ -1900,6 +1988,7 @@ function row(k, v) { return '<tr><th style="text-align:left;width:14rem">' + esc
 async function loadRail() {
   const id = $t('tSel').value;
   if (!id) return;
+  $t('tEnvPill').innerHTML = envPillFor(id);
   const { d } = await api('GET', '/admin/api/tenants/' + encodeURIComponent(id) + '/rail');
   $t('tStatus').textContent = d.legacy ? 'ITalk — rail iz env (nije ovdje)' : ('status: ' + (d.status || '?'));
   const r = d.rail;
@@ -2058,5 +2147,5 @@ export function renderPasskeysPage(opts: {
 <p class="dim">Passkey vrijedi samo za ovu domenu. Access ostaje drugi put ulaska i služi za oporavak
 ako izgubiš sve passkeye.</p>
 <script src="/admin/static/passkey.js"></script>`;
-  return renderShell({ title: 'Passkeyi', tab: 'passkeys', body, email: opts.email });
+  return renderShell({ title: 'Passkeyi', tab: 'passkeys', body, email: opts.email, scope: 'Globalno (admin pristup)' });
 }
