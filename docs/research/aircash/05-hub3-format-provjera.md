@@ -26,6 +26,43 @@ preko duljine polja). Dva izdavatelja pišu dijakritike kao UTF-8 i Apple Vision
 vraća kao mojibake (`STEPANIÄ`), dakle bankovne aplikacije same dekodiraju bajtove. Pisanje
 bez dijakritika je zato najsigurnije za sve dekodere. Svih 8 se čita i u zxing i u Visionu.
 
+## Što generira RBA biz iOS („Generiraj uplatnicu“, 2026-10-11)
+
+Dva izlaza za isti primjer (ITalk d.o.o., HPB `HR41…`):
+
+| | PDF `HUB3APaySlip.pdf` | Slika za dijeljenje (WhatsApp) |
+|---|---|---|
+| Simbologija | **PDF417** na obrascu HUB 3A | **QR kod** (ECC Q) s istim HUB3 tekstom |
+| Polja | 14, LF iza svakog | 14, LF iza svakog |
+| Platitelj | popunjen (naziv / adresa / sjedište) | prazan |
+| Primatelj | VELIKA SLOVA, s dijakritikom (`IX. JUŽNA OBALA 20`) | isto |
+| Rezanje | na duljine iz spec v6 (opis točno 35), **bez trimanja** razmaka na kraju | opis 35 |
+| Poziv na broj / namjena | `HR00` `619283636373` / `AIRB` | `HR00` `19911118` / prazno |
+
+- RBA reže polja točno kao naš generator, ali ostavlja razmak na kraju odrezanog polja
+  (`ja sam sjediste platitelja `) i ne mijenja velika/mala slova. Mi trimamo i ne diramo velika slova.
+- Dijakritike kao UTF-8 bez ECI: zxing ih iz PDF417 čita ispravno, iz QR-a kao `JUÅ½NA`, a
+  Apple Vision u oba kao mojibake. Naše pisanje bez dijakritika izbjegava problem.
+- **RBA za dijeljenje koristi QR, ne PDF417** — znači da hrvatske bankovne aplikacije
+  prihvaćaju `HRVHUB30` tekst i u QR kodu. To je moguća treća varijanta za checkout
+  (jedan QR za HR aplikacije, uz EPC QR za Revolut).
+- Obrazac na papiru za platitelja ispisuje model `HR99`, ali to polje nije u barkodu.
+
+**Zaključak:** naš format je usklađen s RBA-om u svemu što je bitno (14 polja, završni LF,
+duljine polja, redoslijed, prazna namjena). Razlike (velika slova, dijakritike, trailing razmak)
+su stil izdavatelja i skeneri ih toleriraju u oba smjera.
+
+## Pokusi skeniranja (2026-10-11)
+
+| Kod | Primatelj | PBZ iOS | HPB biz iOS | RBA biz iOS | Aircash |
+|---|---|---|---|---|---|
+| PDF417 s pay.domovina.ai (Flutter, nakon ispravka #75) | ITalk, **HPB `HR…`** | čita | čita | čita | **čita i prihvaća** |
+| EPC QR i HUB3 PDF417 s rail checkouta | ITalk, Monerium **`EE…`** | — | — | — | čita oba, odbija: „Unknown code. Try again.“ |
+
+Aircash prihvaća isti format s hrvatskim IBAN-om, a odbija ga s estonskim. To potvrđuje da je
+prepreka popis država u „Slikaj i plati“ (uvjeti §11.1), a ne format koda. Varijanta A iz
+[README](README.md) (HR naplatni IBAN) tehnički radi već danas.
+
 ## Pravila iz specifikacije koja su bitna
 
 - 14 polja, „**nakon zadnjeg znaka u polju stavlja se graničnik**" LF — i iza 14. polja.
