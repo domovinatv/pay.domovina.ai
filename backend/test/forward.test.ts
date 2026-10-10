@@ -101,6 +101,17 @@ describe('handleForward — authorised', () => {
     expect(rec.polls).toBe(0);
   });
 
+  it('MT-02: no router key → failed row + alert, never silence', async () => {
+    const { deps, rec } = harness({
+      forward: async () => ({ ok: false, error: 'router_disabled: no ROUTER_PRIVATE_KEY' }),
+    });
+    await handleForward(deps, order(`mpt:${PAYEE}?sid=abc123def456`));
+
+    expect(rec.updates[0].patch).toMatchObject({ status: 'failed', error: 'router_disabled: no ROUTER_PRIVATE_KEY' });
+    expect(rec.alerts).toHaveLength(1);
+    expect(rec.alerts[0]).toContain('router_disabled');
+  });
+
   it('treats a memo pointing at the Safe as a no-op and settles the intent', async () => {
     const { deps, rec } = harness({
       authorize: {

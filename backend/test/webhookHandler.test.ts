@@ -218,12 +218,12 @@ describe('legacy (ITalk) webhook — behaviour unchanged', () => {
     expect(rec.lifecycle).toBe(1);
   });
 
-  it('does not forward when no router key is configured', async () => {
+  it('MT-02: still runs the forward path when no router key is configured (→ failed + alert, not silence)', async () => {
     const { deps, rec, settle } = harness();
     const d = await delivery(SECRET_ITALK, { type: 'order.updated', data: processedOrder() });
     await handleMoneriumWebhook(deps, { ...italk, signer: { ...italk.signer, privateKey: '' } }, d.body, d.headers);
     await settle();
-    expect(rec.forwards).toBe(0);
+    expect(rec.forwards).toBe(1);
   });
 
   it('acks subscription.created without touching orders', async () => {

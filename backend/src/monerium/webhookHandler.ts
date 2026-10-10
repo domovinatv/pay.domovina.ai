@@ -219,11 +219,14 @@ export async function handleMoneriumWebhook(
       // Idempotency: order.updated may fire more than once. The live-forward
       // latch on insertForward (migration 0016) lets exactly one through; a
       // prior `failed` forward is allowed to retry.
+      //
+      // No router key is NOT a reason to skip (MT-02): forwardViaSafe answers
+      // `router_disabled`, so handleForward records a `failed` row and alerts
+      // — instead of a processed order silently sitting in the Safe.
       if (
         order.kind === 'issue'
         && eventType === 'order.updated'
         && order.state === 'processed'
-        && rail.signer.privateKey
       ) {
         deps.waitUntil(deps.forward(order));
       }
