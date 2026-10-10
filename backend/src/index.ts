@@ -55,7 +55,7 @@ app.use('*', async (c, next) => {
     // PUT/DELETE za GP proxy (daily-limit PUT, owners DELETE); ostale rute ih
     // jednostavno ne koriste.
     allowMethods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-    allowHeaders: ['Content-Type', 'Authorization'],
+    allowHeaders: ['Content-Type', 'Authorization', 'x-mpt-key'],
   })(c, next);
 });
 

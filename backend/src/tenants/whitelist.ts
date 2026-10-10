@@ -41,7 +41,8 @@ export type ParkReason =
   | 'mint_address_mismatch' // Monerium minted somewhere else than the Safe
                           // this tenant forwards from — moving value out of
                           // that Safe would spend money this order never brought
-  | 'over_cap';           // above the tenant's per-forward cap
+  | 'over_cap'            // above the tenant's per-forward cap
+  | 'unsupported_currency'; // BW-23: a non-EUR issue order — never forwarded as EURe
 
 export type ForwardDecision =
   | { action: 'forward'; tenantId: string; reason?: undefined }
@@ -227,5 +228,6 @@ export function describeParkReason(reason: ParkReason): string {
     case 'tenant_mismatch': return 'intent/kampanja pripada drugom tenantu nego IBAN na koji je novac stigao';
     case 'mint_address_mismatch': return 'Monerium nije mintao na prihvatni Safe tenanta';
     case 'over_cap': return 'iznos je iznad kapice po forwardu za tenanta';
+    case 'unsupported_currency': return 'valuta ordera nije EUR';
   }
 }

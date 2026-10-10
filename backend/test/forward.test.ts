@@ -125,6 +125,14 @@ describe('handleForward — authorised', () => {
     expect(rec.updates[0].patch).toMatchObject({ status: 'failed' });
   });
 
+  it('BW-23: a non-EUR issue order is parked, never forwarded as EURe', async () => {
+    const { deps, rec } = harness();
+    await handleForward(deps, order(`mpt:${PAYEE}?sid=abc123def456`, { currency: 'usd' } as Partial<MoneriumOrder>));
+    expect(rec.forwards).toHaveLength(0);
+    expect(rec.inserts[0]).toMatchObject({ status: 'blocked' });
+    expect(rec.blocked[0].reason).toBe('unsupported_currency');
+  });
+
   it('MT-02: no router key → failed row + alert, never silence', async () => {
     const { deps, rec } = harness({
       forward: async () => ({ ok: false, error: 'router_disabled: no ROUTER_PRIVATE_KEY' }),

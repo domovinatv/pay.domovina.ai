@@ -74,7 +74,7 @@ describe('deriveSid', () => {
     expect(a).toBe(await deriveSid('k', 'a.myshopify.com', 'gid://shopify/Order/1'));
     expect(a).not.toBe(await deriveSid('k', 'b.myshopify.com', 'gid://shopify/Order/1'));
     expect(a).not.toBe(await deriveSid('k2', 'a.myshopify.com', 'gid://shopify/Order/1'));
-    expect(a).toMatch(/^[A-Za-z0-9_-]{6,64}$/);
+    expect(a).toMatch(/^[A-Za-z0-9_-]{6,32}$/); // MPT SID_RE (bytes32 on-chain)
   });
 });
 

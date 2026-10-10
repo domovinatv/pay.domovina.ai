@@ -4,6 +4,7 @@ import type { Env } from '../types';
 import { actorOf } from '../admin/auth/mount';
 import {
   addCampaign,
+  getCampaign,
   addPayoutAddress,
   getTenant,
   hashApiKey,
@@ -132,6 +133,11 @@ export function mountTenantAdmin(app: Hono<{ Bindings: Env }>): void {
     const safeAddress = (body.safe_address ?? '').trim();
     if (!ID_RE.test(campaignId)) return c.json({ error: 'invalid_campaign_id' }, 400);
     if (!ADDR_RE.test(safeAddress)) return c.json({ error: 'invalid_safe_address' }, 400);
+    // BW-24: a campaign id belongs to one tenant for good.
+    const existing = await getCampaign(c.env, campaignId);
+    if (existing && existing.tenant_id !== tenantId) {
+      return c.json({ error: 'campaign_owned_by_other_tenant' }, 409);
+    }
     const actor = actorOf(c);
     const label = (body.label ?? '').trim() || null;
     await addCampaign(c.env, { tenantId, campaignId, safeAddress, label, actor });
@@ -157,7 +163,7 @@ export function mountTenantAdmin(app: Hono<{ Bindings: Env }>): void {
     const tenantId = c.req.param('id');
     const campaignId = c.req.param('campaignId');
     const actor = actorOf(c);
-    const revoked = await revokeCampaign(c.env, { campaignId, actor });
+    const revoked = await revokeCampaign(c.env, { tenantId, campaignId, actor });
     if (!revoked) return c.json({ error: 'not_found_or_already_revoked' }, 404);
     await writeAudit(c.env, {
       tenantId,
@@ -213,7 +219,7 @@ export function mountTenantAdmin(app: Hono<{ Bindings: Env }>): void {
   app.delete('/admin/api/tenants/:id/keys/:keyHash', async (c) => {
     const keyHash = c.req.param('keyHash');
     if (!/^[0-9a-f]{64}$/.test(keyHash)) return c.json({ error: 'invalid_key_hash' }, 400);
-    const revoked = await revokeApiKey(c.env, keyHash);
+    const revoked = await revokeApiKey(c.env, keyHash, c.req.param('id'));
     if (!revoked) return c.json({ error: 'not_found_or_already_revoked' }, 404);
     await writeAudit(c.env, {
       tenantId: c.req.param('id'),

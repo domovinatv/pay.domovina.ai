@@ -29,7 +29,9 @@ interface CreateIntentBody {
 }
 
 const ADDR_RE = /^0x[0-9a-fA-F]{40}$/;
-const SID_RE = /^[A-Za-z0-9_-]{6,64}$/;
+/// ≤ 32 (BW-20): the sid is written on-chain as bytes32 by the payment
+/// registry path (router/safe.ts asciiToBytes32 throws above 32 bytes).
+const SID_RE = /^[A-Za-z0-9_-]{6,32}$/;
 
 const DEFAULT_TTL_SECONDS = 900; // 15 min — matches PayCek's window
 const MAX_TTL_SECONDS = 86_400;  // 24 h hard cap
@@ -77,8 +79,11 @@ export function buildIntentApi(): Hono<{ Bindings: Env }> {
     if (amountCents <= 0 || amountCents > MAX_AMOUNT_CENTS) {
       return c.json({ error: 'amount_out_of_range', max: MAX_AMOUNT_CENTS }, 400);
     }
+    if (body.expires_in_seconds !== undefined && !Number.isFinite(body.expires_in_seconds)) {
+      return c.json({ error: 'invalid_expires_in_seconds' }, 400);
+    }
     const ttl = Math.min(
-      Math.max(body.expires_in_seconds ?? DEFAULT_TTL_SECONDS, 60),
+      Math.max(Math.floor(body.expires_in_seconds ?? DEFAULT_TTL_SECONDS), 60),
       MAX_TTL_SECONDS,
     );
     if (body.sid !== undefined && !SID_RE.test(body.sid)) {

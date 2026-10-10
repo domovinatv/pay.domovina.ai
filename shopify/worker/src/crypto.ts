@@ -93,7 +93,10 @@ export async function verifyMptWebhook(args: {
 /// guessable `shp_<orderId>` would let anyone enumerate order amounts.
 export async function deriveSid(secret: string, shop: string, orderGid: string): Promise<string> {
   const mac = await hmacSha256(secret, `sid:v1:${shop}:${orderGid}`);
-  return `shp_${bytesToHex(mac).slice(0, 32)}`;
+  // 32 chars total (BW-20): the MPT rail caps sids at 32 so they fit bytes32
+  // on-chain. Not deployed before this change — no open orders carry the
+  // old 36-char form.
+  return `shp_${bytesToHex(mac).slice(0, 28)}`;
 }
 
 /// AES-256-GCM for Shopify access/refresh tokens, MPT tenant keys and webhook

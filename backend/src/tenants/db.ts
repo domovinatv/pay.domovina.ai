@@ -277,10 +277,10 @@ export async function addCampaign(
        (campaign_id, tenant_id, safe_address, label, created_at, created_by)
      VALUES (?, ?, ?, ?, ?, ?)
      ON CONFLICT(campaign_id) DO UPDATE SET
-       tenant_id = excluded.tenant_id,
        safe_address = excluded.safe_address,
        label = excluded.label,
-       revoked_at = NULL`,
+       revoked_at = NULL
+     WHERE tenant_campaigns.tenant_id = excluded.tenant_id`,
   )
     .bind(
       args.campaignId,
@@ -295,13 +295,14 @@ export async function addCampaign(
 
 export async function revokeCampaign(
   env: Env,
-  args: { campaignId: string; actor: string },
+  args: { tenantId: string; campaignId: string; actor: string },
 ): Promise<boolean> {
+  // BW-24: only the tenant named in the URL.
   const res = await env.DB.prepare(
     `UPDATE tenant_campaigns SET revoked_at = ?
-      WHERE campaign_id = ? AND revoked_at IS NULL`,
+      WHERE campaign_id = ? AND tenant_id = ? AND revoked_at IS NULL`,
   )
-    .bind(Math.floor(Date.now() / 1000), args.campaignId)
+    .bind(Math.floor(Date.now() / 1000), args.campaignId, args.tenantId)
     .run();
   return (res.meta?.changes ?? 0) > 0;
 }
@@ -352,11 +353,12 @@ export async function listApiKeys(env: Env, tenantId: string): Promise<TenantApi
 export async function revokeApiKey(
   env: Env,
   keyHash: string,
+  tenantId: string,
 ): Promise<boolean> {
   const res = await env.DB.prepare(
-    `UPDATE tenant_api_keys SET revoked_at = ? WHERE key_hash = ? AND revoked_at IS NULL`,
+    `UPDATE tenant_api_keys SET revoked_at = ? WHERE key_hash = ? AND tenant_id = ? AND revoked_at IS NULL`,
   )
-    .bind(Math.floor(Date.now() / 1000), keyHash)
+    .bind(Math.floor(Date.now() / 1000), keyHash, tenantId)
     .run();
   return (res.meta?.changes ?? 0) > 0;
 }

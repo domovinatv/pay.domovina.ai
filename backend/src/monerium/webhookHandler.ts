@@ -12,6 +12,7 @@ import { makeForwardDeps, maybeForward, parseAmountCents, previewStraySid } from
 import { notifyOrderLifecycle } from '../intents/lifecycle';
 import { sendAlert } from '../alerts';
 import type { TenantRail } from '../tenants/rail';
+import { orderState } from './orderState';
 import { publishIntentChange } from '../intents/stream';
 
 /// Inbound Monerium webhook, for ONE tenant's rail (ADR 0017). Extracted from
@@ -234,7 +235,8 @@ export async function handleMoneriumWebhook(
       if (
         order.kind === 'issue'
         && eventType === 'order.updated'
-        && order.state === 'processed'
+        // BW-23: same state reading as the reconcile (top-level or meta).
+        && orderState(order) === 'processed'
       ) {
         deps.waitUntil(deps.forward(order));
       }

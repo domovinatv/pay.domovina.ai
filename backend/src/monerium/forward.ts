@@ -222,6 +222,13 @@ export async function handleForward(
     }
   }
 
+  // BW-23: only EUR issue orders become EURe forwards. Checked before the
+  // gate (whose order of checks stays as it is).
+  if ((order.currency ?? 'eur').toLowerCase() !== 'eur') {
+    await park(deps, { order, routing: memoRouting, amountCents, reason: 'unsupported_currency', tenantId: deps.authorize.railTenantId, note: null });
+    return;
+  }
+
   // ---- Single authorisation gate. No forward path bypasses this. ----
   const decision = await authorizeForward(deps.authorize, routing, {
     mintAddress: order.address ?? null,
