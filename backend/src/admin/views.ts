@@ -936,20 +936,66 @@ document.getElementById("rows").addEventListener("click", async (e) => {
     cell.dataset.mode = "offrail";
     cell.innerHTML = '<div class="dim" style="margin-bottom:.4rem">Tx hash ručnog transfera iz Safe-a (provjerava se na chainu; order se nakon toga više ne može preusmjeriti):</div>'
       + '<input type="text" class="mono offrail-tx" placeholder="0x…64 hex" style="width:40rem;max-width:100%" /> '
-      + '<button type="button" class="offrail-go" data-order="'+esc(orderId)+'">Označi riješenim</button> '
-      + '<span class="offrail-msg dim"></span>';
+      + '<button type="button" class="offrail-go" data-order="'+esc(orderId)+'">Dohvati transfere</button> '
+      + '<span class="offrail-msg dim"></span><div class="offrail-legs"></div>';
     return;
   }
   if (btn.classList.contains("offrail-go")) {
+    // OF-01: list the tx's EURe legs; the operator picks the one for this order.
     const cell = btn.closest("td");
     const msg = cell.querySelector(".offrail-msg");
-    if (!btn.dataset.armed) { btn.dataset.armed = "1"; btn.textContent = "Potvrdi"; return; }
+    const tx = cell.querySelector(".offrail-tx").value.trim();
+    msg.textContent = "Provjeravam na chainu…";
+    try {
+      const r = await fetch("/admin/api/orders/"+encodeURIComponent(btn.dataset.order)+"/offrail-legs?tx="+encodeURIComponent(tx), {credentials:"same-origin"});
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(d.error || ("HTTP "+r.status));
+      if (!d.legs.length) { msg.textContent = "Tx ne miče EURe iz Safe-a."; return; }
+      msg.textContent = "Odaberi transfer koji je platio ovaj order:";
+      let h = '<table><tbody>';
+      for (const l of d.legs) {
+        const same = l.valueWei === d.order_amount_wei;
+        const eurV = (Number(BigInt(l.valueWei) / 10000000000000000n) / 100).toFixed(2) + " EUR";
+        h += '<tr><td class="mono">#'+l.logIndex+'</td><td class="mono">'+esc(short(l.to,12))+'</td>'
+          + '<td class="amount">'+(same ? '<b>'+esc(eurV)+'</b>' : '<span class="pill warn" title="iznos se razlikuje od ordera">'+esc(eurV)+'</span>')+'</td>'
+          + '<td>'+(l.used ? '<span class="dim">već iskorišten</span>'
+            : '<button type="button" class="offrail-leg" data-order="'+esc(btn.dataset.order)+'" data-tx="'+esc(tx)+'" data-log="'+l.logIndex+'"'+(same ? '' : ' data-mismatch="1"')+'>Označi riješenim</button>')+'</td></tr>';
+      }
+      cell.querySelector(".offrail-legs").innerHTML = h + '</tbody></table>';
+    } catch (err) {
+      msg.textContent = "Greška: " + err.message;
+    }
+    return;
+  }
+  if (btn.classList.contains("offrail-leg")) {
+    const cell = btn.closest("tr.reroute-row").firstElementChild;
+    const msg = cell.querySelector(".offrail-msg");
+    const mismatch = btn.dataset.mismatch === "1";
+    if (!btn.dataset.armed) {
+      btn.dataset.armed = "1";
+      if (mismatch) {
+        const inp = document.createElement("input");
+        inp.className = "offrail-reason"; inp.size = 34;
+        inp.placeholder = "iznos se razlikuje — razlog (min. 10 znakova)";
+        btn.parentNode.insertBefore(inp, btn);
+        inp.focus();
+        btn.textContent = "Potvrdi uz razlog";
+      } else {
+        btn.textContent = "Potvrdi";
+      }
+      return;
+    }
+    const reasonEl = btn.parentNode.querySelector(".offrail-reason");
+    const reason = reasonEl ? reasonEl.value.trim() : "";
+    if (mismatch && reason.length < 10) { reasonEl.focus(); reasonEl.style.borderColor = "var(--danger)"; return; }
     btn.disabled = true;
     try {
+      const payload = { tx_hash: btn.dataset.tx, log_index: Number(btn.dataset.log) };
+      if (mismatch) { payload.force = true; payload.reason = reason; }
       const r = await fetch("/admin/api/orders/"+encodeURIComponent(btn.dataset.order)+"/resolved-offrail", {
         method: "POST", credentials: "same-origin",
         headers: {"content-type": "application/json"},
-        body: JSON.stringify({tx_hash: cell.querySelector(".offrail-tx").value.trim()}),
+        body: JSON.stringify(payload),
       });
       const d = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(d.error || ("HTTP "+r.status));

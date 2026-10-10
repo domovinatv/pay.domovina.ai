@@ -306,6 +306,8 @@ export async function insertForward(
     error?: string | null;
     /// Tenant whose rail this forward runs on (ADR 0017). NULL = legacy.
     tenantId?: string | null;
+    /// resolved_offrail: which Transfer log in tx_hash this row consumed (0023).
+    txLogIndex?: number | null;
   },
 ): Promise<number> {
   const now = Math.floor(Date.now() / 1000);
@@ -315,8 +317,8 @@ export async function insertForward(
   const res = await env.DB.prepare(
     `INSERT INTO monerium_forwards
        (order_id, target_address, amount_wei, amount_cents, sid, memo_prefix,
-        tx_hash, status, error, attempts, created_at, updated_at, tenant_id)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        tx_hash, status, error, attempts, created_at, updated_at, tenant_id, tx_log_index)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT DO NOTHING`,
   )
     .bind(
@@ -333,6 +335,7 @@ export async function insertForward(
       now,
       now,
       args.tenantId ?? null,
+      args.txLogIndex ?? null,
     )
     .run();
   // 0 = another caller already holds the live forward for this order.

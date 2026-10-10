@@ -7,7 +7,7 @@ import { sendAlert } from '../alerts';
 import { writeAudit } from '../tenants/db';
 import { getForwardByOrder, insertForward } from './db';
 import { extractRoutingFromOrder } from './sid';
-import { parseAmountCents } from './forward';
+import { eurToWei, parseAmountCents } from './forward';
 import type { MoneriumOrder } from './types';
 
 /// A parked order whose money an operator already moved by hand (2/3 Safe
@@ -24,6 +24,8 @@ const TRANSFER = parseAbiItem('event Transfer(address indexed from, address inde
 const LIVE = new Set(['pending', 'submitted', 'confirmed']);
 
 export interface OffRailTransfer {
+  /// Log index of the EURe Transfer inside the tx — identifies the leg.
+  logIndex: number;
   to: string;
   valueWei: bigint;
 }
@@ -32,11 +34,13 @@ export interface OffRailDeps {
   getForwardByOrder(orderId: string): Promise<{ status: string } | null>;
   /// EURe transfers out of `safe` in a successful tx; null = tx missing/failed.
   safeOutflows(txHash: string): Promise<OffRailTransfer[] | null>;
-  /// Forward row ids already pointing at this tx (any order).
-  forwardIdsByTx(txHash: string): Promise<number[]>;
+  /// tx_log_index of every forward row already pointing at this tx (any
+  /// order). NULL = an older row that claimed the whole tx.
+  usedLegs(txHash: string): Promise<Array<number | null>>;
   record(row: {
     orderId: string;
     txHash: string;
+    logIndex: number;
     to: string;
     valueWei: bigint;
     amountCents: number | null;
@@ -49,13 +53,42 @@ export interface OffRailDeps {
 export type OffRailResult =
   | { ok: true; forwardId: number; to: string; valueWei: string }
   | { ok: false; error: 'bad_tx_hash' | 'not_processed' | 'already_forwarded' | 'already_resolved'
-      | 'tx_not_found_or_failed' | 'no_eure_outflow_from_safe' | 'tx_already_used' };
+      | 'tx_not_found_or_failed' | 'no_eure_outflow_from_safe' | 'tx_already_used'
+      /// OF-01: the tx has several legs — the operator must say which one.
+      | 'leg_required' | 'leg_not_found' | 'leg_already_used'
+      /// OF-02: leg value ≠ order amount; allowed only with force + reason.
+      | 'amount_mismatch' };
+
+export interface OffRailLeg {
+  logIndex: number;
+  to: string;
+  valueWei: string;
+  used: boolean;
+}
+
+/// The EURe legs out of the Safe in `txHash`, each marked used if a forward
+/// row already consumed it — for the admin picker (OF-01).
+export async function listOffRailLegs(deps: OffRailDeps, txHash: string): Promise<OffRailLeg[] | null> {
+  const tx = txHash.trim().toLowerCase();
+  if (!/^0x[0-9a-f]{64}$/.test(tx)) return null;
+  const outflows = await deps.safeOutflows(tx);
+  if (outflows === null) return null;
+  const used = await deps.usedLegs(tx);
+  const wholeTx = used.includes(null);
+  return outflows.map((o) => ({
+    logIndex: o.logIndex,
+    to: o.to.toLowerCase(),
+    valueWei: o.valueWei.toString(),
+    used: wholeTx || used.includes(o.logIndex),
+  }));
+}
 
 export async function markResolvedOffRail(
   deps: OffRailDeps,
   order: MoneriumOrder,
   txHash: string,
   actor: string,
+  opts: { logIndex?: number; force?: boolean; reason?: string } = {},
 ): Promise<OffRailResult> {
   const tx = txHash.trim().toLowerCase();
   if (!/^0x[0-9a-f]{64}$/.test(tx)) return { ok: false, error: 'bad_tx_hash' };
@@ -65,24 +98,38 @@ export async function markResolvedOffRail(
   const existing = await deps.getForwardByOrder(order.id);
   if (existing && LIVE.has(existing.status)) return { ok: false, error: 'already_forwarded' };
   if (existing?.status === 'resolved_offrail') return { ok: false, error: 'already_resolved' };
-  // One transfer explains one order. Reusing it would let a single manual
-  // payment "close" several parked orders.
-  if ((await deps.forwardIdsByTx(tx)).length > 0) return { ok: false, error: 'tx_already_used' };
+  // One transfer (leg) explains one order. Reusing it would let a single
+  // manual payment "close" several parked orders. An older row without a log
+  // index claimed the whole tx.
+  const used = await deps.usedLegs(tx);
+  if (used.includes(null)) return { ok: false, error: 'tx_already_used' };
 
   const outflows = await deps.safeOutflows(tx);
   if (outflows === null) return { ok: false, error: 'tx_not_found_or_failed' };
   if (outflows.length === 0) return { ok: false, error: 'no_eure_outflow_from_safe' };
-  // A batch may carry several transfers; the order's own beneficiary first if
-  // the memo named one, otherwise the largest.
-  const memoTarget = extractRoutingFromOrder(order).diagnosticTarget;
-  const pick =
-    outflows.find((o) => memoTarget && o.to.toLowerCase() === memoTarget)
-    ?? [...outflows].sort((a, b) => (a.valueWei < b.valueWei ? 1 : -1))[0];
+  // OF-01: a batch may carry several orders' payouts — guessing the leg
+  // (largest / memo target) recorded the wrong one. Single-leg tx: that leg.
+  let pick: OffRailTransfer | undefined;
+  if (opts.logIndex !== undefined) {
+    pick = outflows.find((o) => o.logIndex === opts.logIndex);
+    if (!pick) return { ok: false, error: 'leg_not_found' };
+  } else if (outflows.length === 1) {
+    pick = outflows[0];
+  } else {
+    return { ok: false, error: 'leg_required' };
+  }
+  if (used.includes(pick.logIndex)) return { ok: false, error: 'leg_already_used' };
+  // OF-02: closing a 500 € order with a 1 € transfer would leave 499 € in the
+  // Safe with no trace. A different amount is a written operator decision.
+  if (pick.valueWei !== eurToWei(order.amount ?? '0') && !opts.force) {
+    return { ok: false, error: 'amount_mismatch' };
+  }
 
   const amountCents = parseAmountCents(order.amount);
   const forwardId = await deps.record({
     orderId: order.id,
     txHash: tx,
+    logIndex: pick.logIndex,
     to: pick.to.toLowerCase(),
     valueWei: pick.valueWei,
     amountCents,
@@ -91,9 +138,12 @@ export async function markResolvedOffRail(
   await deps.audit({
     order_id: order.id,
     tx_hash: tx,
+    log_index: pick.logIndex,
     to: pick.to.toLowerCase(),
     value_wei: pick.valueWei.toString(),
     order_amount_cents: amountCents,
+    force: !!opts.force,
+    reason: opts.reason ?? null,
     actor,
   });
   await deps.alert(
@@ -120,12 +170,12 @@ export function makeOffRailDeps(env: Env, rail: TenantRail): OffRailDeps {
       if (!receipt || receipt.status !== 'success') return null;
       return parseEventLogs({ abi: [TRANSFER], logs: receipt.logs })
         .filter((l) => l.address.toLowerCase() === eure && l.args.from.toLowerCase() === safe)
-        .map((l) => ({ to: l.args.to, valueWei: l.args.value }));
+        .map((l) => ({ logIndex: l.logIndex, to: l.args.to, valueWei: l.args.value }));
     },
-    forwardIdsByTx: async (txHash) => {
-      const r = await env.DB.prepare(`SELECT id FROM monerium_forwards WHERE lower(tx_hash) = ?`)
-        .bind(txHash).all<{ id: number }>();
-      return r.results.map((x) => x.id);
+    usedLegs: async (txHash) => {
+      const r = await env.DB.prepare(`SELECT tx_log_index FROM monerium_forwards WHERE lower(tx_hash) = ?`)
+        .bind(txHash).all<{ tx_log_index: number | null }>();
+      return r.results.map((x) => x.tx_log_index);
     },
     record: (row) => insertForward(env, {
       orderId: row.orderId,
@@ -137,6 +187,7 @@ export function makeOffRailDeps(env: Env, rail: TenantRail): OffRailDeps {
       status: 'resolved_offrail',
       txHash: row.txHash,
       tenantId: rail.tenantId,
+      txLogIndex: row.logIndex,
     }),
     audit: (detail) => writeAudit(env, {
       tenantId: rail.tenantId,

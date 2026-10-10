@@ -25,8 +25,8 @@ function harness(over: Partial<OffRailDeps> = {}) {
   const rec = { rows: [] as Array<Parameters<OffRailDeps['record']>[0]>, alerts: [] as string[], audits: 0 };
   const deps: OffRailDeps = {
     getForwardByOrder: async () => ({ status: 'failed' }),
-    safeOutflows: async () => [{ to: PAYEE, valueWei: EUR(103) }],
-    forwardIdsByTx: async () => [],
+    safeOutflows: async () => [{ logIndex: 4, to: PAYEE, valueWei: EUR(103) }],
+    usedLegs: async () => [],
     record: async (row) => { rec.rows.push(row); return 75; },
     audit: async () => { rec.audits++; },
     alert: async (t) => { rec.alerts.push(t); },
@@ -36,20 +36,36 @@ function harness(over: Partial<OffRailDeps> = {}) {
 }
 
 describe('markResolvedOffRail', () => {
-  it('records the verified manual transfer and closes the order', async () => {
+  it('records the verified manual transfer and closes the order (1.03 for 1.02 needs force)', async () => {
     const { deps, rec } = harness();
-    const r = await markResolvedOffRail(deps, order(), TX.toUpperCase().replace('0X', '0x'), 'ms@ff.hr');
+    const tx = TX.toUpperCase().replace('0X', '0x');
+    expect(await markResolvedOffRail(deps, order(), tx, 'ms@ff.hr')).toEqual({ ok: false, error: 'amount_mismatch' });
+    const r = await markResolvedOffRail(deps, order(), tx, 'ms@ff.hr', { force: true, reason: 'safe-tx/003 orphan, +1 cent' });
     expect(r).toEqual({ ok: true, forwardId: 75, to: PAYEE, valueWei: EUR(103).toString() });
-    expect(rec.rows[0]).toMatchObject({ orderId: order().id, txHash: TX, to: PAYEE, amountCents: 102, sid: 'e6zmauemwu' });
+    expect(rec.rows[0]).toMatchObject({ orderId: order().id, txHash: TX, logIndex: 4, to: PAYEE, amountCents: 102, sid: 'e6zmauemwu' });
     expect(rec.audits).toBe(1);
     expect(rec.alerts[0]).toContain('ms@ff.hr');
   });
 
-  it('prefers the transfer to the memo beneficiary in a batch', async () => {
+  it('OF-01: a batch needs the leg; each leg closes one order, never twice', async () => {
+    const legs = [{ logIndex: 1, to: OTHER, valueWei: EUR(500) }, { logIndex: 2, to: PAYEE, valueWei: EUR(102) }];
+    const used: number[] = [];
     const { deps } = harness({
-      safeOutflows: async () => [{ to: OTHER, valueWei: EUR(500) }, { to: PAYEE, valueWei: EUR(103) }],
+      safeOutflows: async () => legs,
+      usedLegs: async () => used,
+      record: async (row) => { used.push(row.logIndex); return 1; },
     });
-    expect(await markResolvedOffRail(deps, order(), TX, 'a')).toMatchObject({ ok: true, to: PAYEE });
+    expect(await markResolvedOffRail(deps, order(), TX, 'a')).toEqual({ ok: false, error: 'leg_required' });
+    expect(await markResolvedOffRail(deps, order(), TX, 'a', { logIndex: 9 })).toEqual({ ok: false, error: 'leg_not_found' });
+    expect(await markResolvedOffRail(deps, order(), TX, 'a', { logIndex: 2 })).toMatchObject({ ok: true, to: PAYEE });
+    expect(await markResolvedOffRail(deps, order(), TX, 'a', { logIndex: 2 })).toEqual({ ok: false, error: 'leg_already_used' });
+    // The other leg is still free for another order (500 €).
+    expect(await markResolvedOffRail(deps, order({ id: 'ord-b', amount: '5.00' }), TX, 'a', { logIndex: 1 })).toMatchObject({ ok: true, to: OTHER });
+  });
+
+  it('OF-02: a leg of a different amount is refused without force', async () => {
+    const { deps } = harness({ safeOutflows: async () => [{ logIndex: 0, to: PAYEE, valueWei: EUR(1) }] });
+    expect(await markResolvedOffRail(deps, order({ amount: '500.00' }), TX, 'a')).toEqual({ ok: false, error: 'amount_mismatch' });
   });
 
   it.each([
@@ -58,7 +74,7 @@ describe('markResolvedOffRail', () => {
     ['tx moved nothing out of the Safe', { safeOutflows: async () => [] }, 'no_eure_outflow_from_safe'],
     ['order already forwarded', { getForwardByOrder: async () => ({ status: 'confirmed' }) }, 'already_forwarded'],
     ['order already resolved', { getForwardByOrder: async () => ({ status: 'resolved_offrail' }) }, 'already_resolved'],
-    ['tx already explains another order', { forwardIdsByTx: async () => [12] }, 'tx_already_used'],
+    ['tx already explains another order (older whole-tx row)', { usedLegs: async () => [null] }, 'tx_already_used'],
   ] as const)('refuses: %s', async (_name, over, error) => {
     const { tx, ...depsOver } = over as Partial<OffRailDeps> & { tx?: string };
     const { deps, rec } = harness(depsOver);

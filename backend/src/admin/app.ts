@@ -12,7 +12,7 @@ import {
   getForwardByOrder,
 } from '../monerium/db';
 import { listIntents, listRerouteCandidates } from '../intents/db';
-import { checkReroute, handleForward, makeForwardDeps, maybeForward } from '../monerium/forward';
+import { checkReroute, eurToWei, handleForward, makeForwardDeps, maybeForward } from '../monerium/forward';
 import { STRAY_LOOKBACK_SECONDS } from '../monerium/strayResolver';
 import type { MoneriumOrder } from '../monerium/types';
 import { getTenantRail, isLegacyTenant, legacyRail, type TenantRail } from '../tenants/rail';
@@ -30,7 +30,7 @@ import { publicWalletView } from '../wallets/api';
 import { mountTenantAdmin } from '../tenants/admin';
 import { actorOf, mountAdminAuth } from './auth/mount';
 import { loadTenantTags, tenantWhere } from './tenantTags';
-import { makeOffRailDeps, markResolvedOffRail } from '../monerium/offrail';
+import { listOffRailLegs, makeOffRailDeps, markResolvedOffRail } from '../monerium/offrail';
 import {
   renderEventDetailPage,
   renderEventsPage,
@@ -179,12 +179,34 @@ export function mountAdminUi(app: Hono<{ Bindings: Env }>): void {
   });
   // Parked order whose money was moved by hand outside the rail (2/3 owners).
   // The tx is verified on-chain; afterwards the order can never be rerouted.
+  // OF-01: the EURe legs of a manual tx, so the operator picks the one that
+  // paid THIS order (a 2/3 batch may pay out several).
+  app.get('/admin/api/orders/:id/offrail-legs', async (c) => {
+    const loaded = await loadParkedOrder(c.env, c.req.param('id'));
+    if ('error' in loaded) return c.json({ error: loaded.error }, 404);
+    const legs = await listOffRailLegs(makeOffRailDeps(c.env, loaded.rail), c.req.query('tx') ?? '');
+    if (legs === null) return c.json({ error: 'tx_not_found_or_failed' }, 404);
+    return c.json({
+      order_id: loaded.order.id,
+      order_amount_wei: eurToWei(loaded.order.amount ?? '0').toString(),
+      legs,
+    });
+  });
   app.post('/admin/api/orders/:id/resolved-offrail', async (c) => {
-    const body = await c.req.json<{ tx_hash?: string }>().catch(() => ({} as { tx_hash?: string }));
+    type Body = { tx_hash?: string; log_index?: number; force?: boolean; reason?: string };
+    const body = await c.req.json<Body>().catch(() => ({} as Body));
+    const force = body.force === true;
+    const reason = (body.reason ?? '').trim();
+    if (force && reason.length < 10) return c.json({ error: 'reason_required' }, 400);
+    if (body.log_index !== undefined && !Number.isInteger(body.log_index)) return c.json({ error: 'bad_log_index' }, 400);
     const loaded = await loadParkedOrder(c.env, c.req.param('id'));
     if ('error' in loaded) return c.json({ error: loaded.error }, 404);
     const actor = actorOf(c);
-    const r = await markResolvedOffRail(makeOffRailDeps(c.env, loaded.rail), loaded.order, body.tx_hash ?? '', actor);
+    const r = await markResolvedOffRail(makeOffRailDeps(c.env, loaded.rail), loaded.order, body.tx_hash ?? '', actor, {
+      logIndex: body.log_index,
+      force,
+      reason: reason || undefined,
+    });
     return r.ok ? c.json(r) : c.json(r, r.error === 'bad_tx_hash' ? 400 : 409);
   });
   // Outbound merchant webhook outbox (migration 0015).
