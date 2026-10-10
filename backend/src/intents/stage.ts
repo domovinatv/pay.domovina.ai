@@ -82,7 +82,11 @@ export interface StageResult {
 export type StageIntent = Pick<
   PaymentIntentRow,
   'state' | 'created_at' | 'expires_at' | 'paid_at'
->;
+> & {
+  /// When given, a forward claimed by a DIFFERENT sid never counts for this
+  /// intent (SR-03).
+  sid?: string;
+};
 export type StageOrder = Pick<
   MoneriumOrderRow,
   'id' | 'state' | 'memo' | 'reference_number' | 'tx_hashes'
@@ -91,7 +95,7 @@ export type StageOrder = Pick<
 export type StageForward = Pick<
   MoneriumForwardRow,
   'status' | 'tx_hash' | 'error' | 'created_at' | 'updated_at'
->;
+> & { sid?: string | null };
 
 export interface StageInput {
   intent: StageIntent;
@@ -109,7 +113,10 @@ const ORDER_ROUTED_RE = /^(mpt|gnosis|cmp):/i;
 /// Pure stage computation — single source of truth for all three surfaces
 /// (checkout page, Flutter in-app status, merchant/POS view).
 export function computeStage(input: StageInput): StageResult {
-  const { intent, order, forward, now } = input;
+  const { intent, order, now } = input;
+  // Defence in depth for SR-03: another intent's forward is not this
+  // intent's settlement, whatever path brought the order here.
+  const forward = isForeignForward(input.forward, intent.sid) ? null : input.forward;
   const elapsed = Math.max(0, now - intent.created_at);
 
   const mintTxHashes = parseTxHashes(order?.tx_hashes ?? null);
@@ -153,6 +160,10 @@ export function computeStage(input: StageInput): StageResult {
     review_expected:
       stage === 'received_processing' && input.knownPayer != null ? !input.knownPayer : null,
   };
+}
+
+function isForeignForward(forward: StageForward | null, intentSid: string | undefined): boolean {
+  return !!(forward && forward.sid && intentSid && forward.sid !== intentSid);
 }
 
 function resolveStage(
@@ -292,10 +303,12 @@ export async function loadStageContext(
   knownPayer: boolean | null;
 }> {
   let order: MoneriumOrderRow | null = null;
+  let viaEvent = false;
   if (intent.monerium_order_id) {
     order = await getMoneriumOrder(env, intent.monerium_order_id);
   }
   if (!order) {
+    viaEvent = true;
     const row = await env.DB.prepare(
       `SELECT o.* FROM monerium_orders o
         WHERE o.id = (
@@ -313,7 +326,18 @@ export async function loadStageContext(
   if (order && (order.tenant_id ?? defaultTenantId(env)) !== (intent.tenant_id ?? defaultTenantId(env))) {
     order = null;
   }
-  const forward = order ? await getForwardByOrder(env, order.id) : null;
+  let forward = order ? await getForwardByOrder(env, order.id) : null;
+  // SR-03: an order reached through the webhook events (notably the stray
+  // resolver's non-binding `sid_resolved` preview) whose money a live forward
+  // gave to ANOTHER intent is not this intent's payment — show it as still
+  // awaiting payment, never as someone else's `settled`.
+  if (
+    viaEvent && forward && forward.sid && forward.sid !== intent.sid
+    && (forward.status === 'pending' || forward.status === 'submitted' || forward.status === 'confirmed')
+  ) {
+    order = null;
+    forward = null;
+  }
   // Only worth a query while Monerium still holds the funds.
   const knownPayer = order && order.state !== 'processed' && order.state !== 'rejected'
     ? await isKnownPayer(env, order.counterpart_iban, order.id)

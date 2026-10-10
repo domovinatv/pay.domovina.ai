@@ -193,3 +193,43 @@ describe("an order on tenant X's IBAN never advances tenant Y's intent", () => {
     expect((await loadStageContext(env(f), legacyIntent)).order?.id).toBe('ord-1');
   });
 });
+
+describe('SR-03: a stray order rerouted to another intent never shows as this intent settled', () => {
+  const intentA = {
+    sid: 'sid-a', tenant_id: 'italk', target_address: '0xa0', state: 'pending', monerium_order_id: null,
+  } as unknown as PaymentIntentRow;
+  const ord = { id: 'ord-x', tenant_id: 'italk', state: 'processed' };
+
+  it("order via sid_resolved=A, forward confirmed for B → A shows no order/forward", async () => {
+    const f: Fake = {
+      sql: [],
+      rows: {
+        'FROM monerium_orders o': ord,
+        'FROM monerium_forwards WHERE order_id': { id: 1, order_id: 'ord-x', sid: 'sid-b', status: 'confirmed' },
+      },
+    };
+    const ctx = await loadStageContext(env(f), intentA);
+    expect(ctx.order).toBeNull();
+    expect(ctx.forward).toBeNull();
+  });
+
+  it('forward for A itself → kept', async () => {
+    const f: Fake = {
+      sql: [],
+      rows: {
+        'FROM monerium_orders o': ord,
+        'FROM monerium_forwards WHERE order_id': { id: 1, order_id: 'ord-x', sid: 'sid-a', status: 'confirmed' },
+      },
+    };
+    const ctx = await loadStageContext(env(f), intentA);
+    expect(ctx.order?.id).toBe('ord-x');
+    expect(ctx.forward?.sid).toBe('sid-a');
+  });
+
+  it('no forward yet → order kept (received/minted)', async () => {
+    const f: Fake = { sql: [], rows: { 'FROM monerium_orders o': ord } };
+    const ctx = await loadStageContext(env(f), intentA);
+    expect(ctx.order?.id).toBe('ord-x');
+    expect(ctx.forward).toBeNull();
+  });
+});

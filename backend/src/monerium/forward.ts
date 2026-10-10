@@ -295,6 +295,12 @@ export async function handleForward(
   // From here on the sid is the CLAIMED one — for a resolved stray it may be
   // a later candidate than the one the gate was asked about (same target).
   routing = { ...routing, sid: claimed.sid };
+  // The other candidates' checkouts may be showing this payment's early
+  // "zaprimljeno" (sid_resolved preview); poke them so they re-read and drop
+  // it now that it belongs to `claimed.sid` (SR-03).
+  for (const other of claimSids ?? []) {
+    if (other !== claimed.sid) await safely(deps.publish?.(other) ?? Promise.resolve());
+  }
   const result = await deps.forward({
     target: target as Address,
     amountWei,
