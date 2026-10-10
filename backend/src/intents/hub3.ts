@@ -8,6 +8,8 @@
 /// „Slikaj i plati", bank apps) cannot read the EPC QR. The intent API offers
 /// this text next to `epc_qr_data`; the client only renders it.
 ///
+/// Only for a Croatian payee IBAN — see buildHub3Text.
+///
 /// Routing caveat: the description field holds 35 characters, so the
 /// `mpt:0x…?sid=…` memo (~60 chars) cannot travel in it — and for a
 /// cross-border payment (HR bank → EE Monerium IBAN) Croatian banks drop the
@@ -72,12 +74,17 @@ export function hub3Text(value: string | undefined, max: number): string {
   return clean.slice(0, max).trimEnd();
 }
 
-/// Returns null when the account cannot be expressed in HUB3 (IBAN longer than
-/// the 21-character field, e.g. DE) or the amount does not fit — callers then
-/// simply offer no HUB3 code.
+/// Returns null unless the payee IBAN is Croatian, or when the amount does not
+/// fit — callers then simply offer no HUB3 code.
+///
+/// HR only: tested 2026-10-11, PBZ, HPB and RBA iOS and Aircash all READ a
+/// HUB3 code with a Monerium `EE…` IBAN but refuse to pay it, while the same
+/// code with an `HR…` IBAN works everywhere (docs/research/aircash/05). The
+/// spec, too, describes only the Croatian IBAN. Offering an EE uplatnica
+/// would show the payer a code no app accepts.
 export function buildHub3Text(a: Hub3Args): string | null {
   const iban = a.iban.replace(/\s+/g, '').toUpperCase();
-  if (!/^[A-Z]{2}[0-9]{2}[A-Z0-9]+$/.test(iban) || iban.length > HUB3_MAX.iban) return null;
+  if (!/^HR[0-9]{19}$/.test(iban)) return null;
   const cents = Math.round(a.amountEur * 100);
   if (!Number.isFinite(cents) || cents <= 0 || cents > MAX_CENTS) return null;
 
