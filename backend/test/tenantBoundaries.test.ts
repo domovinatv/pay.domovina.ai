@@ -4,6 +4,7 @@ import worker from '../src/index';
 import { readTenantKey, resolveRequestTenant } from '../src/tenants/auth';
 import { hashApiKey } from '../src/tenants/db';
 import { enqueueWebhook } from '../src/intents/outbox';
+import { emitCampaignContributionWebhook } from '../src/intents/outbound';
 import { notifyOrderLifecycle } from '../src/intents/lifecycle';
 import { loadStageContext } from '../src/intents/stage';
 import type { PaymentIntentRow } from '../src/intents/db';
@@ -119,6 +120,19 @@ describe('outbound webhooks stay with their tenant', () => {
     const fetchSpy = vi.fn();
     vi.stubGlobal('fetch', fetchSpy);
     await enqueueWebhook(env(f), { id: 'rcv_ord-1', type: 'payment.received', tenantId: 'zupa-a', payload: {} });
+    expect(f.sql.some((q) => q.includes('webhook_outbox'))).toBe(false);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it('MT-01: a campaign contribution (donor IBAN + name) of a tenant without an endpoint goes nowhere', async () => {
+    const f: Fake = { sql: [], rows: {} };
+    const fetchSpy = vi.fn();
+    vi.stubGlobal('fetch', fetchSpy);
+    await emitCampaignContributionWebhook(env(f), {
+      campaignId: 'camp1', orderId: 'ord-9', amountCents: 500, currency: 'eur',
+      targetAddress: '0xa000000000000000000000000000000000000002', forwardTxHash: '0x1',
+      senderIban: 'HR1210010051863000160', senderName: 'Darovatelj', tenantId: 'zupa-a',
+    });
     expect(f.sql.some((q) => q.includes('webhook_outbox'))).toBe(false);
     expect(fetchSpy).not.toHaveBeenCalled();
   });

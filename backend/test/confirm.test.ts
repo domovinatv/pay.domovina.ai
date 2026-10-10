@@ -304,8 +304,22 @@ describe('settleConfirmedForward (single-fire idempotency)', () => {
       forwardTxHash: '0xfwd1',
       targetAddress: '0x2222222222222222222222222222222222222222',
       senderIban: 'HR1210010051863000160',
+      tenantId: null,
     });
     expect(h.paidWebhooks).toHaveLength(0); // no sid → no intent.paid event
+  });
+
+  it('MT-01: cmp contribution carries the forward tenant', async () => {
+    const cmpForward = forwardRow({
+      sid: null,
+      memo_prefix: 'cmp',
+      target_address: '0x2222222222222222222222222222222222222222',
+      tenant_id: 'zupa-x',
+    });
+    const cmpOrder = orderRow({ memo: 'cmp:0x2222222222222222222222222222222222222222?id=camp42' });
+    const h = makeDeps({ forwards: [cmpForward], orders: [cmpOrder] });
+    await settleConfirmedForward(h.deps, cmpForward);
+    expect(h.campaignWebhooks[0]).toMatchObject({ campaignId: 'camp42', tenantId: 'zupa-x' });
   });
 });
 

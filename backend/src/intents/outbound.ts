@@ -193,12 +193,16 @@ export async function emitCampaignContributionWebhook(
     forwardTxHash: string | null;
     senderIban?: string | null;
     senderName?: string | null;
+    /// Tenant whose rail carried the forward (MT-01) — the event, with the
+    /// donor's IBAN and name, goes only to that tenant's endpoint.
+    tenantId: string | null;
   },
 ): Promise<void> {
   const id = `cmp_${args.orderId}`;
   await enqueueWebhook(env, {
     id,
     type: 'contribution.sepa',
+    tenantId: args.tenantId,
     payload: {
       type: 'contribution.sepa',
       event_id: id,

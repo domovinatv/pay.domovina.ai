@@ -84,6 +84,7 @@ export interface ConfirmDeps {
     forwardTxHash: string | null;
     senderIban?: string | null;
     senderName?: string | null;
+    tenantId: string | null;
   }): Promise<void>;
   listSubmittedForwards(olderThanUnix: number): Promise<MoneriumForwardRow[]>;
   sleep(ms: number): Promise<void>;
@@ -163,6 +164,8 @@ export async function settleConfirmedForward(
         forwardTxHash: fwd.tx_hash,
         senderIban: sender.iban,
         senderName: sender.name,
+        // NULL = legacy row = default tenant, same as the endpoint lookup.
+        tenantId: fwd.tenant_id ?? null,
       });
     }
   }
