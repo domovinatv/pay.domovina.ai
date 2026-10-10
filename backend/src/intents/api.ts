@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
 
 import type { Env } from '../types';
-import { createIntent, getIntent } from './db';
+import { countOpenIntentsForTarget, createIntent, getIntent, isTrustedTarget } from './db';
 import { generateSid } from './sid';
 import { buildEpcText } from './epc';
 import { computeStage, confirmForwardIfMined, loadStageContext } from './stage';
@@ -84,7 +84,18 @@ export function buildIntentApi(): Hono<{ Bindings: Env }> {
     if (body.sid !== undefined && !SID_RE.test(body.sid)) {
       return c.json({ error: 'invalid_sid' }, 400);
     }
-    const sid = await insertWithRetry(c.env, target, amountCents, ttl, body, tenant.tenantId);
+    // SR-01 cap: anyone can open intents without a key, so bound how many
+    // can sit open on one destination. Only for destinations that are not
+    // statically trusted — a cap on a popular campaign Safe would let a
+    // spammer lock its real donors out. Secret-key callers are exempt.
+    const secretKey = tenant.keyKind === 'secret';
+    if (!secretKey && !(await isTrustedTarget(c.env, tenant.tenantId, target))) {
+      const open = await countOpenIntentsForTarget(c.env, tenant.tenantId, target, Math.floor(Date.now() / 1000));
+      if (open >= maxOpenIntentsPerTarget(c.env)) {
+        return c.json({ error: 'too_many_open_intents', target_address: target.toLowerCase() }, 429);
+      }
+    }
+    const sid = await insertWithRetry(c.env, target, amountCents, ttl, body, tenant.tenantId, secretKey);
     if (sid === 'conflict') return c.json({ error: 'sid_already_exists' }, 409);
     if (!sid) return c.json({ error: 'sid_collision_after_retries' }, 500);
     const intent = await getIntent(c.env, sid);
@@ -279,6 +290,7 @@ async function insertWithRetry(
   ttlSeconds: number,
   body: CreateIntentBody,
   tenantId: string,
+  createdWithKey: boolean,
 ): Promise<string | 'conflict' | null> {
   // Client-supplied sid: single attempt. A real duplicate-sid collision is
   // the caller's error (409); ANY OTHER failure (transient D1 error, etc.)
@@ -295,6 +307,7 @@ async function insertWithRetry(
         metadata: body.metadata ?? null,
         ttlSeconds,
         tenantId,
+        createdWithKey,
       });
       return body.sid;
     } catch (e) {
@@ -315,6 +328,7 @@ async function insertWithRetry(
         metadata: body.metadata ?? null,
         ttlSeconds,
         tenantId,
+        createdWithKey,
       });
       return sid;
     } catch (e) {
@@ -324,6 +338,11 @@ async function insertWithRetry(
     }
   }
   return null;
+}
+
+function maxOpenIntentsPerTarget(env: Env): number {
+  const n = Number(env.MAX_OPEN_INTENTS_PER_TARGET);
+  return Number.isFinite(n) && n > 0 ? n : 20;
 }
 
 function parseAmount(input: string | number | undefined): number | null {

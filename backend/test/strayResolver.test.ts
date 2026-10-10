@@ -16,7 +16,7 @@ const SAFE = '0x449abcef4e29a7dd8d98db451af2c463561baf2e';
 const t = (iso: string) => Math.floor(Date.parse(iso) / 1000);
 
 function cand(sid: string, created: string, expires: string, over: Partial<StrayCandidate> = {}): StrayCandidate {
-  return { sid, target_address: PAYEE, state: 'expired', created_at: t(created), expires_at: t(expires), ...over };
+  return { sid, target_address: PAYEE, state: 'expired', created_at: t(created), expires_at: t(expires), trusted: true, ...over };
 }
 
 // Production data, 2026-10-07 (tenant italk): three reference-less payments
@@ -59,9 +59,9 @@ describe('resolveStray — replay of 2026-10-08', () => {
   const RAB = '0x7ca5e2dcd81aa54bc2f8ee16a1d313734d314f05';
   const placed = 1791494242;
   const rows: StrayCandidate[] = [
-    { sid: 'fyihzkvy9yyq', target_address: RAB, state: 'pending', created_at: 1791494201, expires_at: 1791495101 },
-    { sid: 'dw52xejucz4z', target_address: RAB, state: 'pending', created_at: 1791493780, expires_at: 1791494680 },
-    { sid: 'wk2bynhqjam3', target_address: PAYEE, state: 'expired', created_at: 1791479367, expires_at: 1791480267 },
+    { sid: 'fyihzkvy9yyq', target_address: RAB, state: 'pending', created_at: 1791494201, expires_at: 1791495101, trusted: true },
+    { sid: 'dw52xejucz4z', target_address: RAB, state: 'pending', created_at: 1791493780, expires_at: 1791494680, trusted: true },
+    { sid: 'wk2bynhqjam3', target_address: PAYEE, state: 'expired', created_at: 1791479367, expires_at: 1791480267, trusted: true },
   ];
 
   it('two open Rab checkouts + one Lukavec expired 4 h earlier → Rab, newest open first', () => {
@@ -355,6 +355,46 @@ describe('handleForward — stray resolver', () => {
   });
 });
 
+// SR-01: only trusted candidates (static whitelist / secret-key intent) may
+// catch a stray; a self-registered wallet Safe can neither catch nor grief.
+describe('resolveStray — trusted candidates only (SR-01)', () => {
+  const PLACED = t('2026-10-10T12:00:00Z');
+  const open = (sid: string, target: string, trusted: boolean, createdMin = -5): StrayCandidate => ({
+    sid, target_address: target, state: 'pending', trusted,
+    created_at: PLACED + createdMin * 60, expires_at: PLACED + (createdMin + 15) * 60,
+  });
+  const expired = (sid: string, target: string, trusted: boolean): StrayCandidate => ({
+    sid, target_address: target, state: 'expired', trusted,
+    created_at: PLACED - 3600, expires_at: PLACED - 2700,
+  });
+
+  it('an untrusted open intent alone → none (reported as untrusted)', () => {
+    expect(resolveStray([open('att', OTHER, false)], PLACED)).toEqual({ kind: 'none', untrusted: 1 });
+  });
+
+  it('trusted expired + untrusted open → the trusted one, attacker never wins tier 1', () => {
+    const res = resolveStray([open('att', OTHER, false), expired('legit', PAYEE, true)], PLACED);
+    expect(res).toMatchObject({ kind: 'match', target: PAYEE, sids: ['legit'] });
+  });
+
+  it('untrusted open cannot force a conflict on a trusted open one', () => {
+    const res = resolveStray([open('att', OTHER, false, -1), open('legit', PAYEE, true)], PLACED);
+    expect(res).toMatchObject({ kind: 'match', target: PAYEE, sids: ['legit'] });
+  });
+
+  it('two trusted open intents for different payees → still a conflict', () => {
+    const res = resolveStray([open('a', OTHER, true), open('b', PAYEE, true)], PLACED);
+    expect(res.kind).toBe('conflict');
+  });
+
+  it('handleForward parks with an operator note instead of forwarding to an untrusted wallet', async () => {
+    const { deps, rec } = harness([{ ...Z232, trusted: false }]);
+    await handleForward(deps, order('', '1.02'));
+    expect(rec.forwards).toHaveLength(0);
+    expect(rec.alerts.join('\n')).toContain('statičnoj whitelisti');
+  });
+});
+
 describe('rerouteParkedOrder — operator pick', () => {
   it('forwards a parked order onto the chosen intent, tagged manual, resolver not used', async () => {
     const { deps, rec } = harness([Z232]);
@@ -415,8 +455,8 @@ describe('previewStraySid', () => {
     meta: { placedAt: '2026-10-08T22:31:31.234504193Z' }, ...over,
   }) as MoneriumOrder;
   const rows: StrayCandidate[] = [
-    { sid: '9g8a69f775qd', target_address: RAB, state: 'pending', created_at: 1791498602, expires_at: 1791499502 },
-    { sid: 'wk2bynhqjam3', target_address: PAYEE, state: 'expired', created_at: 1791479367, expires_at: 1791480267 },
+    { sid: '9g8a69f775qd', target_address: RAB, state: 'pending', created_at: 1791498602, expires_at: 1791499502, trusted: true },
+    { sid: 'wk2bynhqjam3', target_address: PAYEE, state: 'expired', created_at: 1791479367, expires_at: 1791480267, trusted: true },
   ];
   const calls: unknown[] = [];
   const deps = { findStrayCandidates: async (a: unknown) => { calls.push(a); return rows; } };

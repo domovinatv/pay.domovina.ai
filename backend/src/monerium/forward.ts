@@ -213,7 +213,10 @@ export async function handleForward(
           .map((c) => `• <code>${c.sid}</code> → <code>${c.target_address}</code> (${c.state})`)
           .join('\n');
     } else {
-      strayNote = 'nema otvorenog/nedavno isteklog intenta s tim iznosom (48 h)';
+      strayNote = res.untrusted
+        ? `nema pouzdanog kandidata; ${res.untrusted} intent(a) s tim iznosom vodi na wallet adresu ` +
+          `koja nije na statičnoj whitelisti — ručno preusmjeriti ako je to prava uplata`
+        : 'nema otvorenog/nedavno isteklog intenta s tim iznosom (48 h)';
     }
   }
 

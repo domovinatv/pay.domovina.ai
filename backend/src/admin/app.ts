@@ -16,7 +16,7 @@ import type { MoneriumOrder } from '../monerium/types';
 import { getTenantRail, isLegacyTenant, legacyRail, type TenantRail } from '../tenants/rail';
 import { defaultTenantId } from '../tenants/whitelist';
 import { writeAudit } from '../tenants/db';
-import { getIntent } from '../intents/db';
+import { getIntent, isTrustedTarget } from '../intents/db';
 import {
   countWallets,
   listPhoneBindingsForCredentials,
@@ -121,6 +121,12 @@ export function mountAdminUi(app: Hono<{ Bindings: Env }>): void {
     const refusal = await checkReroute(deps, loaded.order, sid, { force });
     if (refusal) return c.json({ error: refusal }, 409);
     const intent = await getIntent(c.env, sid);
+    // SR-01: a destination anyone could have opened an intent to (wallet Safe
+    // off the static whitelist, no secret key) needs the same written reason.
+    if (!force && intent && intent.created_with_key !== 1
+        && !(await isTrustedTarget(c.env, loaded.tenantId, intent.target_address))) {
+      return c.json({ error: 'untrusted_target' }, 409);
+    }
     await writeAudit(c.env, {
       tenantId: loaded.tenantId,
       action: 'forward.reroute',

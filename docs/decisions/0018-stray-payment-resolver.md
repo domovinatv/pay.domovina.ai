@@ -84,9 +84,31 @@ ograničenjima — pogrešna namjena unutar tenanta, nikad tuđi novac.
 
 ## Zašto je to sigurno
 
-Resolver ne izmišlja odredište. Svaka adresa koju predloži je `target_address`
-intenta koji je tenant sam kreirao autentificiranim API pozivom, i ta adresa i
-dalje mora proći whitelist. Napadač bez API pristupa ne može stvoriti kandidata.
+Resolver ne izmišlja odredište: svaka adresa koju predloži je `target_address`
+nekog intenta i i dalje mora proći whitelist.
+
+> **Ispravak 2026-10-10 (Fable 5.1 r2, SR-01).** Izvorna tvrdnja „napadač bez
+> API pristupa ne može stvoriti kandidata" nije vrijedila za zadani tenant
+> `italk`: intenti se stvaraju bez ključa (`INTENT_REQUIRE_TENANT_KEY=0`), a
+> njegova whitelista uključuje svaki self-registrirani wallet Safe (bez dokaza
+> posjeda). Napadač je mogao držati otvorene intente za uobičajene iznose na
+> vlastiti wallet i pokupiti zalutalu uplatu čiji je intent istekao, ili samo
+> izazivati `conflict`.
+>
+> **Uvjet sigurnosti od tada:** kandidat sudjeluje u odluci samo ako je
+> **trusted** — odredište je na *statičnoj* whitelisti tenanta (`source` =
+> `admin` ili ne-wallet `seed`; wallet redovi iz seeda 0014 su migracijom 0022
+> preimenovani u `seed_wallet`) **ili** je intent stvoren tenantovim tajnim
+> (`sk_`) ključem (`payment_intents.created_with_key`). Netrusted kandidati ne
+> ulaze ni u jedan sloj: ne mogu ni uhvatiti novac ni izazvati sukob; park
+> poruka kaže koliko ih je bilo. Ručni reroute na njih traži pisani razlog.
+> Uz to: najviše `MAX_OPEN_INTENTS_PER_TARGET` (zadano 20) otvorenih intenata
+> na netrusted odredište bez `sk_` ključa → 429. Kapica namjerno ne vrijedi za
+> trusted odredišta, da spam ne zaključa prave darovatelje kampanje.
+>
+> Posljedica za projekte: novi energy/solardei Safe mora biti upisan kroz
+> `/admin/whitelist` (izvor `admin`) da bi njegove uplate bez reference išle
+> automatski; s memoom (sid) radi i bez toga.
 
 Može pogriješiti samo **pripisivanje** između intenata iste adrese: koji od njih
 postane `paid` i koji merchant webhook ode. Novac u tom slučaju ipak sleti tamo

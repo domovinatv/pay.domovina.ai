@@ -975,13 +975,14 @@ document.getElementById("rows").addEventListener("click", async (e) => {
       let h = '<div class="dim" style="margin-bottom:.4rem">Uplata '+esc(eur(d.amount_cents))+' · '+esc(d.placed_at||"")+' — odaberi intent (isti iznos prvi):</div><table><tbody>';
       for (const i of d.items) {
         const same = i.amount_cents === d.amount_cents;
+        const needsReason = !same || !i.trusted;
         h += '<tr>'
-          + '<td class="mono">'+esc(i.sid)+'</td>'
+          + '<td class="mono">'+esc(i.sid)+(i.trusted ? '' : ' <span class="pill warn" title="odredište nije na statičnoj whitelisti tenanta i intent nije stvoren tajnim ključem — mogao ga je otvoriti bilo tko">wallet</span>')+'</td>'
           + '<td class="amount">'+(same ? '<b>'+esc(eur(i.amount_cents))+'</b>' : '<span class="pill warn">'+esc(eur(i.amount_cents))+'</span>')+'</td>'
           + '<td>'+esc(i.state)+' · '+esc(fmt(i.created_at))+'</td>'
           + '<td class="mono">'+esc(short(i.target_address,10))+'</td>'
           + '<td class="dim">'+esc(i.label||"")+'</td>'
-          + '<td><button type="button" class="reroute-go" data-order="'+esc(orderId)+'" data-sid="'+esc(i.sid)+'"'+(same ? '' : ' data-mismatch="1"')+'>Preusmjeri</button></td>'
+          + '<td><button type="button" class="reroute-go" data-order="'+esc(orderId)+'" data-sid="'+esc(i.sid)+'"'+(needsReason ? ' data-mismatch="1"' : '')+'>Preusmjeri</button></td>'
           + '</tr>';
       }
       cell.innerHTML = h + '</tbody></table>';
@@ -998,9 +999,9 @@ document.getElementById("rows").addEventListener("click", async (e) => {
         const inp = document.createElement("input");
         inp.className = "reroute-reason";
         inp.size = 34;
-        inp.placeholder = "iznos se razlikuje — razlog (min. 10 znakova)";
+        inp.placeholder = "iznos se razlikuje ili wallet adresa — razlog (min. 10 znakova)";
         btn.parentNode.insertBefore(inp, btn);
-        btn.textContent = "Preusmjeri unatoč iznosu → "+btn.dataset.sid;
+        btn.textContent = "Preusmjeri uz razlog → "+btn.dataset.sid;
         inp.focus();
       } else {
         btn.textContent = "Potvrdi → "+btn.dataset.sid;

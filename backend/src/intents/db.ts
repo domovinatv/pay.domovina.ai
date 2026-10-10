@@ -1,6 +1,8 @@
 import type { Env } from '../types';
 
 export interface PaymentIntentRow {
+  /// Migration 0022 (SR-01). Absent on rows read by older code paths/tests.
+  created_with_key?: number;
   sid: string;
   target_address: string;
   amount_cents: number;
@@ -30,6 +32,8 @@ export interface CreateIntentArgs {
   metadata?: Record<string, unknown> | null;
   ttlSeconds: number;
   tenantId: string;
+  /// Created with the tenant's SECRET key (SR-01) — a trusted stray candidate.
+  createdWithKey?: boolean;
 }
 
 export async function createIntent(
@@ -40,8 +44,8 @@ export async function createIntent(
   await env.DB.prepare(
     `INSERT INTO payment_intents
        (sid, target_address, amount_cents, currency, label, metadata_json,
-        state, created_at, expires_at, tenant_id)
-     VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?)`,
+        state, created_at, expires_at, tenant_id, created_with_key)
+     VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?)`,
   )
     .bind(
       args.sid,
@@ -53,8 +57,46 @@ export async function createIntent(
       now,
       now + args.ttlSeconds,
       args.tenantId,
+      args.createdWithKey ? 1 : 0,
     )
     .run();
+}
+
+/// SQL: is intent `i` a trusted stray / reroute candidate (SR-01)? Binds one
+/// parameter: the default tenant id (for NULL tenant_id rows).
+const TRUSTED_CANDIDATE_SQL = `(i.created_with_key = 1
+          OR EXISTS (SELECT 1 FROM tenant_payout_addresses p
+                      WHERE p.tenant_id = COALESCE(i.tenant_id, ?)
+                        AND lower(p.address) = lower(i.target_address)
+                        AND p.revoked_at IS NULL
+                        AND p.source IN ('admin', 'seed')))`;
+
+/// Open intents to one destination (SR-01 cap). Pending and not expired yet.
+export async function countOpenIntentsForTarget(
+  env: Env,
+  tenantId: string,
+  target: string,
+  nowUnix: number,
+): Promise<number> {
+  const row = await env.DB.prepare(
+    `SELECT COUNT(*) AS c FROM payment_intents
+      WHERE tenant_id = ? AND target_address = ? AND state = 'pending' AND expires_at > ?`,
+  )
+    .bind(tenantId, target.toLowerCase(), nowUnix)
+    .first<{ c: number }>();
+  return row?.c ?? 0;
+}
+
+/// Is `target` on the tenant's STATIC whitelist as a trusted destination
+/// (admin / non-wallet seed)? Same rule as TRUSTED_CANDIDATE_SQL.
+export async function isTrustedTarget(env: Env, tenantId: string, target: string): Promise<boolean> {
+  const row = await env.DB.prepare(
+    `SELECT 1 AS ok FROM tenant_payout_addresses
+      WHERE tenant_id = ? AND lower(address) = ? AND revoked_at IS NULL AND source IN ('admin', 'seed')`,
+  )
+    .bind(tenantId, target.toLowerCase())
+    .first<{ ok: number }>();
+  return row !== null;
 }
 
 export async function getIntent(
@@ -264,25 +306,33 @@ export async function findStrayCandidates(
     createdFrom: number;
     createdTo: number;
   },
-): Promise<Array<Pick<PaymentIntentRow, 'sid' | 'target_address' | 'state' | 'created_at' | 'expires_at'>>> {
+): Promise<Array<Pick<PaymentIntentRow, 'sid' | 'target_address' | 'state' | 'created_at' | 'expires_at'> & { trusted: boolean }>> {
   const res = await env.DB.prepare(
-    `SELECT i.sid, i.target_address, i.state, i.created_at, i.expires_at
+    `SELECT i.sid, i.target_address, i.state, i.created_at, i.expires_at,
+            ${TRUSTED_CANDIDATE_SQL} AS trusted
        FROM payment_intents i
       WHERE COALESCE(i.tenant_id, ?) = ?
         AND i.amount_cents = ?
         AND i.created_at BETWEEN ? AND ?
-        AND (i.state = 'pending' OR (i.state = 'expired' AND i.monerium_order_id IS NULL))
+        AND i.state IN ('pending', 'expired') AND i.monerium_order_id IS NULL
         AND NOT EXISTS (
           SELECT 1 FROM monerium_forwards f
            WHERE f.sid = i.sid
              AND f.status IN ('pending', 'submitted', 'confirmed'))
       ORDER BY i.created_at DESC
-      LIMIT 20`,
+      LIMIT ${STRAY_CANDIDATE_LIMIT}`,
   )
-    .bind(args.defaultTenantId, args.tenantId, args.amountCents, args.createdFrom, args.createdTo)
-    .all<Pick<PaymentIntentRow, 'sid' | 'target_address' | 'state' | 'created_at' | 'expires_at'>>();
-  return res.results;
+    .bind(args.defaultTenantId, args.defaultTenantId, args.tenantId, args.amountCents, args.createdFrom, args.createdTo)
+    .all<Pick<PaymentIntentRow, 'sid' | 'target_address' | 'state' | 'created_at' | 'expires_at'> & { trusted: number }>();
+  // SR-04: a full page means the window was flooded — say so, the decision
+  // may be missing candidates.
+  if (res.results.length >= STRAY_CANDIDATE_LIMIT) {
+    console.warn(`stray candidates hit LIMIT ${STRAY_CANDIDATE_LIMIT} (tenant ${args.tenantId}, ${args.amountCents} c)`);
+  }
+  return res.results.map((r) => ({ ...r, trusted: r.trusted === 1 }));
 }
+
+const STRAY_CANDIDATE_LIMIT = 200;
 
 /// Admin reroute picker: unsettled intents of one tenant created in a window
 /// around a parked payment, ANY amount — the operator may know the payer
@@ -296,9 +346,10 @@ export async function listRerouteCandidates(
     createdFrom: number;
     createdTo: number;
   },
-): Promise<Array<Pick<PaymentIntentRow, 'sid' | 'target_address' | 'amount_cents' | 'state' | 'created_at' | 'expires_at' | 'label'>>> {
+): Promise<Array<Pick<PaymentIntentRow, 'sid' | 'target_address' | 'amount_cents' | 'state' | 'created_at' | 'expires_at' | 'label'> & { trusted: boolean }>> {
   const res = await env.DB.prepare(
-    `SELECT i.sid, i.target_address, i.amount_cents, i.state, i.created_at, i.expires_at, i.label
+    `SELECT i.sid, i.target_address, i.amount_cents, i.state, i.created_at, i.expires_at, i.label,
+            ${TRUSTED_CANDIDATE_SQL} AS trusted
        FROM payment_intents i
       WHERE COALESCE(i.tenant_id, ?) = ?
         AND i.created_at BETWEEN ? AND ?
@@ -310,7 +361,7 @@ export async function listRerouteCandidates(
       ORDER BY (i.amount_cents = ?) DESC, i.created_at DESC
       LIMIT 30`,
   )
-    .bind(args.defaultTenantId, args.tenantId, args.createdFrom, args.createdTo, args.amountCents)
-    .all<Pick<PaymentIntentRow, 'sid' | 'target_address' | 'amount_cents' | 'state' | 'created_at' | 'expires_at' | 'label'>>();
-  return res.results;
+    .bind(args.defaultTenantId, args.defaultTenantId, args.tenantId, args.createdFrom, args.createdTo, args.amountCents)
+    .all<Pick<PaymentIntentRow, 'sid' | 'target_address' | 'amount_cents' | 'state' | 'created_at' | 'expires_at' | 'label'> & { trusted: number }>();
+  return res.results.map((r) => ({ ...r, trusted: r.trusted === 1 }));
 }
