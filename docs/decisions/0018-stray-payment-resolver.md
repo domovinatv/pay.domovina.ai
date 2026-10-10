@@ -156,6 +156,15 @@ intent „živ“.
 | `client_ref` + učenje platitelja | ⏳ |
 | energy.domovina.ai panel nakon `expired` | ⏳ (§Otvoreno) |
 
+### Dopuna 2026-10-10: reconcile vidi i zalutale (SR-05)
+
+Cron reconcile alarmira za **svaki** `processed` issue order bez ikakvog
+forward reda (i bez memoa), od 15 min do 48 h nakon obrade, ponovno svakih
+6 h (KV `stuckalert:<orderId>`); takav order drži reconcile „u letu" i kad
+nema pending intenata. `RECONCILE_FORWARDS=1` umjesto alarma pokreće normalan
+forward put (`maybeForward`): latch 0016 čini INSERT odlukom, pa reconcile i
+zakašnjeli webhook ne mogu dvaput forwardati. Zadano isključeno.
+
 ## Produkcija 2026-10-08
 
 **Ručno preusmjeravanje 7. 10.** (admin, sesija s passkeyem, `memo_prefix='manual'`):
