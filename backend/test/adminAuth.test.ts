@@ -292,3 +292,21 @@ describe('passkey registration (AD-03)', () => {
     expect((await res.json()).error).toContain('Najviše 5');
   });
 });
+
+describe('session idle timeout (AD-04)', () => {
+  it('a session unused for over 2 h is over, even before it expires', async () => {
+    const exec = (q: string) => ({
+      first: async () => q.includes('FROM admin_sessions')
+        ? { email: 'ops@domovina.ai', method: 'passkey', created_at: '2026-01-01T00:00:00Z',
+            last_seen_at: new Date(Date.now() - 3 * 3600_000).toISOString(), expires_at: '2999-01-01T00:00:00Z' }
+        : null,
+      all: async () => ({ results: [] }),
+      run: async () => ({ meta: { changes: 1 } }),
+    });
+    const e = env(undefined, {
+      DB: { prepare: (q: string) => ({ bind: () => exec(q), ...exec(q) }), batch: async () => [] } as unknown as Env['DB'],
+    });
+    const res = await worker.fetch(req('/admin/api/forwards', { cookie: true }), e, ctx);
+    expect(res.status).toBe(401);
+  });
+});

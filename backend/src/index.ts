@@ -427,6 +427,13 @@ export default {
 
     // Heavier housekeeping only on the 6-hourly cron.
     if (event.cron === '0 */6 * * *') {
+      // AD-04: expired admin sessions and stale WebAuthn challenges.
+      ctx.waitUntil(
+        env.DB.batch([
+          env.DB.prepare('DELETE FROM admin_sessions WHERE expires_at < ?').bind(new Date().toISOString()),
+          env.DB.prepare('DELETE FROM admin_challenges WHERE expires_at < ?').bind(new Date().toISOString()),
+        ]).catch((e) => console.error(`cron: admin session cleanup failed: ${e}`)),
+      );
       // Tenant routers (ADR 0017) need xDAI for gas; alert before they run dry.
       ctx.waitUntil(
         checkRouterGas(env).then(

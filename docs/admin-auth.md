@@ -39,6 +39,7 @@ flowchart LR
 | `/admin/api/*` bez sesije → 401 (ne redirect); Basic Auth zaglavlje više ništa ne otvara | `mount.ts` |
 | Audit actor (`tenant_audit_log.actor`, offrail) = e-mail sesije, nikad zaglavlje zahtjeva | `actorOf` u `mount.ts` |
 | Dodavanje passkeya: prijava mlađa od 10 min, najviše 5 po e-mailu, Telegram alarm 🔑 | `passkeyRegisterRefusal` u `mount.ts` |
+| Sesija završava i nakon 2 h neaktivnosti (unutar 12 h); istekle sesije i izazovi brišu se u 6-satnom cronu | `getSession`, migracija 0024 |
 | Monerium admin i HPB connect pod sesijom: `/admin/api/monerium/*`, `/admin/api/hpb/*` (audit `monerium.*`/`hpb.*`); Monerium pretplata samo na naše webhook URL-ove | `src/admin/opsRoutes.ts` |
 
 ## Konfiguracija

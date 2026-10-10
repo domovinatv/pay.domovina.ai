@@ -149,7 +149,7 @@ it('builds the per-tenant webhook URL', () => {
 describe('admin routes', () => {
   function fakeEnv(rows: Record<string, unknown>): { env: Env; sql: string[] } {
     // Valid admin session for the cookie below (src/admin/auth/session.ts).
-    rows = { 'FROM admin_sessions': { email: 'ops@domovina.ai', method: 'access', expires_at: '2999-01-01T00:00:00Z' }, ...rows };
+    rows = { 'FROM admin_sessions': { email: 'ops@domovina.ai', method: 'access', created_at: new Date().toISOString(), last_seen_at: new Date().toISOString(), expires_at: '2999-01-01T00:00:00Z' }, ...rows };
     const sql: string[] = [];
     const exec = (q: string) => ({
       first: async () => {

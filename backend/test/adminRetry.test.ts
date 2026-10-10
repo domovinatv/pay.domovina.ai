@@ -11,8 +11,8 @@ const HOST = 'https://mpt.domovina.ai';
 function setup() {
   const { db, raw } = migratedD1();
   raw.prepare(`INSERT INTO admin_sessions (token_hash, email, method, created_at, expires_at)
-               VALUES (?, 'ops@domovina.ai', 'passkey', '2026-01-01T00:00:00Z', '2999-01-01T00:00:00Z')`)
-    .run(createHash('sha256').update('tok').digest('hex'));
+               VALUES (?, 'ops@domovina.ai', 'passkey', ?, '2999-01-01T00:00:00Z')`)
+    .run(createHash('sha256').update('tok').digest('hex'), new Date().toISOString());
   raw.prepare(`INSERT INTO monerium_orders (id, kind, state, amount, currency, raw_json, updated_at, tenant_id)
                VALUES ('ord-1', 'issue', 'processed', '1.00', 'eur', '{"id":"ord-1","kind":"issue","state":"processed","amount":"1.00"}', 0, 'italk')`).run();
   const fwd = (status: string) =>
