@@ -321,7 +321,7 @@ export function mountAdminUi(
     const orders = await listMoneriumOrders(c.env, 100, tenant ? tenantWhere(tenant, tags.defaultId) : undefined);
     return c.json({
       // Order's own `chain` (from Monerium) wins over the tenant's rail chain.
-      orders: orders.map((o) => { const t = tags.resolve(o.tenant_id); return { ...t, ...o, tenant_id: t.tenant_id }; }),
+      orders: orders.map((o) => { const t = tags.resolve(o.tenant_id); return { ...t, ...o, tenant_id: t.tenant_id, chain: o.chain ?? t.chain }; }),
       tenants: tags.list,
     });
   });

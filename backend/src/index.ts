@@ -145,7 +145,7 @@ app.get('/api/hpb/callback', async (c) => {
 
 /// A Monerium order event is a few KB. Anything bigger is not Monerium and is
 /// refused before it reaches D1 (MT-04).
-export const MAX_WEBHOOK_BODY_BYTES = 65_536;
+const MAX_WEBHOOK_BODY_BYTES = 65_536;
 
 async function readWebhookBody(req: Request): Promise<string | null> {
   const declared = Number(req.headers.get('content-length') ?? '0');
@@ -307,7 +307,7 @@ async function refreshAccountsForAuthorization(
   return refreshAccounts(env, filtered);
 }
 
-export async function refreshAllAccounts(env: Env): Promise<number> {
+async function refreshAllAccounts(env: Env): Promise<number> {
   const all = await listAccounts(env);
   return refreshAccounts(env, all);
 }
