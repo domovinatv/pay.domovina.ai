@@ -37,3 +37,11 @@ git worktree remove ../pay.domovina-payment-registry
 
 If the user starts a parallel session without setting this up, proactively
 offer to migrate to a worktree before doing any file edits.
+
+## Regression contract — old tests are the spec
+
+Before merging or deploying anything: `scripts/compat-check.sh` (old tests vs
+current code) must pass, or the change is a deliberate behaviour change with
+the PR labelled `behavior-change` and every broken old test explained.
+Never edit an existing test's assertions to make new code pass — adapt only
+the test double (new required deps field). Details: `docs/testing.md`.

@@ -280,26 +280,31 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
       });
     }
 
-    if (!safeDeployedPre) {
-      // CREATE2 consistency guard — cold path ONLY. The cold path deploys a Safe
-      // whose address is fully determined by (coldOwners, saltNonce). If the
-      // client's safeAddress doesn't match, we'd deploy at X while execTransaction
-      // targets Y (no code) — EVM returns status=1 with no revert and the EURe is
-      // stranded forever (see memory: evm-call-to-empty-address). ADR-0011/0012
-      // bootstrap wallets never reach here (deployed at creation).
+    // CREATE2 consistency guard — every path that DEPLOYS the Safe. The cold
+    // path deploys a Safe whose address is fully determined by (coldOwners,
+    // saltNonce). If the client's safeAddress doesn't match, we'd deploy at X
+    // while execTransaction targets Y (no code) — EVM returns status=1 with no
+    // revert and the EURe is stranded forever (see memory:
+    // evm-call-to-empty-address). ADR-0011/0012 bootstrap wallets never deploy
+    // here (deployed at creation). WR-02: the hot→cold fallback deploys too.
+    function create2Mismatch(): Response | null {
       const predictedSafe = predictSafeProxyAddress(coldOwners, saltNonce);
-      if (predictedSafe.toLowerCase() !== safeAddress.toLowerCase()) {
-        return json(
-          {
-            ok: false,
-            error:
-              `safeAddress ${safeAddress} does not match the Safe derived from ` +
-              `owners [${coldOwners.join(', ')}] + saltNonce (${predictedSafe}). Refusing ` +
-              `to deploy — this would strand funds at the counterfactual address.`,
-          },
-          400,
-        );
-      }
+      if (predictedSafe.toLowerCase() === safeAddress.toLowerCase()) return null;
+      return json(
+        {
+          ok: false,
+          error:
+            `safeAddress ${safeAddress} does not match the Safe derived from ` +
+            `owners [${coldOwners.join(', ')}] + saltNonce (${predictedSafe}). Refusing ` +
+            `to deploy — this would strand funds at the counterfactual address.`,
+        },
+        400,
+      );
+    }
+
+    if (!safeDeployedPre) {
+      const mismatch = create2Mismatch();
+      if (mismatch) return mismatch;
       // Safe is not deployed (per fresh getCode). Skip hot path entirely — calling
       // execTransaction on a code-less address silently succeeds. Cold path
       // atomically deploys the Safe (and the WebAuthn signer if also missing) then
@@ -355,6 +360,10 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
             /* threshold read failed — fall through to the original error */
           }
           throw hotErr;
+        }
+        if (!safeNow) {
+          const mismatch = create2Mismatch();
+          if (mismatch) return mismatch;
         }
         console.warn(
           `[relay] hot failed and deployment incomplete (safe=${safeNow}, signer=${signerNow}); routing to cold path`,

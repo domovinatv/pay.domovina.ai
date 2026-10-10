@@ -27,9 +27,19 @@ export function utcDay(now: Date = new Date()): string {
   return now.toISOString().slice(0, 10);
 }
 
-/** Read a counter, coercing missing/garbage to 0. */
+/** Read a counter: missing → 0. Garbage → Infinity, i.e. the cap counts as
+ * reached (WR-04): `Math.max(0, NaN)` used to be NaN, and `NaN >= limit` is
+ * false — a corrupted counter meant unlimited free gas. Fail closed; the key's
+ * day TTL clears it. */
 export async function readCount(kv: KVNamespace, key: string): Promise<number> {
-  return Math.max(0, Number((await kv.get(key)) ?? 0));
+  const raw = await kv.get(key);
+  if (raw === null) return 0;
+  const n = Number(raw);
+  if (!Number.isFinite(n)) {
+    console.error(`[limits] corrupted counter ${key}=${String(raw).slice(0, 40)} — treating as exhausted`);
+    return Number.POSITIVE_INFINITY;
+  }
+  return Math.max(0, n);
 }
 
 /** Increment a counter by one with the standard day TTL. Read-then-write — see

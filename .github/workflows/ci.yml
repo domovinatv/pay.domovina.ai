@@ -1,0 +1,96 @@
+# CI — every PR and every push to main. Public repo: standard GitHub-hosted
+# runners are free. A red check here means: do not merge, do not deploy.
+name: CI
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    name: backend (tsc, vitest, bundle)
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 24, cache: npm, cache-dependency-path: backend/package-lock.json }
+      - run: npm ci
+      - run: npx tsc --noEmit
+      - run: npx vitest run
+      # Bundles exactly like a deploy (catches e.g. a non-handler named export
+      # of the entry module, which only the Workers runtime rejects).
+      - run: npx wrangler deploy --dry-run --outdir "$RUNNER_TEMP/bundle"
+
+  shopify-worker:
+    name: shopify worker (tsc, vitest)
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: shopify/worker } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 24, cache: npm, cache-dependency-path: shopify/worker/package-lock.json }
+      - run: npm ci
+      - run: npx tsc --noEmit
+      - run: npx vitest run
+
+  wallet:
+    name: wallet (tsc, relayer tests)
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: wallet } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 24, cache: npm, cache-dependency-path: wallet/package-lock.json }
+      - run: npm ci
+      - run: npx tsc --noEmit
+      - run: npx vitest run
+
+  flutter:
+    name: flutter (analyze, test)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with: { flutter-version: 3.47.3, channel: stable, cache: true }
+      - run: flutter pub get
+      - run: flutter analyze
+      - run: flutter test
+
+  # Old tests (PR base) against new code — see scripts/compat-check.sh. A PR
+  # that changes behaviour on purpose carries the `behavior-change` label and
+  # says in its description which old test broke and why.
+  compat:
+    name: backward compatibility (old tests vs new code)
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - uses: actions/setup-node@v4
+        with: { node-version: 24 }
+      - run: |
+          for p in backend shopify/worker wallet; do (cd "$p" && npm ci --no-audit --no-fund); done
+      - name: compat-check
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          ALLOWED: ${{ contains(github.event.pull_request.labels.*.name, 'behavior-change') }}
+        run: |
+          git config user.email ci@localhost && git config user.name ci
+          if scripts/compat-check.sh "$BASE"; then exit 0; fi
+          if [ "$ALLOWED" = "true" ]; then
+            echo "::warning::Behaviour changed (label behavior-change present) — reviewer: check the PR description lists every broken old test."
+            exit 0
+          fi
+          echo "::error::Old tests broke. Fix the regression, or label the PR 'behavior-change' and explain each one."
+          exit 1
