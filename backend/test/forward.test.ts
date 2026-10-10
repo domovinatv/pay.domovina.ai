@@ -357,3 +357,18 @@ describe('eurToWei', () => {
     expect(eurToWei('1.19')).toBe(1_190_000_000_000_000_000n);
   });
 });
+
+describe('parseAmountCents (SR-06)', async () => {
+  const { parseAmountCents } = await import('../src/monerium/forward');
+  it('is exact and rejects what eurToWei rejects', () => {
+    expect(parseAmountCents('12.34')).toBe(1234);
+    expect(parseAmountCents('1.1')).toBe(110);
+    expect(parseAmountCents('100')).toBe(10000);
+    expect(parseAmountCents('0.29')).toBe(29); // 0.29*100 = 28.999… in floats
+    expect(parseAmountCents('1.005')).toBe(101);
+    expect(parseAmountCents('1e2')).toBeNull();
+    expect(parseAmountCents('-5')).toBeNull();
+    expect(parseAmountCents('1,00')).toBeNull();
+    expect(parseAmountCents(undefined)).toBeNull();
+  });
+});

@@ -127,13 +127,8 @@ export function makeForwardDeps(env: Env, rail: TenantRail): ForwardDeps {
   };
 }
 
-/// Convert Monerium's decimal-string amount ("12.34") to integer minor units.
-export function parseAmountCents(amount: string | undefined | null): number | null {
-  if (!amount) return null;
-  const n = Number(amount);
-  if (!Number.isFinite(n)) return null;
-  return Math.round(n * 100);
-}
+import { parseAmountCents } from './orderState';
+export { parseAmountCents };
 
 /// EURe has 18 decimals. Split on the decimal point and pad so no float math
 /// touches a money value.

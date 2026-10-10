@@ -26,11 +26,21 @@ export function orderState(order: MoneriumOrder): string {
   return order.state ?? order.meta?.state ?? 'placed';
 }
 
+/// Convert Monerium's decimal-string amount ("12.34") to integer minor units,
+/// exactly — no float touches a money value (SR-06). Anything that is not a
+/// plain non-negative decimal ("1e2", "-5", "1,00") is null, the same inputs
+/// eurToWei would reject. A third+ decimal rounds half up.
+export function parseAmountCents(amount: string | undefined | null): number | null {
+  const m = /^(\d+)(?:\.(\d+))?$/.exec((amount ?? '').trim());
+  if (!m) return null;
+  const frac = (m[2] ?? '').padEnd(3, '0');
+  const cents = Number(m[1]) * 100 + Number(frac.slice(0, 2)) + (Number(frac[2]) >= 5 ? 1 : 0);
+  return Number.isSafeInteger(cents) ? cents : null;
+}
+
 /// Monerium's decimal-string amount ("12.34") → integer minor units.
 export function parseAmountCentsFromOrder(order: MoneriumOrder): number | null {
-  if (!order.amount) return null;
-  const n = Number(order.amount);
-  return Number.isFinite(n) ? Math.round(n * 100) : null;
+  return parseAmountCents(order.amount);
 }
 
 /// Monerium formats IBANs with spaces ("LT55 3250 0134 …").
