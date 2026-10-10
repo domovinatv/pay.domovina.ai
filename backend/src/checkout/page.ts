@@ -1,8 +1,10 @@
+import { toSVG } from 'bwip-js/generic';
 import qrcode from 'qrcode-generator';
 
 import type { PaymentIntentRow } from '../intents/db';
 import type { StageResult } from '../intents/stage';
 import { buildEpcText } from '../intents/epc';
+import { buildIntentHub3Text } from '../intents/hub3';
 import { formatIban, type SepaDetails } from '../tenants/db';
 
 /// Minimal HTML escape for the tenant-supplied beneficiary block. These values
@@ -23,6 +25,23 @@ function renderQrSvg(text: string): string {
   // Scalable inline SVG — sized by CSS in the wrap element below.
   return qr.createSvgTag({ scalable: true, margin: 2 });
 }
+
+/// HUB3 PDF417 as inline SVG, server-side like the QR. Parameters from the
+/// HUB3 v6 spec: 9 data columns, error-correction level 4, row height 3× the
+/// module. bwip-js output is read by both zxing and Apple Vision
+/// (docs/research/aircash/05-hub3-format-provjera.md). Null → no HUB3 tab.
+function renderPdf417Svg(text: string | null): string | null {
+  if (text === null) return null;
+  try {
+    return toSVG({ bcid: 'pdf417', text, paddingwidth: 4, paddingheight: 4, ...HUB3_PDF417 });
+  } catch (e) {
+    console.error('hub3 pdf417 render failed', e);
+    return null;
+  }
+}
+
+/// bwip-js accepts these PDF417 options; its typings do not list them.
+const HUB3_PDF417 = { columns: 9, eclevel: 4, rowmult: 3 };
 
 /// Serialize a value for safe embedding inside an inline <script>. Plain
 /// JSON.stringify does NOT escape `<`, so any attacker-controlled string in
@@ -71,6 +90,7 @@ export function renderCheckoutPage(
     remittanceInfo: memo,
     bic: sepa.bic,
   });
+  const hub3Svg = renderPdf417Svg(buildIntentHub3Text(intent, sepa));
   // Embed initial snapshot into the page so JS doesn't need to fetch on load.
   const initialState = {
     sid,
@@ -129,6 +149,17 @@ h1 { font-size: 1.5rem; margin: 0 0 .4rem; }
   display: flex; align-items: center; justify-content: center;
 }
 #qrBox svg { width: 100%; height: 100%; display: block; image-rendering: pixelated; shape-rendering: crispEdges; }
+.code-tabs { display: flex; gap: .3rem; width: 100%; max-width: 22rem; }
+.code-tabs button {
+  flex: 1; padding: .45rem .5rem; font: inherit; font-size: .85rem; cursor: pointer;
+  border: 1px solid var(--border); border-radius: .4rem; background: var(--surface); color: var(--muted);
+}
+.code-tabs button[aria-selected="true"] { background: var(--navy); border-color: var(--navy); color: #fff; }
+#hub3Box {
+  width: 100%; max-width: 22rem; padding: .9rem; background: white;
+  border: 1px solid var(--border); border-radius: .5rem;
+}
+#hub3Box svg { width: 100%; height: auto; display: block; shape-rendering: crispEdges; }
 .qr-hint { font-size: .85rem; color: var(--muted); text-align: center; line-height: 1.4; max-width: 22rem; }
 .amount-block { text-align: center; margin: .25rem 0 1rem; }
 .amount {
@@ -278,8 +309,18 @@ footer a { color: var(--navy); text-decoration: none; font-weight: 600; }
   <p class="lede" id="lede">Otvorite Revolut ili banku, skenirajte EPC QR kod i potvrdite plaćanje. Stranica prati svaki korak uplate — od vaše banke do primatelja.</p>
   <div class="card">
     <div class="qr-wrap" id="qrWrap">
-      <div id="qrBox">${renderQrSvg(epcText)}</div>
-      <p class="qr-hint">EPC SEPA Credit Transfer (Revolut iOS, Erste, PBZ, OTP, RBA — sve podržavaju ovaj format)</p>
+      ${hub3Svg === null ? '' : `<div class="code-tabs" role="tablist">
+        <button type="button" role="tab" id="tabEpc" aria-selected="true" onclick="showCode('epc')">EPC QR</button>
+        <button type="button" role="tab" id="tabHub3" aria-selected="false" onclick="showCode('hub3')">HUB3 barkod (uplatnica)</button>
+      </div>`}
+      <div id="epcPane" class="qr-wrap" style="margin:0">
+        <div id="qrBox">${renderQrSvg(epcText)}</div>
+        <p class="qr-hint">EPC SEPA Credit Transfer (Revolut iOS, Erste, PBZ, OTP, RBA — sve podržavaju ovaj format)</p>
+      </div>
+      ${hub3Svg === null ? '' : `<div id="hub3Pane" class="qr-wrap" style="margin:0;display:none">
+        <div id="hub3Box">${hub3Svg}</div>
+        <p class="qr-hint">PDF417 barkod hrvatske uplatnice (HUB3) — skenirajte kao račun za režije. Opis plaćanja se ne prenosi: uplatu prepoznajemo po točnom iznosu i vremenu, pa iznos ne mijenjajte.</p>
+      </div>`}
     </div>
     <div class="amount-block">
       <div class="amount" id="amount">— EUR</div>
@@ -686,6 +727,14 @@ if (!terminal) {
 
 // User gesture handler to unlock audio on first interaction.
 document.addEventListener('click', ensureAudio, { once: true });
+
+function showCode(which) {
+  const hub3 = which === 'hub3';
+  $('epcPane').style.display = hub3 ? 'none' : '';
+  $('hub3Pane').style.display = hub3 ? '' : 'none';
+  $('tabEpc').setAttribute('aria-selected', String(!hub3));
+  $('tabHub3').setAttribute('aria-selected', String(hub3));
+}
 
 // Bootstrap — QR rendered server-side, just initialize state UI.
 applyState(INITIAL);

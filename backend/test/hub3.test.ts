@@ -96,3 +96,33 @@ describe('HUB3 description vs routing', () => {
     expect(parseSidFromText(desc)).toBeNull();
   });
 });
+
+describe('checkout page HUB3 tab', () => {
+  it('renders the PDF417 next to the EPC QR for an EE IBAN', async () => {
+    const { renderCheckoutPage } = await import('../src/checkout/page');
+    const html = renderCheckoutPage(
+      {
+        sid: 'abcdefghijkm',
+        target_address: '0x0000000000000000000000000000000000000001',
+        amount_cents: 100,
+        currency: 'EUR',
+        label: null,
+        state: 'pending',
+      } as never,
+      { stage: 'awaiting_payment' } as never,
+      { ...ITALK, bic: 'LHVBEE22' },
+    );
+    expect(html).toContain('id="hub3Pane"');
+    expect(html).toMatch(/id="hub3Box"><svg[^>]*viewBox/);
+  });
+
+  it('offers no HUB3 tab when the IBAN does not fit the field', async () => {
+    const { renderCheckoutPage } = await import('../src/checkout/page');
+    const html = renderCheckoutPage(
+      { sid: 'abcdefghijkm', target_address: '0x0000000000000000000000000000000000000001', amount_cents: 100, currency: 'EUR', label: null, state: 'pending' } as never,
+      { stage: 'awaiting_payment' } as never,
+      { beneficiaryName: 'X', iban: 'DE89370400440532013000', bic: '' },
+    );
+    expect(html).not.toContain('id="hub3Pane"');
+  });
+});

@@ -105,3 +105,21 @@ export function buildHub3Text(a: Hub3Args): string | null {
   // 14th included, ends with LF (as on the HEP and VG Čistoća bills).
   return fields.map((f) => `${f}\n`).join('');
 }
+
+/// HUB3 text for a payment intent — one definition for the intent API and the
+/// checkout page. No sid in the description (see the module comment); a label
+/// that looks like routing (an address, a sid or an id token) would turn the
+/// stray into a parked „unroutable" payment, so it is not used.
+export function buildIntentHub3Text(
+  intent: { amount_cents: number; label: string | null },
+  sepa: { beneficiaryName: string; iban: string },
+): string | null {
+  const label = intent.label;
+  return buildHub3Text({
+    beneficiaryName: sepa.beneficiaryName,
+    iban: sepa.iban,
+    amountEur: intent.amount_cents / 100,
+    purposeCode: 'OTHR',
+    description: label && !/0x[0-9a-f]{6}|\bsid\b|\bid[=.:-]/i.test(label) ? label : 'Uplata',
+  });
+}
