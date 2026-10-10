@@ -5,7 +5,9 @@ import {
   EXEC_FROM_MODULE_SUCCESS,
   EXECUTION_SUCCESS,
   formatEure,
+  LAG_ALERT_BLOCKS,
   MAX_RANGE,
+  MIN_RANGE,
   safeExecFromLogs,
   watchSafeOutflows,
   type SafeExec,
@@ -129,6 +131,36 @@ describe('watchSafeOutflows', () => {
     deps.outgoingTransfers = async () => { throw new Error('rpc down'); };
     await expect(watchSafeOutflows(deps, W)).rejects.toThrow('rpc down');
     expect(rec.cursor).toBe(900n);
+  });
+
+  it('TD-04: an RPC refusing a wide range gets halved ranges and the cursor still moves', async () => {
+    const { deps, rec } = harness({ head: 100_000n, cursor: 0n });
+    deps.outgoingTransfers = async (f, t) => {
+      rec.ranges.push([f, t]);
+      if (t - f + 1n > 500n) throw new Error('range too wide');
+      return [];
+    };
+    await watchSafeOutflows(deps, W);
+    expect(rec.ranges.map(([f, t]) => t - f + 1n)).toEqual([MAX_RANGE, 1000n, 500n]);
+    expect(rec.cursor).toBe(500n);
+  });
+
+  it('TD-04: gives up (cursor unchanged) once the range is at MIN_RANGE', async () => {
+    const { deps, rec } = harness({ head: 100_000n, cursor: 0n });
+    deps.outgoingTransfers = async (f, t) => { rec.ranges.push([f, t]); throw new Error('rpc down'); };
+    await expect(watchSafeOutflows(deps, W)).rejects.toThrow('rpc down');
+    expect(rec.ranges.at(-1)).toEqual([1n, MIN_RANGE]);
+    expect(rec.cursor).toBe(0n);
+  });
+
+  it('TD-02: a cursor far behind head alerts "lagging", deduplicated', async () => {
+    const claimed = new Set<string>();
+    const { deps, rec } = harness({ head: 10_000n, cursor: 10_000n - CONFIRMATION_LAG - LAG_ALERT_BLOCKS - 1n });
+    deps.claimOnce = async (k) => { if (claimed.has(k)) return false; claimed.add(k); return true; };
+    await watchSafeOutflows(deps, W);
+    rec.cursor = 10_000n - CONFIRMATION_LAG - LAG_ALERT_BLOCKS - 1n;
+    await watchSafeOutflows(deps, W);
+    expect(rec.alerts.filter((a) => a.includes('zaostaje'))).toHaveLength(1);
   });
 
   it('a failing alert channel still advances (fail-open) but records the audit', async () => {

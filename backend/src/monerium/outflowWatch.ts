@@ -45,6 +45,13 @@ export const CONFIRMATION_LAG = 12n;
 /// Upper bound per tick; the cron runs every 2 min (~24 blocks), so this only
 /// matters when catching up after an outage.
 export const MAX_RANGE = 2000n;
+/// TD-04: a public RPC that refuses a wide getLogs gets halved ranges down to
+/// this before the tick gives up.
+export const MIN_RANGE = 100n;
+/// TD-02: cursor this far behind head → "detector is lagging" (~40 min).
+export const LAG_ALERT_BLOCKS = 500n;
+/// Consecutive failed ticks per rail before the "detector is blind" alert.
+export const FAIL_ALERT_TICKS = 3;
 
 export interface Outflow {
   txHash: string;
@@ -67,6 +74,9 @@ export interface OutflowWatchDeps {
   setCursor(block: bigint): Promise<void>;
   alert(text: string): Promise<void>;
   audit(detail: Record<string, unknown>): Promise<void>;
+  /// True at most once per `ttlSeconds` for `key` (dedup for operational
+  /// alerts). Optional: without it every occurrence alerts.
+  claimOnce?(key: string, ttlSeconds: number): Promise<boolean>;
 }
 
 export interface WatchedSafe {
@@ -96,9 +106,28 @@ export async function watchSafeOutflows(
   }
   if (head <= cursor) return null;
   const from = cursor + 1n;
-  const to = head - from + 1n > MAX_RANGE ? from + MAX_RANGE - 1n : head;
+  if (head - cursor > LAG_ALERT_BLOCKS && (await claim(deps, `watch:lag:${w.tenantId}`, 6 * 3600))) {
+    await safely(deps.alert(
+      `⚠️ <b>Detektor krađe zaostaje</b>\n` +
+      `tenant: <code>${w.tenantId}</code> · Safe: <code>${w.safe}</code>\n` +
+      `kursor ${cursor}, chain ${head} → ${head - cursor} blokova iza. Izlazi iz Safe-a se još ne gledaju.`,
+    ));
+  }
+  let to = head - from + 1n > MAX_RANGE ? from + MAX_RANGE - 1n : head;
 
-  const outflows = await deps.outgoingTransfers(from, to);
+  // TD-04: shrink the range on RPC refusal instead of stalling forever.
+  let outflows: Outflow[];
+  for (;;) {
+    try {
+      outflows = await deps.outgoingTransfers(from, to);
+      break;
+    } catch (e) {
+      const range = to - from + 1n;
+      if (range <= MIN_RANGE) throw e;
+      const half = range / 2n < MIN_RANGE ? MIN_RANGE : range / 2n;
+      to = from + half - 1n;
+    }
+  }
   let flagged = 0;
   for (const o of outflows) {
     const verdict = await classify(deps, w, o);
@@ -170,6 +199,15 @@ function alertText(w: WatchedSafe, o: Outflow, v: OutflowVerdict): string {
     `Nije prošao kroz forwarder rolu ni kroz drugi modul (ručni 2/3 transfer vlasnika ili ` +
     `transfer bez Safe izvršenja). Ako ga nitko nije radio — istražiti.`
   );
+}
+
+async function claim(deps: OutflowWatchDeps, key: string, ttl: number): Promise<boolean> {
+  if (!deps.claimOnce) return true;
+  try {
+    return await deps.claimOnce(key, ttl);
+  } catch {
+    return true;
+  }
 }
 
 export function formatEure(wei: bigint): string {
@@ -268,6 +306,7 @@ export function makeOutflowWatchDeps(env: Env, rail: TenantRail): OutflowWatchDe
       ).bind(key, Number(block), Math.floor(Date.now() / 1000)).run();
     },
     alert: (text) => sendAlert(env, text),
+    claimOnce: (k, ttl) => kvClaimOnce(env, k, ttl),
     audit: (detail) => writeAudit(env, {
       tenantId: rail.tenantId,
       action: 'outflow.unexplained',
@@ -278,17 +317,33 @@ export function makeOutflowWatchDeps(env: Env, rail: TenantRail): OutflowWatchDe
   };
 }
 
+async function kvClaimOnce(env: Env, key: string, ttlSeconds: number): Promise<boolean> {
+  if (await env.TOKEN_CACHE.get(key)) return false;
+  await env.TOKEN_CACHE.put(key, '1', { expirationTtl: ttlSeconds });
+  return true;
+}
+
 /// Cron entry: the ITalk rail and every tenant rail, each independently.
-export async function watchAllRailOutflows(env: Env): Promise<number> {
+///
+/// TD-02: the detector lives in the Worker an attacker with deploy rights
+/// controls, so it proves it is alive OUTSIDE Cloudflare: after a tick in
+/// which every rail was read, it pings WATCH_HEARTBEAT_URL (a dead-man
+/// switch such as healthchecks.io that alerts when pings stop). Once an hour
+/// it also leaves an `outflow.tick` audit row. A rail that fails
+/// FAIL_ALERT_TICKS ticks in a row raises "detector is blind".
+export async function watchAllRailOutflows(env: Env, nowMs = Date.now()): Promise<number> {
   const rails: TenantRail[] = [legacyRail(env)];
   for (const id of await listRailTenantIds(env)) {
     const r = await getTenantRail(env, id);
     if (r) rails.push(r);
   }
   let flagged = 0;
+  let allOk = true;
+  const hourly = Math.floor(nowMs / 120_000) % 30 === 0;
   for (const rail of rails) {
     const s = rail.signer;
     if (!s.safe || !s.rolesModifier || !s.eureContract || !s.rpcUrl) continue;
+    const failKey = `watch:fail:${rail.tenantId}`;
     try {
       const r = await watchSafeOutflows(makeOutflowWatchDeps(env, rail), {
         tenantId: rail.tenantId,
@@ -296,8 +351,40 @@ export async function watchAllRailOutflows(env: Env): Promise<number> {
         rolesModifier: s.rolesModifier.toLowerCase(),
       });
       if (r) flagged += r.flagged;
+      await env.TOKEN_CACHE.delete(failKey).catch(() => {});
+      if (hourly && r) {
+        await writeAudit(env, {
+          tenantId: rail.tenantId,
+          action: 'outflow.tick',
+          actor: 'system',
+          detail: JSON.stringify({ from: r.from.toString(), to: r.to.toString(), outflows: r.outflows, flagged: r.flagged }),
+        }).catch(() => {});
+      }
     } catch (e) {
+      allOk = false;
       console.error(`outflow watch ${rail.tenantId} failed: ${(e as Error).message}`);
+      try {
+        const n = Number((await env.TOKEN_CACHE.get(failKey)) ?? '0') + 1;
+        await env.TOKEN_CACHE.put(failKey, String(n), { expirationTtl: 3600 });
+        if (n === FAIL_ALERT_TICKS) {
+          await sendAlert(
+            env,
+            `⚠️ <b>Detektor krađe ne čita chain</b>\n` +
+              `tenant: <code>${rail.tenantId}</code> · ${n} uzastopna neuspjela pokušaja\n` +
+              `greška: <code>${(e as Error).message.slice(0, 200)}</code>\n` +
+              `Dok se ne popravi, izlazi iz Safe-a se ne prate.`,
+          );
+        }
+      } catch (kvErr) {
+        console.error(`outflow watch fail counter: ${(kvErr as Error).message}`);
+      }
+    }
+  }
+  if (allOk && env.WATCH_HEARTBEAT_URL) {
+    try {
+      await fetch(env.WATCH_HEARTBEAT_URL, { method: 'GET' });
+    } catch (e) {
+      console.error(`outflow watch heartbeat: ${(e as Error).message}`);
     }
   }
   return flagged;
