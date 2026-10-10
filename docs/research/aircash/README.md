@@ -41,6 +41,9 @@ resolve intenta" **u objavljenom obliku ne radi**, iz dva neovisna razloga:
 Prva dva koraka ideje **jesu** točna: Apple/Google Pay nadoplata je 0 EUR (do 1.000 EUR po
 transakciji), a Slikaj i plati je 0 EUR. *VERIFIED.*
 
+> **Sljedeći korak (2026-10-11):** [ADR 0020](../../decisions/0020-hr-iban-listener-bez-minta.md):
+> HUB3 na tenantov **hrvatski** IBAN, dojava uplate preko bank-push-gateway, bez minta.
+
 ## Aircash vs Revolut
 
 | | Revolut | Aircash |
