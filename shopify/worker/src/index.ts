@@ -5,6 +5,7 @@ import { CLIENT_ID_RE, appByClientId, appServesShop, appsForShop, deleteApp, lis
 import {
   decryptSecret,
   encryptSecret,
+  secretAad,
   timingSafeEqual,
   verifyMptWebhook,
   verifyShopifyQueryHmac,
@@ -91,7 +92,11 @@ app.get('/auth/callback', async (c) => {
 });
 
 /// Which of our apps signed this install/admin query for `shop`, if any.
+/// SH-08: a signed link older (or newer) than a day is refused — no replaying
+/// an old install URL.
 function installApp(env: Env, shop: string, params: URLSearchParams) {
+  const ts = Number(params.get('timestamp'));
+  if (!Number.isFinite(ts) || Math.abs(now() - ts) > 86_400) return Promise.resolve(null);
   return appsForShop(env, shop).then((apps) => matchApp(apps, (secret) => verifyShopifyQueryHmac(params, secret)));
 }
 
@@ -150,19 +155,23 @@ app.post('/webhooks/mpt', async (c) => {
   if (!payload?.type || !MPT_EVENTS.has(payload.type) || !payload.sid) {
     return c.text('ignored'); // other tenant events (campaigns, forward.blocked) — 2xx so the outbox stops
   }
+  // SH-06: one answer for unknown sid / no secret / bad signature, so the
+  // endpoint is no oracle for which sids exist. The payload is only a
+  // trigger anyway — the cron re-reads every open order.
   const row = await getOrderBySid(c.env, payload.sid);
-  if (!row) return c.text('unknown sid'); // not a Shopify order — 2xx, nothing to retry
-  const shop = await getShop(c.env, row.shop);
-  if (!shop?.mpt_webhook_secret_enc) return c.text('webhook secret not configured', 401);
-  const ok = await verifyMptWebhook({
+  const shop = row ? await getShop(c.env, row.shop) : null;
+  const ok = !!row && !!shop?.mpt_webhook_secret_enc && await verifyMptWebhook({
     id: c.req.header('webhook-id') ?? null,
     timestamp: c.req.header('webhook-timestamp') ?? null,
     signature: c.req.header('webhook-signature') ?? null,
     body: raw,
-    secret: await decryptSecret(c.env.TOKEN_KEK, shop.mpt_webhook_secret_enc),
+    secret: await decryptSecret(c.env.TOKEN_KEK, shop.mpt_webhook_secret_enc, secretAad('shops', row.shop, 'mpt_webhook_secret')),
     nowUnix: now(),
   });
-  if (!ok) return c.text('invalid signature', 401);
+  if (!ok || !row) {
+    if (row) console.warn('webhooks/mpt not verified', row.shop, payload.sid);
+    return c.text('ignored');
+  }
   // The payload is only a trigger: re-read the intent so the order status
   // comes from the authoritative API, never from a webhook body.
   await refreshOrder(c.env, row);
@@ -290,6 +299,13 @@ app.put('/admin/apps/:client_id', async (c) => {
     .bind(shop, clientId)
     .first<{ client_id: string }>();
   if (taken) return c.json({ error: 'shop_has_another_app', client_id: taken.client_id }, 409);
+  // SH-09: moving an existing app to another shop breaks the old shop's
+  // installs (appServesShop) — only on purpose.
+  const current = await c.env.DB.prepare('SELECT shop FROM apps WHERE client_id = ?').bind(clientId).first<{ shop: string | null }>();
+  if (current && current.shop && current.shop !== shop && c.req.query('move') !== '1') {
+    return c.json({ error: 'app_bound_to_other_shop', shop: current.shop, hint: 'PUT …?move=1 to move it' }, 409);
+  }
+  if (current && current.shop !== shop) console.warn('app moved', clientId, current.shop, '→', shop);
   await upsertApp(c.env, { clientId, shop, secret, label: b.label?.trim() || null });
   return c.json({ client_id: clientId, shop, label: b.label?.trim() || null });
 });
@@ -329,8 +345,12 @@ app.put('/admin/shops/:shop', async (c) => {
     args.push(v);
   };
   if (b.active !== undefined) set('active', b.active ? 1 : 0);
-  if (b.mpt_api_key !== undefined) set('mpt_api_key_enc', await encryptSecret(c.env.TOKEN_KEK, b.mpt_api_key.trim()));
-  if (b.mpt_webhook_secret !== undefined) set('mpt_webhook_secret_enc', await encryptSecret(c.env.TOKEN_KEK, b.mpt_webhook_secret.trim()));
+  if (b.mpt_api_key !== undefined) {
+    set('mpt_api_key_enc', await encryptSecret(c.env.TOKEN_KEK, b.mpt_api_key.trim(), secretAad('shops', shop, 'mpt_api_key')));
+  }
+  if (b.mpt_webhook_secret !== undefined) {
+    set('mpt_webhook_secret_enc', await encryptSecret(c.env.TOKEN_KEK, b.mpt_webhook_secret.trim(), secretAad('shops', shop, 'mpt_webhook_secret')));
+  }
   if (b.target_address !== undefined) set('target_address', b.target_address.toLowerCase());
   if (b.gateway_match !== undefined) set('gateway_match', b.gateway_match.trim());
   if (b.intent_ttl_seconds !== undefined) set('intent_ttl_seconds', Math.floor(b.intent_ttl_seconds));

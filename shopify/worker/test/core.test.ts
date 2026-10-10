@@ -81,10 +81,14 @@ describe('deriveSid', () => {
 describe('secret encryption', () => {
   it('round-trips and uses a fresh IV', async () => {
     const kek = randomBytes(32).toString('base64');
-    const a = await encryptSecret(kek, 'shpat_123');
-    expect(a).not.toBe(await encryptSecret(kek, 'shpat_123'));
-    expect(await decryptSecret(kek, a)).toBe('shpat_123');
-    await expect(decryptSecret(randomBytes(32).toString('base64'), a)).rejects.toThrow();
+    const aad = 'shops|a.myshopify.com|access_token';
+    const a = await encryptSecret(kek, 'shpat_123', aad);
+    expect(a).not.toBe(await encryptSecret(kek, 'shpat_123', aad));
+    expect(await decryptSecret(kek, a, aad)).toBe('shpat_123');
+    await expect(decryptSecret(randomBytes(32).toString('base64'), a, aad)).rejects.toThrow();
+    // SH-05: transplanted into another shop's row / another column → refused.
+    await expect(decryptSecret(kek, a, 'shops|b.myshopify.com|access_token')).rejects.toThrow();
+    await expect(decryptSecret(kek, a, 'shops|a.myshopify.com|mpt_api_key')).rejects.toThrow();
   });
 });
 

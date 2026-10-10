@@ -1,4 +1,4 @@
-import { decryptSecret, deriveSid } from './crypto';
+import { decryptSecret, deriveSid, secretAad } from './crypto';
 import { getOrder, getOrderBySid, getShop, insertOrder, now, updateOrder } from './db';
 import { createIntent, getIntent } from './mpt';
 import {
@@ -95,7 +95,7 @@ export async function ensureIntent(env: Env, shopDomain: string, orderGid: strin
   if (!cents || cents <= 0) return { kind: 'skip', reason: 'nothing_due' };
 
   const sid = await deriveSid(env.SID_SECRET, shopDomain, orderGid);
-  const apiKey = await decryptSecret(env.TOKEN_KEK, shop.mpt_api_key_enc);
+  const apiKey = await decryptSecret(env.TOKEN_KEK, shop.mpt_api_key_enc, secretAad('shops', shopDomain, 'mpt_api_key'));
   let intent = await createIntent(env, apiKey, {
     sid,
     target_address: shop.target_address,

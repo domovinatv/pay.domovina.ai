@@ -2,7 +2,12 @@ import { useEffect, useState } from 'preact/hooks';
 
 import { API } from './config.js';
 
+// SH-10: 5 s for the first 2 min (the buyer is watching), then 30 s; stop
+// after an hour — a tab left open must not poll all day.
 const POLL_MS = 5000;
+const SLOW_POLL_MS = 30000;
+const FAST_FOR_MS = 2 * 60 * 1000;
+const STOP_AFTER_MS = 60 * 60 * 1000;
 const OPEN = new Set(['pending', 'received']);
 
 /// Renders the EPC QR + live status for an order paid with the MPT manual
@@ -10,12 +15,14 @@ const OPEN = new Set(['pending', 'received']);
 /// nothing while loading, so non-MPT buyers never see a flash of this block.
 export function PaymentBlock({ orderId }) {
   const [data, setData] = useState(null);
+  const [stale, setStale] = useState(false);
   const t = (key, vars) => shopify.i18n.translate(key, vars);
 
   useEffect(() => {
     if (!orderId) return undefined;
     let stopped = false;
     let timer;
+    const started = Date.now();
     const load = async () => {
       try {
         const token = await shopify.sessionToken.get();
@@ -32,7 +39,13 @@ export function PaymentBlock({ orderId }) {
       } catch {
         // transient — keep the last good state and retry
       }
-      if (!stopped) timer = setTimeout(load, POLL_MS);
+      if (stopped) return;
+      const elapsed = Date.now() - started;
+      if (elapsed > STOP_AFTER_MS) {
+        setStale(true);
+        return;
+      }
+      timer = setTimeout(load, elapsed < FAST_FOR_MS ? POLL_MS : SLOW_POLL_MS);
     };
     load();
     return () => {
@@ -86,7 +99,7 @@ export function PaymentBlock({ orderId }) {
             <s-link href={qr.checkout_url} target="_blank">{t('pay.openPage')}</s-link>
           </s-stack>
         ) : null}
-        {data.status === 'pending' ? <s-text color="subdued">{t('pay.autoRefresh')}</s-text> : null}
+        {data.status === 'pending' ? <s-text color="subdued">{t(stale ? 'pay.reload' : 'pay.autoRefresh')}</s-text> : null}
       </s-stack>
     </s-section>
   );

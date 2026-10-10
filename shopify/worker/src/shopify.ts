@@ -1,5 +1,5 @@
 import { type AppCreds, appByClientId, appsForShop } from './apps';
-import { decryptSecret, encryptSecret } from './crypto';
+import { decryptSecret, encryptSecret, secretAad } from './crypto';
 import { getShop, now, saveInstall } from './db';
 import type { Env } from './types';
 
@@ -43,9 +43,9 @@ async function tokenRequest(shop: string, body: Record<string, string>): Promise
 async function storeTokens(env: Env, clientId: string, shop: string, t: TokenResponse): Promise<void> {
   const ts = now();
   await saveInstall(env, shop, clientId, {
-    accessEnc: await encryptSecret(env.TOKEN_KEK, t.access_token),
+    accessEnc: await encryptSecret(env.TOKEN_KEK, t.access_token, secretAad('shops', shop, 'access_token')),
     accessExpiresAt: t.expires_in ? ts + t.expires_in : null,
-    refreshEnc: t.refresh_token ? await encryptSecret(env.TOKEN_KEK, t.refresh_token) : null,
+    refreshEnc: t.refresh_token ? await encryptSecret(env.TOKEN_KEK, t.refresh_token, secretAad('shops', shop, 'refresh_token')) : null,
     refreshExpiresAt: t.refresh_token_expires_in ? ts + t.refresh_token_expires_in : null,
     scope: t.scope,
   });
@@ -56,7 +56,7 @@ export async function accessToken(env: Env, shop: string): Promise<string> {
   const row = await getShop(env, shop);
   if (!row?.access_token_enc) throw new Error('shop_not_installed');
   if (row.access_expires_at === null || row.access_expires_at > now() + 120) {
-    return decryptSecret(env.TOKEN_KEK, row.access_token_enc);
+    return decryptSecret(env.TOKEN_KEK, row.access_token_enc, secretAad('shops', shop, 'access_token'));
   }
   if (!row.refresh_token_enc) throw new Error('access_token_expired_without_refresh_token');
   // The refresh token belongs to the app that installed the shop.
@@ -66,7 +66,7 @@ export async function accessToken(env: Env, shop: string): Promise<string> {
     client_id: app.clientId,
     client_secret: app.secret,
     grant_type: 'refresh_token',
-    refresh_token: await decryptSecret(env.TOKEN_KEK, row.refresh_token_enc),
+    refresh_token: await decryptSecret(env.TOKEN_KEK, row.refresh_token_enc, secretAad('shops', shop, 'refresh_token')),
   });
   await storeTokens(env, app.clientId, shop, refreshed);
   return refreshed.access_token;
