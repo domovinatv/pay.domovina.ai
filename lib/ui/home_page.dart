@@ -114,11 +114,12 @@ class _HomePageState extends State<HomePage> {
       ? 'mpt:$_gnosisAddr'
       : 'mpt:$_gnosisAddr?sid=$_sidValue';
 
-  /// HUB3 PDF417 → Croatian HR IBAN → does NOT go through Monerium, so the
-  /// description field is free for sid tracking + anything else.
-  String get _hub3Description => _sidValue.isEmpty
-      ? 'gnosis:$_gnosisAddr'
-      : 'gnosis:$_gnosisAddr?sid=$_sidValue';
+  /// HUB3 PDF417 → Croatian HR IBAN → does NOT go through Monerium. The
+  /// description holds only 35 characters, so the 42-char address cannot
+  /// fit (and `gnosis:` is diagnostic-only since ADR 0016); it carries the
+  /// sid for matching on the HR account instead.
+  String get _hub3Description =>
+      _sidValue.isEmpty ? 'MPT' : 'MPT sid:$_sidValue';
 
   @override
   void initState() {
@@ -648,8 +649,10 @@ class _HomePageState extends State<HomePage> {
           width: 420,
           child: BarcodeWidget(
             data: data,
+            // HUB3 v6: ECL 4, module height 3x width.
             barcode: Barcode.pdf417(
-              moduleHeight: 2,
+              securityLevel: Pdf417SecurityLevel.level4,
+              moduleHeight: 3,
               preferredRatio: 3,
             ),
             drawText: false,
@@ -665,7 +668,8 @@ class _HomePageState extends State<HomePage> {
           .toSvg(data, width: 1024, height: 1024);
 
   String _pdf417Svg(String data) => bc.Barcode.pdf417(
-        moduleHeight: 2,
+        securityLevel: bc.Pdf417SecurityLevel.level4,
+        moduleHeight: 3,
         preferredRatio: 3,
       ).toSvg(data, width: 1680, height: 440);
 

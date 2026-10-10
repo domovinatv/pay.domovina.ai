@@ -1,0 +1,4 @@
+# Vendored upstream code (see PATCHES.md) — not held to this repo's lints.
+analyzer:
+  exclude:
+    - lib/**

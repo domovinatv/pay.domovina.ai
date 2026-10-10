@@ -98,3 +98,10 @@ flutter:
   #
   # For details regarding fonts from package dependencies,
   # see https://flutter.dev/to/font-from-package
+
+# barcode 2.2.9 (latest, also upstream master) computes the PDF417 left row
+# indicator wrongly, so zxing-based scanners cannot read our HUB3 barcode.
+# Vendored with a one-line fix — see third_party/barcode/PATCHES.md.
+dependency_overrides:
+  barcode:
+    path: third_party/barcode
