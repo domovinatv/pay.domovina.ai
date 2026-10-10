@@ -530,12 +530,23 @@ const LIVE = new Set(['pending', 'submitted', 'confirmed']);
 /// operator picked. Refuses when the order already has a live forward. The
 /// pick still goes through `authorizeForward` — the operator chooses among
 /// tenant-authorised intents, never a free address.
-export type RerouteRefusal = 'already_forwarded' | 'resolved_offrail' | 'unknown_sid' | 'not_processed';
+export type RerouteRefusal =
+  | 'already_forwarded'
+  | 'resolved_offrail'
+  | 'unknown_sid'
+  | 'not_processed'
+  /// The picked intent already has its money (paid, late or underpaid) —
+  /// a second transfer onto it would be silent (SR-02).
+  | 'already_settled'
+  /// Order amount ≠ intent amount. Allowed only with `force` + a reason, so
+  /// 1 € can never flip a 500 € intent by two careless clicks (SR-02).
+  | 'amount_mismatch';
 
 export async function checkReroute(
   deps: ForwardDeps,
   order: MoneriumOrder,
   sid: string,
+  opts: { force?: boolean } = {},
 ): Promise<RerouteRefusal | null> {
   if (order.kind !== 'issue' || (order.state ?? order.meta?.state) !== 'processed') {
     return 'not_processed';
@@ -545,7 +556,10 @@ export async function checkReroute(
   // Paid out by hand outside the rail: forwarding again would pay twice, out
   // of whatever other payments happen to be sitting in the Safe.
   if (existing?.status === 'resolved_offrail') return 'resolved_offrail';
-  if (!(await deps.authorize.getIntentBySid(sid))) return 'unknown_sid';
+  const intent = await deps.authorize.getIntentBySid(sid);
+  if (!intent) return 'unknown_sid';
+  if (intent.state === 'paid' || intent.monerium_order_id) return 'already_settled';
+  if (!opts.force && intent.amount_cents !== parseAmountCents(order.amount)) return 'amount_mismatch';
   return null;
 }
 
@@ -553,8 +567,9 @@ export async function rerouteParkedOrder(
   deps: ForwardDeps,
   order: MoneriumOrder,
   sid: string,
+  opts: { force?: boolean } = {},
 ): Promise<'ok' | RerouteRefusal> {
-  const refusal = await checkReroute(deps, order, sid);
+  const refusal = await checkReroute(deps, order, sid, opts);
   if (refusal) return refusal;
   await handleForward(deps, order, { sid });
   return 'ok';

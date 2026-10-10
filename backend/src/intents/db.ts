@@ -302,7 +302,7 @@ export async function listRerouteCandidates(
        FROM payment_intents i
       WHERE COALESCE(i.tenant_id, ?) = ?
         AND i.created_at BETWEEN ? AND ?
-        AND (i.state = 'pending' OR (i.state = 'expired' AND i.monerium_order_id IS NULL))
+        AND i.state IN ('pending', 'expired') AND i.monerium_order_id IS NULL
         AND NOT EXISTS (
           SELECT 1 FROM monerium_forwards f
            WHERE f.sid = i.sid

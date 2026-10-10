@@ -15,6 +15,8 @@ import { STRAY_LOOKBACK_SECONDS } from '../monerium/strayResolver';
 import type { MoneriumOrder } from '../monerium/types';
 import { getTenantRail, isLegacyTenant, legacyRail, type TenantRail } from '../tenants/rail';
 import { defaultTenantId } from '../tenants/whitelist';
+import { writeAudit } from '../tenants/db';
+import { getIntent } from '../intents/db';
 import {
   countWallets,
   listPhoneBindingsForCredentials,
@@ -105,14 +107,34 @@ export function mountAdminUi(app: Hono<{ Bindings: Env }>): void {
     return c.json({ order_id: order.id, amount_cents: amountCents, placed_at: row.placed_at, items });
   });
   app.post('/admin/api/orders/:id/reroute', async (c) => {
-    const body = await c.req.json<{ sid?: string }>().catch(() => ({} as { sid?: string }));
+    type Body = { sid?: string; force?: boolean; reason?: string };
+    const body = await c.req.json<Body>().catch(() => ({} as Body));
     const sid = (body.sid ?? '').trim();
     if (!sid) return c.json({ error: 'sid_required' }, 400);
+    const force = body.force === true;
+    const reason = (body.reason ?? '').trim();
+    // A different amount is a deliberate operator decision, written down.
+    if (force && reason.length < 10) return c.json({ error: 'reason_required' }, 400);
     const loaded = await loadParkedOrder(c.env, c.req.param('id'));
     if ('error' in loaded) return c.json({ error: loaded.error }, 404);
     const deps = makeForwardDeps(c.env, loaded.rail);
-    const refusal = await checkReroute(deps, loaded.order, sid);
+    const refusal = await checkReroute(deps, loaded.order, sid, { force });
     if (refusal) return c.json({ error: refusal }, 409);
+    const intent = await getIntent(c.env, sid);
+    await writeAudit(c.env, {
+      tenantId: loaded.tenantId,
+      action: 'forward.reroute',
+      address: intent?.target_address ?? null,
+      actor: actorOf(c),
+      detail: JSON.stringify({
+        order_id: loaded.order.id,
+        sid,
+        order_amount: loaded.row.amount,
+        intent_amount_cents: intent?.amount_cents ?? null,
+        force,
+        reason: reason || null,
+      }),
+    });
     // The forward polls for confirmation (~75 s) — don't hold the request.
     c.executionCtx.waitUntil(handleForward(deps, loaded.order, { sid }));
     return c.json({ accepted: true, order_id: loaded.order.id, sid }, 202);

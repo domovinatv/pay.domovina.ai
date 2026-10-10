@@ -51,7 +51,15 @@ export type ForwardDecision =
 /// Injected lookups — keeps the decision unit-testable without D1
 /// (same philosophy as ConfirmDeps in ../intents/confirm.ts).
 export interface AuthorizeDeps {
-  getIntentBySid(sid: string): Promise<{ target_address: string; tenant_id: string | null } | null>;
+  /// state / amount / monerium_order_id are for the operator reroute check
+  /// (SR-02) — authorizeForward itself only uses target and tenant.
+  getIntentBySid(sid: string): Promise<{
+    target_address: string;
+    tenant_id: string | null;
+    state?: string;
+    amount_cents?: number;
+    monerium_order_id?: string | null;
+  } | null>;
   getCampaignById(
     campaignId: string,
   ): Promise<{ tenant_id: string; safe_address: string } | null>;
@@ -84,7 +92,15 @@ export function makeAuthorizeDeps(env: Env, rail: TenantRail): AuthorizeDeps {
   return {
     getIntentBySid: async (sid) => {
       const row = await getIntent(env, sid);
-      return row ? { target_address: row.target_address, tenant_id: row.tenant_id ?? null } : null;
+      return row
+        ? {
+            target_address: row.target_address,
+            tenant_id: row.tenant_id ?? null,
+            state: row.state,
+            amount_cents: row.amount_cents,
+            monerium_order_id: row.monerium_order_id,
+          }
+        : null;
     },
     getCampaignById: async (campaignId) => {
       const row = await getCampaign(env, campaignId);

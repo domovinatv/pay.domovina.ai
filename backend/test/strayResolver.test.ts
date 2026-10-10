@@ -174,11 +174,17 @@ function harness(
   over: Partial<ForwardDeps> = {},
 ): { deps: ForwardDeps; rec: Rec } {
   const rec: Rec = { inserts: [], forwards: [], alerts: [], blocked: [], windows: [], settled: [] };
-  const intents = new Map(candidates.map((c) => [c.sid, c.target_address]));
+  const intents = new Map(candidates.map((c) => [c.sid, c]));
+  // Test orders are 1,02 € unless an intent says otherwise.
+  const amountOf = (c: StrayCandidate) => (c as StrayCandidate & { amount_cents?: number }).amount_cents ?? 102;
   const deps: ForwardDeps = {
     authorize: {
-      getIntentBySid: async (sid) =>
-        intents.has(sid) ? { target_address: intents.get(sid)!, tenant_id: 'italk' } : null,
+      getIntentBySid: async (sid) => {
+        const c = intents.get(sid);
+        return c
+          ? { target_address: c.target_address, tenant_id: 'italk', state: c.state, amount_cents: amountOf(c), monerium_order_id: null }
+          : null;
+      },
       getCampaignById: async () => null,
       getTenantStatus: async () => 'active',
       isWhitelisted: async (_t, addr) => addr.toLowerCase() === PAYEE,
@@ -376,6 +382,21 @@ describe('rerouteParkedOrder — operator pick', () => {
     expect(await rerouteParkedOrder(deps, order('', '1.02'), 'nepostojeci1')).toBe('unknown_sid');
     const placed = { ...order('', '1.02'), state: 'placed' } as MoneriumOrder;
     expect(await rerouteParkedOrder(deps, placed, 'z232pb646itg')).toBe('not_processed');
+  });
+
+  it('SR-02: refuses an intent that is already paid', async () => {
+    const { deps, rec } = harness([{ ...Z232, state: 'paid' }]);
+    expect(await rerouteParkedOrder(deps, order('', '1.02'), 'z232pb646itg')).toBe('already_settled');
+    expect(rec.inserts).toHaveLength(0);
+  });
+
+  it('SR-02: 1 € onto a 500 € intent is refused unless forced', async () => {
+    const big = { ...Z232, amount_cents: 50_000 } as StrayCandidate;
+    const { deps, rec } = harness([big]);
+    expect(await rerouteParkedOrder(deps, order('', '1.00'), 'z232pb646itg')).toBe('amount_mismatch');
+    expect(rec.inserts).toHaveLength(0);
+    expect(await rerouteParkedOrder(deps, order('', '1.00'), 'z232pb646itg', { force: true })).toBe('ok');
+    expect(rec.inserts[0]).toMatchObject({ sid: 'z232pb646itg', memoPrefix: 'manual' });
   });
 
   it('operator pick off the whitelist still parks', async () => {

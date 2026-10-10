@@ -981,7 +981,7 @@ document.getElementById("rows").addEventListener("click", async (e) => {
           + '<td>'+esc(i.state)+' · '+esc(fmt(i.created_at))+'</td>'
           + '<td class="mono">'+esc(short(i.target_address,10))+'</td>'
           + '<td class="dim">'+esc(i.label||"")+'</td>'
-          + '<td><button type="button" class="reroute-go" data-order="'+esc(orderId)+'" data-sid="'+esc(i.sid)+'">Preusmjeri</button></td>'
+          + '<td><button type="button" class="reroute-go" data-order="'+esc(orderId)+'" data-sid="'+esc(i.sid)+'"'+(same ? '' : ' data-mismatch="1"')+'>Preusmjeri</button></td>'
           + '</tr>';
       }
       cell.innerHTML = h + '</tbody></table>';
@@ -989,15 +989,34 @@ document.getElementById("rows").addEventListener("click", async (e) => {
       cell.innerHTML = '<span class="dim">Greška: '+esc(err.message)+'</span>';
     }
   } else if (btn.classList.contains("reroute-go")) {
-    // Two-step: first click arms, second click sends.
-    if (!btn.dataset.armed) { btn.dataset.armed = "1"; btn.textContent = "Potvrdi → "+btn.dataset.sid; return; }
+    const mismatch = btn.dataset.mismatch === "1";
+    // Same amount: two-step, first click arms, second sends. Different
+    // amount: a written reason instead of the second click (SR-02).
+    if (!btn.dataset.armed) {
+      btn.dataset.armed = "1";
+      if (mismatch) {
+        const inp = document.createElement("input");
+        inp.className = "reroute-reason";
+        inp.size = 34;
+        inp.placeholder = "iznos se razlikuje — razlog (min. 10 znakova)";
+        btn.parentNode.insertBefore(inp, btn);
+        btn.textContent = "Preusmjeri unatoč iznosu → "+btn.dataset.sid;
+        inp.focus();
+      } else {
+        btn.textContent = "Potvrdi → "+btn.dataset.sid;
+      }
+      return;
+    }
+    const reasonEl = mismatch ? btn.parentNode.querySelector(".reroute-reason") : null;
+    const reason = reasonEl ? reasonEl.value.trim() : "";
+    if (mismatch && reason.length < 10) { reasonEl.focus(); reasonEl.style.borderColor = "var(--danger)"; return; }
     btn.disabled = true;
     btn.textContent = "Šaljem…";
     try {
       const r = await fetch("/admin/api/orders/"+encodeURIComponent(btn.dataset.order)+"/reroute", {
         method: "POST", credentials: "same-origin",
         headers: {"content-type": "application/json"},
-        body: JSON.stringify({sid: btn.dataset.sid}),
+        body: JSON.stringify(mismatch ? {sid: btn.dataset.sid, force: true, reason: reason} : {sid: btn.dataset.sid}),
       });
       const d = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(d.error || ("HTTP "+r.status));

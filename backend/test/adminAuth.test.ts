@@ -211,3 +211,20 @@ describe('audit actor (AD-01)', () => {
     expect(audit?.args[4]).toBe('ops@domovina.ai');
   });
 });
+
+describe('reroute (SR-02)', () => {
+  it('force without a written reason is refused before anything moves', async () => {
+    const res = await worker.fetch(
+      req('/admin/api/orders/ord-1/reroute', {
+        method: 'POST',
+        cookie: true,
+        headers: { origin: HOST, 'content-type': 'application/json' },
+        body: JSON.stringify({ sid: 'abc', force: true, reason: 'jer da' }),
+      }),
+      env({ email: 'ops@domovina.ai' }),
+      ctx,
+    );
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: 'reason_required' });
+  });
+});
