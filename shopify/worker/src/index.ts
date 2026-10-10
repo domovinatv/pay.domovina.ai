@@ -22,7 +22,7 @@ import {
 } from './db';
 import { MptError } from './mpt';
 import { SHOP_RE, exchangeCode, isOrderGid } from './shopify';
-import { ensureIntent, refreshOrder } from './sync';
+import { ensureIntent, extOrderAccess, extOrderOwner, refreshOrder } from './sync';
 import type { Env, MptIntent, OrderRow } from './types';
 
 /// MPT for Shopify — "Path B": the merchant adds a manual payment method, this
@@ -182,12 +182,19 @@ const CORS = {
 app.options('/ext/*', (c) => c.body(null, 204, CORS));
 
 app.get('/ext/order', async (c) => {
-  const shop = await verifySessionToken(c.env, c.req.header('authorization'));
-  if (!shop) return c.json({ error: 'unauthorized' }, 401, CORS);
+  const session = await verifySessionToken(c.env, c.req.header('authorization'));
+  if (!session) return c.json({ error: 'unauthorized' }, 401, CORS);
+  const { shop, sub } = session;
   const orderGid = c.req.query('order_id') ?? '';
   if (!isOrderGid(orderGid)) return c.json({ error: 'invalid_order_id' }, 400, CORS);
 
   try {
+    // SH-01: a session token is the shop's, not the order's. Before any
+    // intent or QR: is this the token holder's own (or a fresh guest) order?
+    const owner = await extOrderOwner(c.env, shop, orderGid);
+    if (!owner) return c.json({ status: 'not_applicable', reason: 'order_not_found' }, 200, CORS);
+    if (extOrderAccess(owner, sub, now()) !== 'ok') return c.json({ error: 'order_not_yours' }, 403, CORS);
+
     const res = await ensureIntent(c.env, shop, orderGid);
     if (res.kind === 'skip') return c.json({ status: 'not_applicable', reason: res.reason }, 200, CORS);
     let row = res.order;
@@ -230,10 +237,11 @@ function publicView(row: OrderRow): Record<string, unknown> {
 }
 
 /// Checkout / customer-account session token: HS256 JWT signed with the app
-/// secret, `aud` = client id, `dest` = the shop. Returns the shop domain.
+/// secret, `aud` = client id, `dest` = the shop. Returns the shop domain and
+/// `sub` — the customer gid when the buyer is logged in, else null.
 /// `aud` is read unverified only to pick the app; the signature is then
 /// checked with that app's secret, and a custom app only vouches for its shop.
-async function verifySessionToken(env: Env, header: string | undefined): Promise<string | null> {
+async function verifySessionToken(env: Env, header: string | undefined): Promise<{ shop: string; sub: string | null } | null> {
   const token = header?.startsWith('Bearer ') ? header.slice(7) : null;
   if (!token) return null;
   try {
@@ -248,7 +256,9 @@ async function verifySessionToken(env: Env, header: string | undefined): Promise
       clockTolerance: 10,
     });
     const dest = typeof payload.dest === 'string' ? payload.dest.replace(/^https:\/\//, '').replace(/\/$/, '') : '';
-    return SHOP_RE.test(dest) && appServesShop(app, dest) ? dest : null;
+    if (!SHOP_RE.test(dest) || !appServesShop(app, dest)) return null;
+    const sub = typeof payload.sub === 'string' && payload.sub.startsWith('gid://shopify/Customer/') ? payload.sub : null;
+    return { shop: dest, sub };
   } catch {
     return null;
   }

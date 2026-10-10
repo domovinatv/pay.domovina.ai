@@ -95,6 +95,8 @@ export interface ShopifyOrder {
   canMarkAsPaid: boolean;
   paymentGatewayNames: string[];
   totalOutstandingSet: { shopMoney: { amount: string; currencyCode: string } };
+  createdAt?: string | null;
+  customer?: { id: string } | null;
 }
 
 export async function fetchOrder(env: Env, shop: string, orderGid: string): Promise<ShopifyOrder | null> {
@@ -103,7 +105,8 @@ export async function fetchOrder(env: Env, shop: string, orderGid: string): Prom
     shop,
     `query MptOrder($id: ID!) {
        order(id: $id) {
-         id name cancelledAt displayFinancialStatus canMarkAsPaid paymentGatewayNames
+         id name createdAt cancelledAt displayFinancialStatus canMarkAsPaid paymentGatewayNames
+         customer { id }
          totalOutstandingSet { shopMoney { amount currencyCode } }
        }
      }`,

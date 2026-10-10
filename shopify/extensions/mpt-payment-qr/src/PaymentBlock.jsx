@@ -26,6 +26,8 @@ export function PaymentBlock({ orderId }) {
           const json = await res.json();
           if (!stopped) setData(json);
           if (json.status === 'not_applicable' || !OPEN.has(json.status)) return; // final — stop polling
+        } else if (res.status === 403 || res.status === 401) {
+          return; // not this buyer's order (or token refused) — nothing to show, stop polling
         }
       } catch {
         // transient — keep the last good state and retry

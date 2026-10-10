@@ -33,6 +33,8 @@ export interface ShopRow {
   gateway_match: string;
   intent_ttl_seconds: number;
   auto_cancel: number;
+  /// SH-03 (migration 0002): wait after expiry before auto_cancel.
+  cancel_grace_seconds?: number;
   updated_at: number;
 }
 
@@ -60,6 +62,11 @@ export interface OrderRow {
   shopify_synced_at: number | null;
   last_error: string | null;
   last_polled_at: number | null;
+  /// SH-01 (migration 0002): the order's customer gid and Shopify createdAt.
+  customer_gid?: string | null;
+  order_created_at?: number | null;
+  /// SH-04: when the mpt-zaprimljeno tag landed.
+  received_tag_at?: number | null;
   created_at: number;
   updated_at: number;
 }
