@@ -173,3 +173,41 @@ describe('safeNext', () => {
     expect(safeNext(null)).toBe('/admin');
   });
 });
+
+describe('audit actor (AD-01)', () => {
+  it('is the session e-mail, not a header the caller controls', async () => {
+    const binds: Array<{ q: string; args: unknown[] }> = [];
+    const exec = (q: string, args: unknown[] = []) => ({
+      first: async () => {
+        if (q.includes('FROM admin_sessions')) return { email: 'ops@domovina.ai', method: 'passkey', expires_at: '2999-01-01T00:00:00Z' };
+        if (q.includes('FROM tenants')) return { id: 'italk', name: 'ITalk', status: 'active' };
+        return null;
+      },
+      all: async () => ({ results: [] }),
+      run: async () => { binds.push({ q, args }); return { meta: { changes: 1 } }; },
+    });
+    const e = env(undefined, {
+      DB: {
+        prepare: (q: string) => ({ bind: (...args: unknown[]) => exec(q, args), ...exec(q) }),
+        batch: async () => [],
+      } as unknown as Env['DB'],
+    });
+    const res = await worker.fetch(
+      req('/admin/api/tenants/italk/addresses', {
+        method: 'POST',
+        cookie: true,
+        headers: {
+          origin: HOST,
+          'content-type': 'application/json',
+          authorization: 'Basic ' + btoa('attacker:x'),
+        },
+        body: JSON.stringify({ address: '0x' + 'ab'.repeat(20), label: 'test' }),
+      }),
+      e,
+      ctx,
+    );
+    expect(res.status).toBe(200);
+    const audit = binds.find((b) => b.q.includes('INSERT INTO tenant_audit_log'));
+    expect(audit?.args[4]).toBe('ops@domovina.ai');
+  });
+});

@@ -37,6 +37,7 @@ flowchart LR
 | Otvoreno preusmjeravanje: `next` samo `/admin…` | `safeNext` |
 | Access JWT: RS256, issuer `https://<team>.cloudflareaccess.com`, AUD | `src/admin/auth/access.ts` |
 | `/admin/api/*` bez sesije → 401 (ne redirect); Basic Auth zaglavlje više ništa ne otvara | `mount.ts` |
+| Audit actor (`tenant_audit_log.actor`, offrail) = e-mail sesije, nikad zaglavlje zahtjeva | `actorOf` u `mount.ts` |
 
 ## Konfiguracija
 

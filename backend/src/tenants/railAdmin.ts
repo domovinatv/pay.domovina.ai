@@ -2,7 +2,7 @@ import type { Hono } from 'hono';
 
 import type { Env } from '../types';
 import { writeAudit } from './db';
-import { actorFrom } from './admin';
+import { actorOf } from '../admin/auth/mount';
 import { isLegacyTenant, railFromStoredRow } from './rail';
 import {
   createTenant,
@@ -23,7 +23,7 @@ import {
 import { renderTenantsPage } from '../admin/views';
 
 /// Admin surface for tenant onboarding (ADR 0017 §Admin). Mounted under
-/// `/admin/*`, behind the same Basic Auth as the rest of the dashboard.
+/// `/admin/*`, behind the same admin session as the rest of the dashboard.
 ///
 /// The default tenant (ITalk) is deliberately out of reach here: its rail is
 /// the Worker env, and a status flip from this API could park every live
@@ -52,7 +52,7 @@ export function mountRailAdmin(app: Hono<{ Bindings: Env }>): void {
     await writeAudit(c.env, {
       tenantId: v.value.id,
       action: 'tenant.create',
-      actor: actorFrom(c.req.header('Authorization')),
+      actor: actorOf(c),
       detail: JSON.stringify({ name: v.value.name, iban: v.value.iban }),
     });
     return c.json({ ok: true, tenant_id: v.value.id, status: 'onboarding' });
@@ -83,7 +83,7 @@ export function mountRailAdmin(app: Hono<{ Bindings: Env }>): void {
       tenantId: id,
       action: 'rail.update',
       address: v.value.receivingSafe,
-      actor: actorFrom(c.req.header('Authorization')),
+      actor: actorOf(c),
       detail: JSON.stringify({
         monerium_env: v.value.moneriumEnv,
         chain: v.value.chain,
@@ -112,7 +112,7 @@ export function mountRailAdmin(app: Hono<{ Bindings: Env }>): void {
       tenantId: id,
       action: row.router_key_enc ? 'rail.router_rotate' : 'rail.router_create',
       address: address.toLowerCase(),
-      actor: actorFrom(c.req.header('Authorization')),
+      actor: actorOf(c),
     });
     return c.json({ ok: true, router_address: address });
   });
@@ -128,7 +128,7 @@ export function mountRailAdmin(app: Hono<{ Bindings: Env }>): void {
       await writeAudit(c.env, {
         tenantId: id,
         action: 'rail.webhook_register',
-        actor: actorFrom(c.req.header('Authorization')),
+        actor: actorOf(c),
         detail: JSON.stringify(r),
       });
       return c.json({ ok: true, url: r.url, subscription_id: r.subscriptionId });
@@ -149,7 +149,7 @@ export function mountRailAdmin(app: Hono<{ Bindings: Env }>): void {
     await writeAudit(c.env, {
       tenantId: id,
       action: 'rail.verify',
-      actor: actorFrom(c.req.header('Authorization')),
+      actor: actorOf(c),
       detail: JSON.stringify({ ok, failed: checks.filter((x) => !x.ok).map((x) => x.key) }),
     });
     return c.json({ ok, checks });
@@ -167,7 +167,7 @@ export function mountRailAdmin(app: Hono<{ Bindings: Env }>): void {
       await writeAudit(c.env, {
         tenantId: id,
         action: `tenant.${transition}`,
-        actor: actorFrom(c.req.header('Authorization')),
+        actor: actorOf(c),
         detail: `${tenant.status} → ${next.status}`,
       });
       return c.json({ ok: true, tenant_id: id, status: next.status });

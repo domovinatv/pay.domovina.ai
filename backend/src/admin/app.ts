@@ -24,7 +24,7 @@ import {
 } from '../wallets/db';
 import { publicWalletView } from '../wallets/api';
 import { mountTenantAdmin } from '../tenants/admin';
-import { adminSession, mountAdminAuth } from './auth/mount';
+import { actorOf, mountAdminAuth } from './auth/mount';
 import { loadTenantTags, tenantWhere } from './tenantTags';
 import { makeOffRailDeps, markResolvedOffRail } from '../monerium/offrail';
 import {
@@ -123,7 +123,7 @@ export function mountAdminUi(app: Hono<{ Bindings: Env }>): void {
     const body = await c.req.json<{ tx_hash?: string }>().catch(() => ({} as { tx_hash?: string }));
     const loaded = await loadParkedOrder(c.env, c.req.param('id'));
     if ('error' in loaded) return c.json({ error: loaded.error }, 404);
-    const actor = adminSession(c)?.email ?? 'admin';
+    const actor = actorOf(c);
     const r = await markResolvedOffRail(makeOffRailDeps(c.env, loaded.rail), loaded.order, body.tx_hash ?? '', actor);
     return r.ok ? c.json(r) : c.json(r, r.error === 'bad_tx_hash' ? 400 : 409);
   });

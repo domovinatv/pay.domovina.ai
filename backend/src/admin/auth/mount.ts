@@ -49,6 +49,13 @@ export function adminSession(c: Context): Session | null {
   return (c.get('adminSession') as Session | undefined) ?? null;
 }
 
+/// Tko je napravio promjenu, za audit log: e-mail iz admin sesije (AD-01).
+/// Sesija je već provjerena middlewareom; 'admin:unknown' se vidi samo ako
+/// se ruta ikad registrira izvan /admin.
+export function actorOf(c: Context): string {
+  return adminSession(c)?.email ?? 'admin:unknown';
+}
+
 /// Mora se pozvati PRIJE registracije ijedne /admin rute.
 export function mountAdminAuth(app: Hono<{ Bindings: Env }>): void {
   const a = app as unknown as Hono<AppEnv>;
