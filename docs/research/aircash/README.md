@@ -12,6 +12,7 @@ Prilozi sa svim citatima i URL-ovima:
 | [01-proizvod-naknade-limiti.md](01-proizvod-naknade-limiti.md) | Licenca, Slikaj i plati, nadoplate, isplate, KYC, uvjeti |
 | [02-developer-api-sandbox.md](02-developer-api-sandbox.md) | Aircash Pay API rekonstruiran iz plugina, sandbox, Abon, payout |
 | [03-sepa-rail-vop-hub3-vs-revolut.md](03-sepa-rail-vop-hub3-vs-revolut.md) | Sponzorska banka, SCT Inst, VoP, HUB3 → ISO 20022, Revolut usporedba |
+| [05-hub3-format-provjera.md](05-hub3-format-provjera.md) | HUB3 PDF417 naspram spec v6 i 8 stvarnih računa, Dart PDF417 bug |
 | [04-zasto-aircash-suradnja.md](04-zasto-aircash-suradnja.md) | Za i protiv suradnje iz Aircashove perspektive, modeli M1–M4, dosadašnji kontakt (airKUNA pitch 6/2026) |
 
 Oznake: **VERIFIED** = primarni izvor, **REPORTED** = treća strana, **UNKNOWN** = nema izvora,

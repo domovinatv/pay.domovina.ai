@@ -77,6 +77,16 @@ EMT pod MiCA-om). Ovaj dokument predlaže ljestvicu manjih koraka gdje je prvi g
 4. **Podaci prije ugovora** — pilot na 1 tenantu (ITalk) s izvještajem o volumenu, chargebackovima
    i vremenu namire.
 
+## Stanje 11. 10. 2026.
+
+- MPT intent se uz EPC QR nudi i kao **HUB3 PDF417 barkod uplatnice** (rail `hub3_data`,
+  deployano). Na energy.domovina.ai `/beta/` panel ima karticu „Barkod uplatnice“.
+- Generator i renderer provjereni su na 8 stvarnih računa (HEP, Telemach, VG Čistoća,
+  VG Vodoopskrba, vrtić, e-račun) i dekoderima zxing i Apple Vision
+  ([05-hub3-format-provjera.md](05-hub3-format-provjera.md)).
+- Test 1 € kroz Aircash „Slikaj i plati“ prema Monerium `EE…` IBAN-u može se napraviti
+  odmah; njegov ishod odlučuje je li M1 razgovor o whitelisti ili samo o instantu.
+
 ## Preporuka
 
 - Početi od **M1 + pilot**, ne od airKUNA. To je mali zahtjev s jasnom vrijednošću za Aircash
