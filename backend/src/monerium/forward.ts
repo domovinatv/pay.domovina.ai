@@ -112,7 +112,9 @@ export function makeForwardDeps(env: Env, rail: TenantRail): ForwardDeps {
     authorize: makeAuthorizeDeps(env, rail),
     getForwardByOrder: (orderId) => getForwardByOrder(env, orderId),
     insertForward: (args) => insertForward(env, { ...args, tenantId: rail.tenantId }),
-    updateForward: (id, patch) => updateForward(env, id, patch),
+    updateForward: async (id, patch) => {
+      await updateForward(env, id, patch);
+    },
     // A direct-mode rail never signs (its gate never answers 'forward'); this
     // is the second lock, in case a future path forgets to ask the gate.
     forward: rail.mode === 'direct'

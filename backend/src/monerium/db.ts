@@ -1,6 +1,14 @@
 import type { Env } from '../types';
 import type { MoneriumOrder } from './types';
 import { normalizeIban, orderStateRankSql } from './orderState';
+import {
+  eventForStatusPatch,
+  FORWARD_STATES,
+  IllegalForwardTransition,
+  stateSql,
+  transitionFor,
+  type ForwardEvent,
+} from './forwardStates';
 
 export interface MoneriumOrderRow {
   id: string;
@@ -343,21 +351,46 @@ export async function insertForward(
   return (res.meta?.last_row_id as number | undefined) ?? 0;
 }
 
+/// Legacy entry point for the broadcast outcome (handleForward): `status`
+/// selects the event (submitted → broadcast_ok, failed → broadcast_failed),
+/// and the row must still be `broadcasting`. Any other status throws — the
+/// remaining edges have their own event (forwardStates.ts).
 export async function updateForward(
   env: Env,
   id: number,
   patch: Partial<Pick<MoneriumForwardRow, 'status' | 'tx_hash' | 'error' | 'attempts'>>,
-): Promise<void> {
-  const fields: string[] = ['updated_at = ?'];
-  const args: unknown[] = [Math.floor(Date.now() / 1000)];
-  if (patch.status !== undefined) { fields.push('status = ?'); args.push(patch.status); }
+): Promise<boolean> {
+  if (patch.status === undefined) throw new IllegalForwardTransition('updateForward needs a status');
+  return transitionForward(env, id, eventForStatusPatch(patch.status), patch);
+}
+
+/// THE only way an existing forward row changes state. The UPDATE is guarded
+/// by the logical from-state of the event (`stateSql`), so a row can only
+/// move along an edge of FORWARD_TRANSITIONS. Returns false when the row was
+/// not in that state (lost a race, or the caller is wrong) — logged, never
+/// silently "fixed".
+export async function transitionForward(
+  env: Env,
+  id: number,
+  event: ForwardEvent,
+  patch: Partial<Pick<MoneriumForwardRow, 'tx_hash' | 'error' | 'attempts'>> & { tx_log_index?: number | null } = {},
+): Promise<boolean> {
+  const t = transitionFor(event);
+  const fields: string[] = ['status = ?', 'updated_at = ?'];
+  const args: unknown[] = [FORWARD_STATES[t.to].status, Math.floor(Date.now() / 1000)];
   if (patch.tx_hash !== undefined) { fields.push('tx_hash = ?'); args.push(patch.tx_hash); }
   if (patch.error !== undefined) { fields.push('error = ?'); args.push(patch.error); }
   if (patch.attempts !== undefined) { fields.push('attempts = ?'); args.push(patch.attempts); }
+  if (patch.tx_log_index !== undefined) { fields.push('tx_log_index = ?'); args.push(patch.tx_log_index); }
   args.push(id);
-  await env.DB.prepare(
-    `UPDATE monerium_forwards SET ${fields.join(', ')} WHERE id = ?`,
+  const res = await env.DB.prepare(
+    `UPDATE monerium_forwards SET ${fields.join(', ')} WHERE id = ? AND ${stateSql(t.from)}`,
   ).bind(...args).run();
+  const ok = (res.meta?.changes ?? 0) > 0;
+  // Expected for receipt_confirmed (three paths race to settle); anything
+  // else points at a caller that is wrong about the row.
+  if (!ok) console.warn(`forward ${id}: ${event} refused — row is not ${t.from}`);
+  return ok;
 }
 
 /// Atomic `submitted → confirmed` transition. Returns true ONLY for the one
@@ -368,14 +401,7 @@ export async function confirmForwardOnce(
   env: Env,
   id: number,
 ): Promise<boolean> {
-  const res = await env.DB.prepare(
-    `UPDATE monerium_forwards
-        SET status = 'confirmed', updated_at = ?
-      WHERE id = ? AND status = 'submitted'`,
-  )
-    .bind(Math.floor(Date.now() / 1000), id)
-    .run();
-  return (res.meta?.changes ?? 0) > 0;
+  return transitionForward(env, id, 'receipt_confirmed');
 }
 
 /// Broadcast-but-unconfirmed forwards older than the cutoff — the cron

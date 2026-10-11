@@ -6,7 +6,8 @@ import { sendAlert } from '../alerts';
 import { writeAudit } from '../tenants/db';
 import { getTenantRail, legacyRail, listRailTenantIds, type TenantRail } from '../tenants/rail';
 import { makeConfirmDeps, settleConfirmedForward } from '../intents/confirm';
-import type { MoneriumForwardRow } from './db';
+import { transitionForward, type MoneriumForwardRow } from './db';
+import { stateSql } from './forwardStates';
 
 /// Theft detector (ADR 0019, phase 0). Every EURe that leaves a rail's
 /// receiving Safe must correspond to a forward we broadcast ourselves
@@ -308,7 +309,7 @@ export function makeOutflowWatchDeps(env: Env, rail: TenantRail): OutflowWatchDe
     hasUnhashedForward: async (to, amountWei) => {
       const row = await env.DB.prepare(
         `SELECT 1 AS hit FROM monerium_forwards
-          WHERE tx_hash IS NULL AND status = 'pending' AND created_at > ?
+          WHERE tx_hash IS NULL AND ${stateSql('broadcasting')} AND created_at > ?
             AND lower(target_address) = ? AND amount_wei = ? LIMIT 1`,
       ).bind(
         Math.floor(Date.now() / 1000) - UNHASHED_FORWARD_MAX_AGE_SECONDS,
@@ -359,17 +360,16 @@ export async function settleOwedOutflow(
   }
   const row = await env.DB.prepare(
     `SELECT * FROM monerium_forwards
-      WHERE tenant_id = ? AND status = 'pending' AND error = 'direct_owed' AND tx_hash IS NULL
+      WHERE tenant_id = ? AND ${stateSql('owed')} AND tx_hash IS NULL
         AND lower(target_address) = ? AND amount_wei = ?
       ORDER BY created_at ASC, id ASC LIMIT 1`,
   ).bind(tenantId, o.to.toLowerCase(), o.value.toString()).first<MoneriumForwardRow>();
   if (!row) return null;
-  const res = await env.DB.prepare(
-    `UPDATE monerium_forwards
-        SET status = 'submitted', tx_hash = ?, tx_log_index = ?, updated_at = ?
-      WHERE id = ? AND status = 'pending' AND tx_hash IS NULL`,
-  ).bind(o.txHash.toLowerCase(), o.logIndex ?? null, Math.floor(Date.now() / 1000), row.id).run();
-  if ((res.meta?.changes ?? 0) === 0) return null;
+  const moved = await transitionForward(env, row.id, 'owners_transfer', {
+    tx_hash: o.txHash.toLowerCase(),
+    tx_log_index: o.logIndex ?? null,
+  });
+  if (!moved) return null;
   // The tx is already past CONFIRMATION_LAG, so it is final: settle now.
   await settleConfirmedForward(makeConfirmDeps(env), { ...row, tx_hash: o.txHash.toLowerCase() });
   return { forwardId: row.id, sid: row.sid };
