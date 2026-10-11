@@ -23,7 +23,7 @@ import {
   pollForwardConfirmation,
   settleNonRoutedPaid,
 } from '../intents/confirm';
-import { emitForwardBlockedWebhook } from '../intents/outbound';
+import { emitCampaignContributionWebhook, emitForwardBlockedWebhook } from '../intents/outbound';
 import {
   authorizeForward,
   describeParkReason,
@@ -89,6 +89,9 @@ export interface ForwardDeps {
     actor: string;
     detail?: string | null;
   }): Promise<void>;
+  /// Direct mode D6: a contribution minted straight into a project Safe.
+  /// Optional: absent = no merchant event (the record is still written).
+  emitContribution?(args: Parameters<typeof emitCampaignContributionWebhook>[1]): Promise<void>;
   emitBlocked(args: {
     reason: string;
     orderId: string;
@@ -128,6 +131,7 @@ export function makeForwardDeps(env: Env, rail: TenantRail): ForwardDeps {
     publish: (sid) => publishIntentChange(env, sid),
     audit: (entry) => writeAudit(env, entry),
     emitBlocked: (args) => emitForwardBlockedWebhook(env, args),
+    emitContribution: (args) => emitCampaignContributionWebhook(env, args),
   };
 }
 
@@ -284,6 +288,81 @@ export async function handleForward(
         sender,
       });
     }
+    return;
+  }
+
+  // Direct mode D6: a sid-less `<chain>:0x<project Safe>` payment Monerium
+  // minted straight into the project. Record it as a contribution, done.
+  if (decision.action === 'direct_contribution') {
+    const id = await deps.insertForward({
+      orderId: order.id,
+      targetAddress: decision.target,
+      amountWei: '0',
+      amountCents,
+      sid: null,
+      memoPrefix: routing.prefix,
+      status: 'confirmed',
+      error: 'direct_contribution',
+    });
+    if (id === 0) {
+      console.log(`forward ${order.id} direct contribution already recorded`);
+      return;
+    }
+    console.log(`forward ${order.id} direct contribution → ${decision.campaignId} (${decision.target})`);
+    await safely(deps.emitContribution?.({
+      campaignId: decision.campaignId,
+      orderId: order.id,
+      amountCents,
+      currency: order.currency ?? 'eur',
+      targetAddress: decision.target,
+      forwardTxHash: null,
+      senderIban: sender.iban,
+      senderName: sender.name,
+      tenantId: decision.tenantId,
+    }) ?? Promise.resolve());
+    return;
+  }
+
+  // Direct mode D4: the order is this intent's, but the EURe sits in the
+  // tenant's main Safe (reference lost). The rail never signs, so it books
+  // the transfer as OWED: a live `pending` row (latches the order and the
+  // intent) without a tx. The outflow watcher settles it when the 2/3 owners
+  // send exactly this amount from the main Safe to the target.
+  if (decision.action === 'direct_owed') {
+    routing = { ...routing, sid: decision.sid, target: decision.target };
+    const claimed = await claimForward(deps, order, routing, claimSids, via, {
+      orderId: order.id,
+      targetAddress: decision.target,
+      amountWei: eurToWei(order.amount ?? '0').toString(),
+      amountCents,
+      status: 'pending',
+      error: 'direct_owed',
+    });
+    if (claimed.forwardId === 0) {
+      if (claimed.exhausted) {
+        await park(deps, { order, routing: memoRouting, amountCents, reason: 'no_routing_target',
+          tenantId: decision.tenantId, note: 'svi kandidati već preuzeti drugom uplatom' });
+        return;
+      }
+      console.log(`forward ${order.id} direct_owed already claimed by a concurrent delivery`);
+      return;
+    }
+    for (const other of claimSids ?? []) {
+      if (other !== claimed.sid) await safely(deps.publish?.(other) ?? Promise.resolve());
+    }
+    await safely(deps.publish?.(claimed.sid) ?? Promise.resolve());
+    console.log(`forward ${order.id} direct_owed → ${decision.target} sid=${claimed.sid}${via ? ` (${via})` : ''}`);
+    await safely(deps.alert(
+      `🧾 <b>Uplata povezana s projektom — treba ručni prijenos</b>\n` +
+        `order: <code>${order.id}</code> · iznos: <b>${order.amount} EUR</b>\n` +
+        `intent: <code>${claimed.sid}</code>${via ? ` (${via === 'auto' ? 'automatski po iznosu i vremenu' : 'ručno'})` : ''}\n` +
+        `novac je na glavnom Safeu <code>${deps.authorize.safeAddress ?? '-'}</code>\n` +
+        `2/3 vlasnika: prebaciti <b>točno ${order.amount} EURe</b> → <code>${decision.target}</code>.\n` +
+        `Rail prepoznaje taj prijenos sam i zatvara intent.` +
+        (ambiguousIntent
+          ? `\n⚠️ više intenata s istim iznosom i istom adresom — pripisivanje intentu je procjena`
+          : ''),
+    ));
     return;
   }
 
