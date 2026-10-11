@@ -106,7 +106,9 @@ INTENT_REQUIRE_TENANT_KEY = "0"
 #                       only touches the default tenant. ITalk never reads it.
 #   INTENT_SSE        — "1" serves GET /api/intents/:sid/stream as SSE; "0"
 #                       keeps the historical 404 (clients poll).
-MULTI_TENANT_RAIL = "0"
+# Mora ostati "1" u main: 9. 10. ga je deploy iz main vratio na "0" i ugasio
+# crosulja-staging. Sandbox tenanti (crosulja-staging, italk-sandbox) ovise o tome.
+MULTI_TENANT_RAIL = "1"
 INTENT_SSE = "1"
 
 # Stray payment resolver (src/monerium/strayResolver.ts). "1": a SEPA payment
