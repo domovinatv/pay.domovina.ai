@@ -62,3 +62,7 @@ app.*.map.json
 
 # GP spike local state (throwaway keys + JWTs)
 scripts/.gp-spike-state.json
+
+# funding-init: Monerium vjerodajnice po okruženju
+tools/funding/.env.*
+!tools/funding/.env.example
