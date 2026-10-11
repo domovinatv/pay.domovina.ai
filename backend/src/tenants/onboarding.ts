@@ -14,8 +14,10 @@ import {
   listRailTenantIds,
   moneriumBaseUrl,
   parseChain,
+  parseRailMode,
   railFromStoredRow,
   type RailChain,
+  type RailMode,
   type TenantRail,
   type TenantRailRow,
 } from './rail';
@@ -102,6 +104,8 @@ export interface RailInput {
   /// null = keep the stored one (only meaningful with a URL).
   outboundWebhookSecret: string | null;
   maxForwardCents: number | null;
+  /// Migration 0026. 'direct' = Monerium mints into project Safes, rail never signs.
+  mode: RailMode;
 }
 
 function optAddress(v: unknown): string | null | 'invalid' {
@@ -143,6 +147,8 @@ export function validateRailInput(
   if (outboundWebhookUrl && !outboundWebhookSecret && !existing?.outbound_webhook_secret_enc) {
     return { ok: false, error: 'outbound_webhook_secret_required' };
   }
+  const mode = parseRailMode(str(body.mode) || existing?.mode || 'forward');
+  if (!mode) return { ok: false, error: 'invalid_mode' };
   let maxForwardCents: number | null = null;
   if (body.max_forward_cents !== undefined && body.max_forward_cents !== null && body.max_forward_cents !== '') {
     const n = Number(body.max_forward_cents);
@@ -165,6 +171,7 @@ export function validateRailInput(
       outboundWebhookUrl,
       outboundWebhookSecret,
       maxForwardCents,
+      mode,
     },
   };
 }
@@ -221,8 +228,8 @@ export async function upsertRail(env: Env, tenantId: string, v: RailInput, exist
        (tenant_id, monerium_env, chain, auth_kind, client_id, client_secret_enc,
         profile_id, receiving_safe, roles_modifier, role_key, eure_contract, rpc_url,
         outbound_webhook_url, outbound_webhook_secret_enc, max_forward_cents,
-        verified_at, verify_report, created_at, updated_at)
-     VALUES (?1, ?2, ?3, 'client_credentials', ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, NULL, NULL, ?15, ?15)
+        verified_at, verify_report, created_at, updated_at, mode)
+     VALUES (?1, ?2, ?3, 'client_credentials', ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, NULL, NULL, ?15, ?15, ?16)
      ON CONFLICT(tenant_id) DO UPDATE SET
        monerium_env = excluded.monerium_env,
        chain = excluded.chain,
@@ -237,6 +244,7 @@ export async function upsertRail(env: Env, tenantId: string, v: RailInput, exist
        outbound_webhook_url = excluded.outbound_webhook_url,
        outbound_webhook_secret_enc = excluded.outbound_webhook_secret_enc,
        max_forward_cents = excluded.max_forward_cents,
+       mode = excluded.mode,
        verified_at = NULL,
        verify_report = NULL,
        updated_at = excluded.updated_at`,
@@ -257,6 +265,7 @@ export async function upsertRail(env: Env, tenantId: string, v: RailInput, exist
       outboundSecretEnc,
       v.maxForwardCents,
       t,
+      v.mode,
     )
     .run();
 }
@@ -283,6 +292,7 @@ export function redactRail(row: TenantRailRow): Record<string, unknown> {
     outbound_webhook_url: row.outbound_webhook_url,
     has_outbound_webhook_secret: Boolean(row.outbound_webhook_secret_enc),
     max_forward_cents: row.max_forward_cents,
+    mode: parseRailMode(row.mode) ?? row.mode,
     verified_at: row.verified_at,
     verify_report: row.verify_report ? (JSON.parse(row.verify_report) as unknown) : null,
     updated_at: row.updated_at,
@@ -387,6 +397,8 @@ export interface VerifyDeps {
   target(module: string): Promise<string>;
   balanceWei(address: string): Promise<bigint>;
   activeWhitelistCount(): Promise<number>;
+  /// Direct mode only: active campaigns (project Safes) of the tenant.
+  activeCampaignCount?(): Promise<number>;
 }
 
 const SAFE_ABI = parseAbi([
@@ -440,6 +452,14 @@ export function makeVerifyDeps(env: Env, tenantId: string, rail: Pick<TenantRail
         .first<{ n: number }>();
       return r?.n ?? 0;
     },
+    activeCampaignCount: async () => {
+      const r = await env.DB.prepare(
+        `SELECT COUNT(*) AS n FROM tenant_campaigns WHERE tenant_id = ? AND revoked_at IS NULL`,
+      )
+        .bind(tenantId)
+        .first<{ n: number }>();
+      return r?.n ?? 0;
+    },
   };
 }
 
@@ -465,6 +485,10 @@ export async function runVerify(
     }
   };
   const safe = row.receiving_safe;
+  // Direct mode (migration 0026): Monerium mints into project Safes and the
+  // rail never signs, so the signing path (Roles, role key, router gas, cap)
+  // is not part of the tenant's setup and is not checked.
+  const direct = parseRailMode(row.mode) === 'direct';
 
   await check('monerium_profile', async () => {
     const ids = await deps.authProfiles();
@@ -485,7 +509,7 @@ export async function runVerify(
     const code = await deps.getCode(safe);
     return code && code !== '0x' ? [true, 'Safe ima kod na lancu'] : [false, 'na adresi nema ugovora (nedeployan Safe)'];
   });
-  await check('roles_modifier', async () => {
+  if (!direct) await check('roles_modifier', async () => {
     if (!row.roles_modifier) return [false, 'roles_modifier nije upisan'];
     const [enabled, av, tg] = await Promise.all([
       deps.isModuleEnabled(safe, row.roles_modifier),
@@ -498,7 +522,7 @@ export async function runVerify(
   });
   // TD-05: any other module can move EURe out of the Safe without the role
   // (the theft detector would at least shout 🚨 module_unknown, but only after).
-  await check('only_module_is_roles', async () => {
+  if (!direct) await check('only_module_is_roles', async () => {
     if (!row.roles_modifier) return [false, 'roles_modifier nije upisan'];
     const modules = await deps.listModules(safe);
     const others = modules.filter((m) => !sameAddr(m, row.roles_modifier));
@@ -506,10 +530,10 @@ export async function runVerify(
       ? [true, 'jedini modul na Safeu je Roles modifier']
       : [false, `Safe ima i druge module: ${others.join(', ')} — ukloniti (disableModule) prije aktivacije`];
   });
-  await check('role_key', async () =>
+  if (!direct) await check('role_key', async () =>
     row.role_key ? [true, row.role_key] : [false, 'role_key nije upisan'],
   );
-  await check('router_gas', async () => {
+  if (!direct) await check('router_gas', async () => {
     if (!row.router_address || !hasRouterKey) return [false, 'router EOA nije generiran'];
     const bal = await deps.balanceWei(row.router_address);
     return bal >= MIN_ROUTER_GAS_WEI
@@ -521,11 +545,15 @@ export async function runVerify(
       ? [true, `pretplata ${row.webhook_subscription_id}`]
       : [false, 'webhook nije registriran (POST …/rail/webhook)'],
   );
-  await check('whitelist', async () => {
+  if (direct) await check('campaigns', async () => {
+    const n = deps.activeCampaignCount ? await deps.activeCampaignCount() : 0;
+    return n > 0 ? [true, `${n} aktivnih projekata (kampanja)`] : [false, 'tenant nema nijednu kampanju (Safe projekta)'];
+  });
+  if (!direct) await check('whitelist', async () => {
     const n = await deps.activeWhitelistCount();
     return n > 0 ? [true, `${n} aktivnih adresa`] : [false, 'whitelista tenanta je prazna'];
   });
-  await check('forward_cap', async () =>
+  if (!direct) await check('forward_cap', async () =>
     row.max_forward_cents
       ? [true, `< ${(row.max_forward_cents / 100).toFixed(2)} EUR po forwardu`]
       : [false, 'max_forward_cents nije upisan (mora odgovarati on-chain kapici iz batcha 007)'],

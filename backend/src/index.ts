@@ -19,7 +19,7 @@ import {
   recordMoneriumWebhookEvent,
 } from './monerium/db';
 import { handleMoneriumWebhook, makeWebhookDeps } from './monerium/webhookHandler';
-import { getTenantRail, isLegacyTenant, legacyRail, multiTenantEnabled } from './tenants/rail';
+import { getReferenceStyle, getTenantRail, isLegacyTenant, legacyRail, multiTenantEnabled } from './tenants/rail';
 import { mountAdminUi } from './admin/app';
 import { buildHpbOps, buildMoneriumOps } from './admin/opsRoutes';
 import { buildIntentApi, buildIntentStatus } from './intents/api';
@@ -282,7 +282,8 @@ app.get('/checkout/:sid', async (c) => {
   if (!intent) return c.text('intent not found', 404);
   const status = await buildIntentStatus(c.env, intent, c.executionCtx);
   const sepa = await getSepaDetails(c.env, intent.tenant_id ?? defaultTenantId(c.env));
-  return c.html(renderCheckoutPage(intent, status, sepa));
+  const style = await getReferenceStyle(c.env, intent.tenant_id);
+  return c.html(renderCheckoutPage(intent, status, sepa, style));
 });
 
 // Branded HTML dashboard at /admin (Basic Auth gated).

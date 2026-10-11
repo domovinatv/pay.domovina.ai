@@ -21,6 +21,18 @@ export const CHIADO_RPC_DEFAULT = 'https://rpc.chiadochain.net';
 
 export type RailChain = 'gnosis' | 'chiado';
 
+/// How the rail settles an intent (migration 0026):
+/// - 'forward': mint into receiving_safe, then a Roles-signed forward (ADR 0017).
+/// - 'direct': the payer's reference makes Monerium mint straight into the
+///   intent's target (a project Safe registered as a campaign). The rail only
+///   matches order → intent and never signs.
+export type RailMode = 'forward' | 'direct';
+
+export function parseRailMode(mode: string | null | undefined): RailMode | null {
+  if (mode === undefined || mode === null || mode === '' || mode === 'forward') return 'forward';
+  return mode === 'direct' ? 'direct' : null;
+}
+
 /// Everything `forwardViaSafe` needs to sign one forward. Empty strings mean
 /// "not configured" — forwardViaSafe refuses with `router_disabled: …`,
 /// exactly as it did when these were env vars.
@@ -55,6 +67,8 @@ export interface TenantRail {
   tenantId: string;
   /// True for the env-backed default tenant (ITalk).
   legacy: boolean;
+  /// Absent = 'forward' (the legacy rail and every pre-0026 row).
+  mode?: RailMode;
   monerium: MoneriumCreds;
   webhookSecret: string;
   /// Lowercase address the tenant's IBAN mints into. ITalk: env.SAFE_ADDRESS
@@ -138,6 +152,8 @@ export interface TenantRailRow {
   outbound_webhook_url: string | null;
   outbound_webhook_secret_enc: string | null;
   max_forward_cents: number | null;
+  /// Migration 0026; absent in fixtures written before it = 'forward'.
+  mode?: string;
   verified_at: number | null;
   verify_report: string | null;
   created_at: number;
@@ -166,7 +182,8 @@ export async function railFromRow(
 ): Promise<TenantRail | null> {
   const baseUrl = moneriumBaseUrl(row.monerium_env);
   const chain = parseChain(row.chain);
-  if (!baseUrl || !chain) return null;
+  const mode = parseRailMode(row.mode);
+  if (!baseUrl || !chain || !mode) return null;
   if (row.auth_kind !== 'client_credentials') {
     // 'oauth' is modelled (refresh_token_enc) but not built yet — see ADR
     // 0017 open question 1. Refuse rather than half-work.
@@ -177,6 +194,7 @@ export async function railFromRow(
   return {
     tenantId: row.tenant_id,
     legacy: false,
+    mode,
     monerium: {
       baseUrl,
       clientId: row.client_id,
@@ -193,7 +211,8 @@ export async function railFromRow(
       safe: row.receiving_safe,
       rolesModifier: row.roles_modifier ?? '',
       roleKey: row.role_key ?? '',
-      privateKey: row.router_key_enc ? await decrypt('router_key', row.router_key_enc) : '',
+      // A direct-mode rail never signs, so its router key is never even loaded.
+      privateKey: mode === 'forward' && row.router_key_enc ? await decrypt('router_key', row.router_key_enc) : '',
       paymentRegistry: '',
       multiSend: '',
     },
@@ -252,4 +271,40 @@ export async function listRailTenantIds(env: Env): Promise<string[]> {
       ORDER BY r.tenant_id`,
   ).all<{ tenant_id: string }>();
   return res.results.map((r) => r.tenant_id);
+}
+
+/// Payment reference for a direct-mode intent. Monerium mints to the address
+/// when the description STARTS with `<chain>:<address>` followed by a space
+/// (monerium-private.md „Usmjeravanje po memu"); the rail reads the sid from
+/// the same text (monerium/sid.ts).
+export function directReference(chain: RailChain, target: string, sid: string): string {
+  return `${chain}:${target.toLowerCase()} sid:${sid}`;
+}
+
+/// What an intent's payment reference looks like, without decrypting any
+/// secret (read on every status poll). Default tenant and tenants without a
+/// rail row: the `mpt:` reference, as before.
+export interface ReferenceStyle {
+  mode: RailMode;
+  chain: RailChain;
+}
+
+export async function getReferenceStyle(env: Env, tenantId: string | null): Promise<ReferenceStyle | null> {
+  if (!tenantId || isLegacyTenant(env, tenantId)) return null;
+  const row = await env.DB.prepare(`SELECT mode, chain FROM tenant_rail WHERE tenant_id = ?`)
+    .bind(tenantId)
+    .first<{ mode: string | null; chain: string }>();
+  if (!row) return null;
+  const mode = parseRailMode(row.mode);
+  const chain = parseChain(row.chain);
+  return mode && chain ? { mode, chain } : null;
+}
+
+export function intentReference(
+  style: ReferenceStyle | null,
+  intent: { target_address: string; sid: string },
+): string {
+  return style?.mode === 'direct'
+    ? directReference(style.chain, intent.target_address, intent.sid)
+    : `mpt:${intent.target_address}?sid=${intent.sid}`;
 }

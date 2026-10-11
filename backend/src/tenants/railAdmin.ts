@@ -114,6 +114,7 @@ export function mountRailAdmin(app: Hono<{ Bindings: Env }>): void {
         roles_modifier: v.value.rolesModifier,
         client_secret_changed: Boolean(v.value.clientSecret),
         max_forward_cents: v.value.maxForwardCents,
+        mode: v.value.mode,
       }),
     });
     const fresh = await loadTenantAndRail(c.env, id);

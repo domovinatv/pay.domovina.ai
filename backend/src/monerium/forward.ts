@@ -110,7 +110,11 @@ export function makeForwardDeps(env: Env, rail: TenantRail): ForwardDeps {
     getForwardByOrder: (orderId) => getForwardByOrder(env, orderId),
     insertForward: (args) => insertForward(env, { ...args, tenantId: rail.tenantId }),
     updateForward: (id, patch) => updateForward(env, id, patch),
-    forward: (args) => forwardViaSafe(rail.signer, args),
+    // A direct-mode rail never signs (its gate never answers 'forward'); this
+    // is the second lock, in case a future path forgets to ask the gate.
+    forward: rail.mode === 'direct'
+      ? async () => ({ ok: false, error: 'router_disabled: direct mode never signs' })
+      : (args) => forwardViaSafe(rail.signer, args),
     settleNonRoutedPaid: (args) => settleNonRoutedPaid(makeConfirmDeps(env), args),
     pollConfirmation: (fwd) => pollForwardConfirmation(makeConfirmDeps(env), fwd),
     alert: (text) => sendAlert(env, text),
@@ -247,14 +251,20 @@ export async function handleForward(
   // Memo targets the Safe itself: nothing to transfer, the mint already landed
   // where it should. `state=processed` means that mint is on-chain confirmed,
   // so 'paid' keys off it directly.
-  if (decision.action === 'self_noop') {
+  //
+  // Direct mode is the same bookkeeping: Monerium minted into the intent's
+  // project Safe because the reference named it, so the rail only records a
+  // confirmed zero-value forward and settles the intent.
+  if (decision.action === 'self_noop' || decision.action === 'direct_settle') {
+    const direct = decision.action === 'direct_settle';
+    if (direct) routing = { ...routing, sid: decision.sid, target: decision.target };
     const claimed = await claimForward(deps, order, routing, claimSids, via, {
       orderId: order.id,
       targetAddress: routing.target!,
       amountWei: '0',
       amountCents,
       status: 'confirmed',
-      error: 'self_target_noop',
+      error: direct ? 'direct_mint' : 'self_target_noop',
     });
     if (claimed.forwardId === 0) {
       if (claimed.exhausted) {
