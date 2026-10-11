@@ -20,6 +20,36 @@ This document captures the **full Monerium Private API contract** as it applies 
 
 Wrangler env var: `MONERIUM_BASE_URL`.
 
+## Appovi, profili i MPT tenanti
+
+**Pravilo: jedan Monerium profil po okruženju = najviše jedan MPT tenant.**
+
+| Okruženje | Monerium račun | App | MPT tenant |
+|---|---|---|---|
+| Production | ITalk d.o.o. | `pay.domovina.ai` | `italk` (konfiguracija iz `env`, bez reda u `tenant_rail`) |
+| Sandbox | ITalk sandbox | `italk_domovina_projekti_sandbox` | `italk-sandbox` (red u `tenant_rail`, Chiado) |
+
+Imena appova ne moraju biti konzistentna; rail ih nigdje ne čita.
+
+Na istom računu smije postojati više appova (Private app = par
+`client_id`/`client_secret`), npr. za drugi sustav. Svi dijele isti profil, isti
+IBAN, iste povezane adrese i ordere. Svaki app ima svoju webhook pretplatu, pa
+**za istu uplatu stiže po jedan webhook za svaki app.**
+
+Zato drugi app istog profila **ne registriramo kao drugog MPT tenanta**. Da
+jest, order bi dobio `tenant_id` onoga čiji webhook stigne prvi (upsert ga ne
+prepisuje), a drugi tenant bi uplatu parkirao kao `tenant_mismatch` s lažnim
+alarmom. Novac bi i tada otišao samo jednom (`ux_forwards_live`), ali
+atribucija i alarmi ne bi bili točni.
+
+Provodi se u kodu: migracija `0025` (UNIQUE na `tenant_rail.profile_id`) i
+`PUT /admin/api/tenants/:id/rail` vraća `409 profile_in_use` ako profil već ima
+drugi tenant ili je to ITalkov produkcijski profil (`MONERIUM_PROFILE_ID`).
+
+Drugi app za drugi sustav je u redu: taj sustav prima svoju kopiju webhooka i
+sam ignorira uplate koje nisu njegove (po referenci). Ako drugoj namjeni treba
+**zaseban IBAN**, treba novi Monerium račun, ne novi app.
+
 ## Required headers on every API request
 
 ```

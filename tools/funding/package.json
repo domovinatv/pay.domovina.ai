@@ -1,0 +1,9 @@
+{
+  "name": "mpt-funding-tools",
+  "private": true,
+  "type": "module",
+  "description": "funding-init: Safe + Monerium + MPT kampanja po projektu (sandbox/Chiado → prod/Gnosis)",
+  "dependencies": {
+    "viem": "^2.50.4"
+  }
+}
