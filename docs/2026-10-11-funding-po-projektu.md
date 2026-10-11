@@ -72,7 +72,7 @@ Zamke:
 | Monerium račun | sandbox, profil `22ac32be-3573-11f1-a66a-a6312d42aaad`, app `italk_domovina_projekti_sandbox` |
 | Vjerodajnice + deployer ključ | `tools/funding/.env.sandbox` (gitignored, chmod 600) |
 | Deployer EOA | `0x99150f78B30875323559B2C9aE232b5AB6464c65` (~0.04 xDAI) |
-| MPT tenant | `italk-sandbox`, status **onboarding** |
+| MPT tenant | `italk-sandbox`, status **active**, `tenant_rail.mode = 'direct'` |
 | Glavni Safe (IBAN `EE51 4996 0969 7740 7661`) | `0xe2e21755d3F576F090Ecda1D830F3fDA865f37fF` (`italk-sandbox:main:v2`) |
 | Router EOA (nepotreban za opciju 2) | `0x2964eEb493a386eC9A249570da3a70527a74D26B` (0.06 xDAI) |
 | Webhook | `/api/monerium/webhook/t/italk-sandbox`, pretplata `ce5223ef-…` |
@@ -80,21 +80,38 @@ Zamke:
 | Testni Safe | `0xfD07de234B8b1EE2a3Dca787Fc87232ce21471C2` (`project:test-link-1`) |
 | Napušteni Safe | `0x93BFfFB0D6a255feC3256F7f4743fef4df344D6b` (bez potpisane poruke, prazan) |
 
-`verify` za `italk-sandbox`: prolaze profil, IBAN, Safe, plin, webhook, whitelista;
-ne prolaze Roles, role key, kapica (opcija 2 ih ne treba, vidi otvorene stavke).
+`verify` za `italk-sandbox` u načinu direct prolazi (profil, IBAN → glavni Safe, Safe
+deployan, webhook, 1 kampanja); Roles, role key, plin routera i kapica se ne provjeravaju.
 
 Usput: prihvatni Safe tenanta `crosulja-staging` (`0xc857…`) na Chiadu **nema koda**.
 
+## Način „direct" na railu (PR #85, deploy 11. 10. 2026.)
+
+`tenant_rail.mode = 'direct'` (migracija 0026), postavlja se kroz `PUT /admin/api/tenants/:id/rail`
+s poljem `mode` (ostala polja poslati kakva jesu, jer izostavljeno polje postaje NULL).
+
+- `POST /api/intents`: cilj mora biti aktivna kampanja tenanta (inače `403 target_not_campaign`).
+  `memo`, `epc_qr_data` i checkout nose `<chain>:0x<safe> sid:<sid>`, gdje je chain `chiado` na
+  sandboxu i `gnosis` na produkciji. HUB3 ostaje bez sida.
+- Webhook: order mintan na cilj intenta dobiva forward red `confirmed`, `error = direct_mint`,
+  `amount_wei = 0`, a intent je `paid`. Inače park: `not_minted_to_target` (npr. Revolut
+  izgubio referencu, novac na glavnom Safeu), `target_mismatch`, `missing_sid`, `unknown_sid`,
+  `tenant_mismatch`.
+- Rail u ovom načinu nikad ne potpisuje: router ključ se ne učitava.
+- Checkout ima okvir s referencom, gumb „Kopiraj referencu" i uputu za Revolut.
+
+Dokaz (sandbox, 11. 10. 2026.): intent `3qtbx28szhce` (7 €, Karta Hrvatske), uplata
+`POST /api/treasury/fund` s referencom intenta → order `18a91cb6-…`, Karta 17,29 → 24,29 EURe,
+glavni Safe ostao 15,15, intent `paid`/`settled` za ~20 s, forward #93 `direct_mint`, bez tx-a.
+Javni ključ `pk_` za `italk-sandbox` izdan je u adminu (label „karta-hrvatske test direct"),
+nije nigdje spremljen; za novi test izdati novi ili ga opozvati.
+
 ## Otvorene stavke
 
-1. Rail u načinu „direct": intent vraća `gnosis:0x<safe> sid:<sid>` (EPC i checkout);
-   intent se zatvara kad je `order.address` cilj intenta, bez forwarda i bez alarma
-   `mint_address_mismatch`; `verify`/`activate` za takvog tenanta ne traže Roles.
-2. Checkout: gumb „kopiraj referencu" + uputa za Revolut (nakon skeniranja QR-a
-   ostavlja Reference prazno).
-3. PBZ je instant uplatu na EE IBAN odbio (ref. `20261011001286300522`, opis netaknut,
+1. ~~Rail u načinu „direct"~~ i ~~gumb „kopiraj referencu"~~: gotovo, PR #85 (vidi niže).
+2. PBZ je instant uplatu na EE IBAN odbio (ref. `20261011001286300522`, opis netaknut,
    razlog nepoznat). Svih 78 dosadašnjih dolaznih uplata je iz Revoluta (LT). Ponoviti
    kao običnu SEPA s adresom primatelja ili pitati PBZ.
-4. Prod: `funding-init --env prod` za projekte (Safe 1.5.0, SignMessageLib adresa za
+3. Prod: `funding-init --env prod` za projekte (Safe 1.5.0, SignMessageLib adresa za
    1.5.0 još nije upisana u `lib.mjs`), deployer s xDAI na Gnosisu.
-5. Katalog: polje `funding` na kartici (`realtime-presentation`), gumb „Podrži".
+4. Katalog: polje `funding` na kartici (`realtime-presentation`), gumb „Podrži".
