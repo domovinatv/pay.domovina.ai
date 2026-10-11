@@ -77,6 +77,7 @@ Zamke:
 | Router EOA (nepotreban za opciju 2) | `0x2964eEb493a386eC9A249570da3a70527a74D26B` (0.06 xDAI) |
 | Webhook | `/api/monerium/webhook/t/italk-sandbox`, pretplata `ce5223ef-…` |
 | Projekt Karta Hrvatske | `0xb3438D62c7B968806a7E3D78fc4b31Ee8F738720`, kampanja `domovinatv-karta-hrvatske` |
+| Projekt Stranke | `0x346230f2748745a1D19550969f0b239F3D2b5896`, kampanja `domovinatv-stranke-domovina-ai` (12. 10.) |
 | Testni Safe | `0xfD07de234B8b1EE2a3Dca787Fc87232ce21471C2` (`project:test-link-1`) |
 | Napušteni Safe | `0x93BFfFB0D6a255feC3256F7f4743fef4df344D6b` (bez potpisane poruke, prazan) |
 
@@ -106,6 +107,13 @@ glavni Safe ostao 15,15, intent `paid`/`settled` za ~20 s, forward #93 `direct_m
 Javni ključ `pk_` za `italk-sandbox` izdan je u adminu (label „karta-hrvatske test direct"),
 nije nigdje spremljen; za novi test izdati novi ili ga opozvati.
 
+Drugi projekt (12. 10. 2026., `domovinatv-stranke-domovina-ai`): `funding-init` → kampanja →
+ime u Moneriumu → intent `w526x3mrsqu7` (3,33 €) → mint ravno u Safe projekta, intent `settled`,
+forward #94 `direct_mint`. Intent na adresu koja nije kampanja dobiva `403 target_not_campaign`.
+Uplata bez reference (memo „Donacija", 2,27 €, intent `qygy3ghbbua3`) završila je na glavnom
+Safeu (15,15 → 17,42). Intent je ostao neplaćen, a forward #95 je `blocked / not_minted_to_target`
+s alarmom. Takvu uplatu operater ručno prebacuje u Safe projekta.
+
 ## Otvorene stavke
 
 1. ~~Rail u načinu „direct"~~ i ~~gumb „kopiraj referencu"~~: gotovo, PR #85 (vidi niže).
@@ -115,3 +123,8 @@ nije nigdje spremljen; za novi test izdati novi ili ga opozvati.
 3. Prod: `funding-init --env prod` za projekte (Safe 1.5.0, SignMessageLib adresa za
    1.5.0 još nije upisana u `lib.mjs`), deployer s xDAI na Gnosisu.
 4. Katalog: polje `funding` na kartici (`realtime-presentation`), gumb „Podrži".
+5. Admin: opoziv API ključa nije moguć kroz API, jer `GET …/keys` vraća samo `key_hash_short`, a
+   `DELETE …/keys/:keyHash` traži puni hash. Testni `pk_` ključ „karta-hrvatske test direct" za
+   `italk-sandbox` zato je još aktivan.
+6. `funding-init` korak 5b u nazivu spominje „kampanja + whitelista", ali upisuje samo kampanju
+   (za način direct je to dovoljno).
