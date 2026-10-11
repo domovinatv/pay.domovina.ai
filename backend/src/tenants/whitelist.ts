@@ -1,6 +1,6 @@
 import type { Env } from '../types';
 import type { RoutingTarget } from '../monerium/sid';
-import { getCampaign, getTenant, isAddressWhitelisted } from './db';
+import { findCampaignBySafe, getCampaign, getTenant, isAddressWhitelisted } from './db';
 import { getIntent } from '../intents/db';
 import type { TenantRail } from './rail';
 
@@ -54,6 +54,13 @@ export type ForwardDecision =
   /// Direct mode: Monerium already minted into the intent's target. Settle the
   /// intent, move nothing.
   | { action: 'direct_settle'; tenantId: string; sid: string; target: string; reason?: undefined }
+  /// Direct mode, D4: the order belongs to this intent but Monerium minted into
+  /// the tenant's main Safe (reference lost, e.g. Revolut). The rail cannot
+  /// sign, so the transfer main Safe → target is owed by the 2/3 owners.
+  | { action: 'direct_owed'; tenantId: string; sid: string; target: string; reason?: undefined }
+  /// Direct mode, D6: `<chain>:0x<campaign Safe>` without a sid — Monerium
+  /// minted straight into a registered project Safe. A contribution, no intent.
+  | { action: 'direct_contribution'; tenantId: string; campaignId: string; target: string; reason?: undefined }
   | { action: 'park'; tenantId: string | null; reason: ParkReason };
 
 /// Injected lookups — keeps the decision unit-testable without D1
@@ -90,6 +97,8 @@ export interface AuthorizeDeps {
   maxForwardCents: number | null;
   /// Rail mode (migration 0026). Absent = 'forward'.
   mode?: 'forward' | 'direct';
+  /// Direct mode: the tenant's active campaign whose Safe is `safe`.
+  getCampaignBySafe?(tenantId: string, safe: string): Promise<{ campaign_id: string } | null>;
 }
 
 /// Facts about the order itself (as opposed to its routing memo).
@@ -129,6 +138,10 @@ export function makeAuthorizeDeps(env: Env, rail: TenantRail): AuthorizeDeps {
     requireMintAt: rail.legacy && env.LEGACY_REQUIRE_MINT_AT !== '1' ? null : rail.receivingSafe,
     maxForwardCents: rail.maxForwardCents,
     mode: rail.mode ?? 'forward',
+    getCampaignBySafe: async (tenantId, safe) => {
+      const row = await findCampaignBySafe(env, tenantId, safe);
+      return row ? { campaign_id: row.campaign_id } : null;
+    },
   };
 }
 
@@ -238,6 +251,23 @@ async function authorizeDirect(
 ): Promise<ForwardDecision> {
   const observed = routing.target ?? routing.diagnosticTarget;
   if (!routing.sid) {
+    // D6: the payer named a project Safe without a sid and Monerium minted
+    // exactly there — the money is already where it belongs.
+    if (observed && eq(facts?.mintAddress, observed) && deps.getCampaignBySafe) {
+      const campaign = await deps.getCampaignBySafe(deps.railTenantId, observed);
+      if (campaign) {
+        const status = await deps.getTenantStatus(deps.railTenantId);
+        if (status !== 'active') {
+          return { action: 'park', tenantId: deps.railTenantId, reason: status === null ? 'tenant_unknown' : 'tenant_suspended' };
+        }
+        return {
+          action: 'direct_contribution',
+          tenantId: deps.railTenantId,
+          campaignId: campaign.campaign_id,
+          target: observed.toLowerCase(),
+        };
+      }
+    }
     return {
       action: 'park',
       tenantId: deps.railTenantId,
@@ -252,13 +282,20 @@ async function authorizeDirect(
   if (observed && !eq(observed, intent.target_address)) {
     return { action: 'park', tenantId, reason: 'target_mismatch' };
   }
-  if (!eq(facts?.mintAddress, intent.target_address)) {
+  const atTarget = eq(facts?.mintAddress, intent.target_address);
+  // D4: minted into the tenant's main Safe — still ours, the move is owed.
+  // Anywhere else is not a Safe we know, so it parks.
+  const atMain = !atTarget && eq(facts?.mintAddress, deps.safeAddress);
+  if (!atTarget && !atMain) {
     return { action: 'park', tenantId, reason: 'not_minted_to_target' };
   }
   const status = await deps.getTenantStatus(tenantId);
   if (status === null) return { action: 'park', tenantId, reason: 'tenant_unknown' };
   if (status !== 'active') return { action: 'park', tenantId, reason: 'tenant_suspended' };
-  return { action: 'direct_settle', tenantId, sid: routing.sid, target: intent.target_address.toLowerCase() };
+  const target = intent.target_address.toLowerCase();
+  return atTarget
+    ? { action: 'direct_settle', tenantId, sid: routing.sid, target }
+    : { action: 'direct_owed', tenantId, sid: routing.sid, target };
 }
 
 /// Human-readable one-liner for alerts and the admin UI.

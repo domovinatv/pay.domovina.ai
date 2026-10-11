@@ -5,6 +5,8 @@ import type { Env } from '../types';
 import { sendAlert } from '../alerts';
 import { writeAudit } from '../tenants/db';
 import { getTenantRail, legacyRail, listRailTenantIds, type TenantRail } from '../tenants/rail';
+import { makeConfirmDeps, settleConfirmedForward } from '../intents/confirm';
+import type { MoneriumForwardRow } from './db';
 
 /// Theft detector (ADR 0019, phase 0). Every EURe that leaves a rail's
 /// receiving Safe must correspond to a forward we broadcast ourselves
@@ -58,6 +60,8 @@ export interface Outflow {
   blockNumber: bigint;
   to: string;
   value: bigint;
+  /// Log index of the Transfer inside the tx — identifies one leg of a batch.
+  logIndex?: number;
 }
 
 export interface OutflowWatchDeps {
@@ -70,6 +74,10 @@ export interface OutflowWatchDeps {
   isKnownForwardTx(txHash: string): Promise<boolean>;
   /// A forward row to `to` for `amountWei` is still waiting for its tx hash.
   hasUnhashedForward(to: string, amountWei: string): Promise<boolean>;
+  /// Direct-mode rails only (D4): if this owner-signed outflow is exactly an
+  /// owed transfer (main Safe → project Safe, same amount), consume that row
+  /// and settle its intent. Null = no owed row matches.
+  settleOwed?(o: Outflow): Promise<{ forwardId: number; sid: string | null } | null>;
   getCursor(): Promise<bigint | null>;
   setCursor(block: bigint): Promise<void>;
   alert(text: string): Promise<void>;
@@ -90,7 +98,8 @@ export interface SafeExec {
   viaOwners: boolean;
 }
 
-export type OutflowVerdict = 'known' | 'role_unknown' | 'role_unhashed' | 'module_unknown' | 'other';
+export type OutflowVerdict =
+  | 'known' | 'owed_settled' | 'role_unknown' | 'role_unhashed' | 'module_unknown' | 'other';
 
 export async function watchSafeOutflows(
   deps: OutflowWatchDeps,
@@ -132,6 +141,14 @@ export async function watchSafeOutflows(
   for (const o of outflows) {
     const verdict = await classify(deps, w, o);
     if (verdict === 'known') continue;
+    if (verdict === 'owed_settled') {
+      await safely(deps.alert(
+        `✅ <b>Ručni prijenos prepoznat — intent zatvoren</b>\n` +
+          `tenant: <code>${w.tenantId}</code> · ${formatEure(o.value)} EURe → <code>${o.to}</code>\n` +
+          `tx: <code>${o.txHash}</code>`,
+      ));
+      continue;
+    }
     flagged++;
     await safely(deps.alert(alertText(w, o, verdict)));
     await safely(deps.audit({
@@ -154,6 +171,12 @@ export async function classify(
   w: WatchedSafe,
   o: Outflow,
 ): Promise<OutflowVerdict> {
+  // D4 first: one owners' batch may pay several owed rows, and once the first
+  // leg wrote its tx hash `isKnownForwardTx` would hide the others.
+  if (deps.settleOwed) {
+    const exec = await deps.safeExecEvents(o.txHash);
+    if (exec.viaOwners && exec.viaModules.length === 0 && (await deps.settleOwed(o))) return 'owed_settled';
+  }
   if (await deps.isKnownForwardTx(o.txHash)) return 'known';
   const exec = await deps.safeExecEvents(o.txHash);
   if (exec.viaModules.includes(w.rolesModifier.toLowerCase())) {
@@ -269,6 +292,7 @@ export function makeOutflowWatchDeps(env: Env, rail: TenantRail): OutflowWatchDe
         blockNumber: l.blockNumber ?? 0n,
         to: (l.args.to ?? '').toLowerCase(),
         value: l.args.value ?? 0n,
+        logIndex: l.logIndex ?? undefined,
       }));
     },
     safeExecEvents: async (txHash) => {
@@ -293,6 +317,7 @@ export function makeOutflowWatchDeps(env: Env, rail: TenantRail): OutflowWatchDe
       ).first<{ hit: number }>();
       return row !== null;
     },
+    settleOwed: rail.mode === 'direct' ? (o) => settleOwedOutflow(env, rail.tenantId, o) : undefined,
     getCursor: async () => {
       const row = await env.DB.prepare(
         `SELECT last_block FROM chain_watch_cursor WHERE key = ?`,
@@ -315,6 +340,39 @@ export function makeOutflowWatchDeps(env: Env, rail: TenantRail): OutflowWatchDe
       detail: JSON.stringify(detail),
     }),
   };
+}
+
+/// D4: match an owners' transfer to the oldest owed row with the same target
+/// and exact amount, move it pending → submitted (with the tx), then settle
+/// through the one settlement path (paid flip + webhooks, single-fire).
+/// A leg that already consumed a row (rescan after a crash) matches nothing.
+export async function settleOwedOutflow(
+  env: Env,
+  tenantId: string,
+  o: Outflow,
+): Promise<{ forwardId: number; sid: string | null } | null> {
+  if (o.logIndex !== undefined) {
+    const used = await env.DB.prepare(
+      `SELECT 1 AS hit FROM monerium_forwards WHERE lower(tx_hash) = ? AND tx_log_index = ? LIMIT 1`,
+    ).bind(o.txHash.toLowerCase(), o.logIndex).first<{ hit: number }>();
+    if (used) return null;
+  }
+  const row = await env.DB.prepare(
+    `SELECT * FROM monerium_forwards
+      WHERE tenant_id = ? AND status = 'pending' AND error = 'direct_owed' AND tx_hash IS NULL
+        AND lower(target_address) = ? AND amount_wei = ?
+      ORDER BY created_at ASC, id ASC LIMIT 1`,
+  ).bind(tenantId, o.to.toLowerCase(), o.value.toString()).first<MoneriumForwardRow>();
+  if (!row) return null;
+  const res = await env.DB.prepare(
+    `UPDATE monerium_forwards
+        SET status = 'submitted', tx_hash = ?, tx_log_index = ?, updated_at = ?
+      WHERE id = ? AND status = 'pending' AND tx_hash IS NULL`,
+  ).bind(o.txHash.toLowerCase(), o.logIndex ?? null, Math.floor(Date.now() / 1000), row.id).run();
+  if ((res.meta?.changes ?? 0) === 0) return null;
+  // The tx is already past CONFIRMATION_LAG, so it is final: settle now.
+  await settleConfirmedForward(makeConfirmDeps(env), { ...row, tx_hash: o.txHash.toLowerCase() });
+  return { forwardId: row.id, sid: row.sid };
 }
 
 async function kvClaimOnce(env: Env, key: string, ttlSeconds: number): Promise<boolean> {
@@ -342,7 +400,9 @@ export async function watchAllRailOutflows(env: Env, nowMs = Date.now()): Promis
   const hourly = Math.floor(nowMs / 120_000) % 30 === 0;
   for (const rail of rails) {
     const s = rail.signer;
-    if (!s.safe || !s.rolesModifier || !s.eureContract || !s.rpcUrl) continue;
+    // A direct rail has no Roles modifier but its main Safe is watched all the
+    // same: every outflow is either an owed transfer (D4) or unexplained.
+    if (!s.safe || (!s.rolesModifier && rail.mode !== 'direct') || !s.eureContract || !s.rpcUrl) continue;
     const failKey = `watch:fail:${rail.tenantId}`;
     try {
       const r = await watchSafeOutflows(makeOutflowWatchDeps(env, rail), {

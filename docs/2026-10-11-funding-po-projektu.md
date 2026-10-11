@@ -114,6 +114,23 @@ Uplata bez reference (memo „Donacija", 2,27 €, intent `qygy3ghbbua3`) završ
 Safeu (15,15 → 17,42). Intent je ostao neplaćen, a forward #95 je `blocked / not_minted_to_target`
 s alarmom. Takvu uplatu operater ručno prebacuje u Safe projekta.
 
+## Uplata bez reference (D4) i trajni QR projekta (D6), 12. 10. 2026.
+
+- **D4:** opis je izgubljen (Revolut) ili adresa nije prošla Monerium pravilo, pa je mint
+  sletio na glavni Safe. Ako stray resolver (ili sid iz opisa) nađe intent, uplata se veže uz
+  njega kao **dugovani prijenos**: forward red `pending`, `error = direct_owed`,
+  `amount_wei` = iznos ordera, bez tx-a. Alarm 🧾 daje točnu uputu: 2/3 vlasnika prebacuju
+  točno taj iznos s glavnog Safea na Safe projekta. Detektor odljeva (cron, 2 min) prepozna
+  prijenos koji su potpisali vlasnici, s tim primateljem i tim iznosom, pa zatvori red
+  (`confirmed`, s tx-om i `tx_log_index`) i intent (paid + webhook), uz ✅ alarm. Jedan
+  batch može platiti više redova (redom, najstariji prvo, jedan leg po redu). Iznos mora biti
+  točan; drugačiji iznos ostaje ℹ️ „mimo raila".
+  Kad resolver nije siguran (više ciljeva, nema kandidata), uplata se parkira s alarmom kao
+  prije, a operater može napraviti ručni reroute, koji također završava kao `direct_owed`.
+- **D6:** opis `<chain>:0x<Safe projekta>` bez sida, a Monerium mintao točno tamo → forward
+  red `confirmed`, `error = direct_contribution`, doprinos kampanji (webhook ako tenant ima
+  endpoint), bez parka i bez alarma. Safe koji nije kampanja ostaje `missing_sid`.
+
 ## Otvorene stavke
 
 1. ~~Rail u načinu „direct"~~ i ~~gumb „kopiraj referencu"~~: gotovo, PR #85 (vidi niže).
@@ -126,5 +143,3 @@ s alarmom. Takvu uplatu operater ručno prebacuje u Safe projekta.
 5. Admin: opoziv API ključa nije moguć kroz API, jer `GET …/keys` vraća samo `key_hash_short`, a
    `DELETE …/keys/:keyHash` traži puni hash. Testni `pk_` ključ „karta-hrvatske test direct" za
    `italk-sandbox` zato je još aktivan.
-6. `funding-init` korak 5b u nazivu spominje „kampanja + whitelista", ali upisuje samo kampanju
-   (za način direct je to dovoljno).

@@ -107,7 +107,9 @@ describe('direct mode: webhook order settles its intent without a forward', () =
   });
 
   it.each([
-    ['payer dropped the reference: minted to the main Safe', { address: MAIN, memo: `sid:${SID}` }, 'not_minted_to_target'],
+    // behavior-change (D4): minted to the MAIN Safe is now `direct_owed`; only
+    // a mint at an address that is neither the target nor the main Safe parks.
+    ['minted at an address that is neither the target nor the main Safe', { address: OTHER, memo: `sid:${SID}` }, 'not_minted_to_target'],
     ['memo names another Safe than the intent', { memo: `chiado:${OTHER} sid:${SID}`, address: OTHER }, 'target_mismatch'],
     ['address without sid', { memo: `chiado:${PROJECT}` }, 'missing_sid'],
     ['unknown sid', { memo: `chiado:${PROJECT} sid:zzzzzzzzzzzz` }, 'unknown_sid'],
