@@ -98,6 +98,9 @@ export function mountRailAdmin(app: Hono<{ Bindings: Env }>): void {
     if (!body) return c.json({ error: 'invalid_json' }, 400);
     const v = validateRailInput(body, row);
     if (!v.ok) return c.json({ error: v.error }, 400);
+    if (await profileTakenByOther(c.env, id, v.value.profileId)) {
+      return c.json({ error: 'profile_in_use' }, 409);
+    }
     await upsertRail(c.env, id, v.value, row);
     await writeAudit(c.env, {
       tenantId: id,
@@ -199,4 +202,14 @@ export function mountRailAdmin(app: Hono<{ Bindings: Env }>): void {
       return c.json({ ok: true, tenant_id: id, status: next.status });
     });
   }
+}
+
+/// Jedan Monerium profil smije imati samo jedan tenant (migracija 0025), a
+/// profil ITalka (env, bez reda u tenant_rail) ne smije nijedan drugi.
+async function profileTakenByOther(env: Env, tenantId: string, profileId: string): Promise<boolean> {
+  if (env.MONERIUM_PROFILE_ID && env.MONERIUM_PROFILE_ID === profileId) return true;
+  const other = await env.DB.prepare(
+    'SELECT tenant_id FROM tenant_rail WHERE profile_id = ? AND tenant_id != ?',
+  ).bind(profileId, tenantId).first<{ tenant_id: string }>();
+  return other !== null;
 }
