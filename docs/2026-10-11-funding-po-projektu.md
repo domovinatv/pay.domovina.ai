@@ -131,6 +131,8 @@ s alarmom. Takvu uplatu operater ručno prebacuje u Safe projekta.
   red `confirmed`, `error = direct_contribution`, doprinos kampanji (webhook ako tenant ima
   endpoint), bez parka i bez alarma. Safe koji nije kampanja ostaje `missing_sid`.
 
+Sve kombinacije opisa i mjesta minta, s pripadnim prijelazima: [state-machines.md](state-machines.md).
+
 ## Otvorene stavke
 
 1. ~~Rail u načinu „direct"~~ i ~~gumb „kopiraj referencu"~~: gotovo, PR #85 (vidi niže).

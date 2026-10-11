@@ -6,7 +6,7 @@ import {
   confirmForwardOnce,
   getMoneriumOrder,
   listSubmittedForwardsOlderThan,
-  updateForward,
+  transitionForward,
 } from '../monerium/db';
 import { getForwardStatus, type ForwardTxStatus } from '../router/safe';
 import { sendAlert } from '../alerts';
@@ -116,7 +116,10 @@ export function makeConfirmDeps(env: Env): ConfirmDeps {
   return {
     getForwardStatus: (txHash, tenantId) => getForwardStatus(env, txHash, tenantId ?? null),
     confirmForwardOnce: (id) => confirmForwardOnce(env, id),
-    markForwardFailed: (id, error) => updateForward(env, id, { status: 'failed', error }),
+    // Only a `submitted` row can fail on-chain (revert / dropped).
+    markForwardFailed: async (id, error) => {
+      await transitionForward(env, id, 'receipt_failed', { error });
+    },
     getOrder: (orderId) => getMoneriumOrder(env, orderId),
     getIntent: (sid) => getIntent(env, sid),
     markIntentPaid: (sid, args) => markIntentPaid(env, sid, args),
