@@ -380,6 +380,31 @@ export async function revokeApiKey(
   return (res.meta?.changes ?? 0) > 0;
 }
 
+/// Length of the public key id shown by GET …/keys (a prefix of the sha256).
+export const KEY_ID_LEN = 12;
+
+/// Which stored key a revoke names: the full sha256 or the id from the
+/// listing (its first KEY_ID_LEN hex chars), within ONE tenant's active keys.
+/// The listing never shows the full hash, so the id is what an operator has.
+export async function resolveApiKeyRef(
+  env: Env,
+  tenantId: string,
+  ref: string,
+): Promise<{ keyHash: string } | { error: 'invalid_key_ref' | 'not_found_or_already_revoked' | 'ambiguous_key_ref' }> {
+  const r = ref.trim().toLowerCase().replace(/…$/, '');
+  if (!/^[0-9a-f]+$/.test(r) || (r.length !== 64 && r.length !== KEY_ID_LEN)) return { error: 'invalid_key_ref' };
+  const rows = await env.DB.prepare(
+    `SELECT key_hash FROM tenant_api_keys
+      WHERE tenant_id = ? AND revoked_at IS NULL AND substr(key_hash, 1, ?) = ?
+      LIMIT 2`,
+  )
+    .bind(tenantId, r.length, r)
+    .all<{ key_hash: string }>();
+  if (rows.results.length === 0) return { error: 'not_found_or_already_revoked' };
+  if (rows.results.length > 1) return { error: 'ambiguous_key_ref' };
+  return { keyHash: rows.results[0].key_hash };
+}
+
 export interface AuditEntry {
   tenantId: string | null;
   action: string;

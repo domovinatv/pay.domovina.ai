@@ -14,6 +14,8 @@ import {
   listCampaigns,
   listPayoutAddresses,
   listTenants,
+  KEY_ID_LEN,
+  resolveApiKeyRef,
   revokeApiKey,
   revokeCampaign,
   revokePayoutAddress,
@@ -180,7 +182,9 @@ export function mountTenantAdmin(app: Hono<{ Bindings: Env }>): void {
     return c.json({
       tenant_id: c.req.param('id'),
       keys: rows.map((k) => ({
-        key_hash_short: `${k.key_hash.slice(0, 12)}…`,
+        // `id` is what DELETE …/keys/:ref takes; the full hash is never shown.
+        id: k.key_hash.slice(0, KEY_ID_LEN),
+        key_hash_short: `${k.key_hash.slice(0, KEY_ID_LEN)}…`,
         kind: k.kind,
         label: k.label,
         created_at: k.created_at,
@@ -216,18 +220,24 @@ export function mountTenantAdmin(app: Hono<{ Bindings: Env }>): void {
     return c.json({ ok: true, key: raw, kind, note: 'Spremi odmah — više se ne može pročitati.' });
   });
 
-  app.delete('/admin/api/tenants/:id/keys/:keyHash', async (c) => {
-    const keyHash = c.req.param('keyHash');
-    if (!/^[0-9a-f]{64}$/.test(keyHash)) return c.json({ error: 'invalid_key_hash' }, 400);
-    const revoked = await revokeApiKey(c.env, keyHash, c.req.param('id'));
+  /// `:ref` = the `id` from GET …/keys (12 hex) or the full sha256. Scoped to
+  /// the tenant in the URL; an id matching two active keys is refused.
+  app.delete('/admin/api/tenants/:id/keys/:ref', async (c) => {
+    const tenantId = c.req.param('id');
+    const ref = await resolveApiKeyRef(c.env, tenantId, c.req.param('ref'));
+    if ('error' in ref) {
+      const status = ref.error === 'invalid_key_ref' ? 400 : ref.error === 'ambiguous_key_ref' ? 409 : 404;
+      return c.json({ error: ref.error }, status);
+    }
+    const revoked = await revokeApiKey(c.env, ref.keyHash, tenantId);
     if (!revoked) return c.json({ error: 'not_found_or_already_revoked' }, 404);
     await writeAudit(c.env, {
-      tenantId: c.req.param('id'),
+      tenantId,
       action: 'key.revoke',
       actor: actorOf(c),
-      detail: JSON.stringify({ key_hash_short: `${keyHash.slice(0, 12)}…` }),
+      detail: JSON.stringify({ key_hash_short: `${ref.keyHash.slice(0, KEY_ID_LEN)}…` }),
     });
-    return c.json({ ok: true });
+    return c.json({ ok: true, id: ref.keyHash.slice(0, KEY_ID_LEN) });
   });
 
   /// Proves the WHOLE alert chain from inside the Worker: secrets present,
