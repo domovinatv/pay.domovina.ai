@@ -249,6 +249,23 @@ export async function getCampaign(
   return row ?? null;
 }
 
+/// Active campaign of `tenantId` whose Safe is `safe`, or null. In direct mode
+/// this is the binding: an intent may only point at a registered project Safe.
+export async function findCampaignBySafe(
+  env: Env,
+  tenantId: string,
+  safe: string,
+): Promise<TenantCampaignRow | null> {
+  const row = await env.DB.prepare(
+    `SELECT * FROM tenant_campaigns
+      WHERE tenant_id = ? AND lower(safe_address) = ? AND revoked_at IS NULL
+      ORDER BY created_at DESC LIMIT 1`,
+  )
+    .bind(tenantId, safe.trim().toLowerCase())
+    .first<TenantCampaignRow>();
+  return row ?? null;
+}
+
 export async function listCampaigns(
   env: Env,
   tenantId: string,

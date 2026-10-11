@@ -10,8 +10,21 @@ import type { StageResult } from './stage';
 import { openIntentStream, sseEnabled } from './stream';
 import { resolveRequestTenant } from '../tenants/auth';
 import { defaultTenantId } from '../tenants/whitelist';
-import { getTenantRail, isLegacyTenant, multiTenantEnabled } from '../tenants/rail';
-import { getCampaign, getSepaDetails, isAddressWhitelisted, type SepaDetails } from '../tenants/db';
+import {
+  getReferenceStyle,
+  getTenantRail,
+  intentReference,
+  isLegacyTenant,
+  multiTenantEnabled,
+  type ReferenceStyle,
+} from '../tenants/rail';
+import {
+  findCampaignBySafe,
+  getCampaign,
+  getSepaDetails,
+  isAddressWhitelisted,
+  type SepaDetails,
+} from '../tenants/db';
 
 /// Public, unauthenticated intent API. Mountable into the root Hono app
 /// via `app.route('/api/intents', intentApi)`. Status is available by
@@ -63,10 +76,21 @@ export function buildIntentApi(): Hono<{ Bindings: Env }> {
     // money we can never report or route — refuse instead (ADR 0017).
     const railRefusal = await tenantRailRefusal(c.env, tenant.tenantId);
     if (railRefusal) return c.json({ error: railRefusal, tenant_id: tenant.tenantId }, 403);
+    // Direct mode: Monerium mints straight into the target, so the target must
+    // be one of the tenant's registered project Safes (campaigns). Nothing is
+    // ever forwarded, so the payout whitelist does not apply.
+    const style = await getReferenceStyle(c.env, tenant.tenantId);
+    const direct = style?.mode === 'direct';
+    if (direct && !(await findCampaignBySafe(c.env, tenant.tenantId, target))) {
+      return c.json(
+        { error: 'target_not_campaign', tenant_id: tenant.tenantId, target_address: target.toLowerCase() },
+        403,
+      );
+    }
     // Fail fast on a destination the forward gate would refuse anyway. This is
     // UX, not the security boundary — `authorizeForward` re-checks at forward
     // time, because an address can be revoked between intent and payment.
-    if (!(await isAddressWhitelisted(c.env, tenant.tenantId, target))) {
+    if (!direct && !(await isAddressWhitelisted(c.env, tenant.tenantId, target))) {
       return c.json(
         { error: 'target_not_whitelisted', tenant_id: tenant.tenantId, target_address: target.toLowerCase() },
         403,
@@ -95,7 +119,9 @@ export function buildIntentApi(): Hono<{ Bindings: Env }> {
     // statically trusted — a cap on a popular campaign Safe would let a
     // spammer lock its real donors out. Secret-key callers are exempt.
     const secretKey = tenant.keyKind === 'secret';
-    if (!secretKey && !(await isTrustedTarget(c.env, tenant.tenantId, target))) {
+    // A registered campaign is admin-entered, i.e. trusted like a static
+    // whitelist entry.
+    if (!secretKey && !direct && !(await isTrustedTarget(c.env, tenant.tenantId, target))) {
       const open = await countOpenIntentsForTarget(c.env, tenant.tenantId, target, Math.floor(Date.now() / 1000));
       if (open >= maxOpenIntentsPerTarget(c.env)) {
         return c.json({ error: 'too_many_open_intents', target_address: target.toLowerCase() }, 429);
@@ -113,7 +139,7 @@ export function buildIntentApi(): Hono<{ Bindings: Env }> {
       intent, order: null, forward: null,
       now: Math.floor(Date.now() / 1000),
     });
-    return c.json({ ...intentResponseJson(intent, origin, sepa), status });
+    return c.json({ ...intentResponseJson(intent, origin, sepa, style), status });
   });
 
   // Permanent campaign QR (`cmp:` protocol). Stateless: returns a REUSABLE
@@ -190,8 +216,9 @@ export function buildIntentApi(): Hono<{ Bindings: Env }> {
     if (!intent) return c.json({ error: 'intent_not_found' }, 404);
     const origin = new URL(c.req.url).origin;
     const sepa = await getSepaDetails(c.env, intent.tenant_id ?? defaultTenantId(c.env));
+    const style = await getReferenceStyle(c.env, intent.tenant_id);
     const status = await buildIntentStatus(c.env, intent, c.executionCtx);
-    return c.json({ ...intentResponseJson(intent, origin, sepa), status });
+    return c.json({ ...intentResponseJson(intent, origin, sepa, style), status });
   });
 
   // SSE (ADR 0017). Off → the historical 404, and EventSource clients fall
@@ -230,8 +257,10 @@ export function intentResponseJson(
   intent: import('./db').PaymentIntentRow,
   origin: string,
   sepa: SepaDetails,
+  /// Tenant's rail style; null/absent = the `mpt:` reference (default tenant).
+  style: ReferenceStyle | null = null,
 ): Record<string, unknown> {
-  const memo = `mpt:${intent.target_address}?sid=${intent.sid}`;
+  const memo = intentReference(style, intent);
   const amountEur = (intent.amount_cents / 100).toFixed(2);
   const epcText = buildEpcText({
     beneficiaryName: sepa.beneficiaryName,

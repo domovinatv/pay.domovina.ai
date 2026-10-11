@@ -6,6 +6,7 @@ import type { StageResult } from '../intents/stage';
 import { buildEpcText } from '../intents/epc';
 import { buildIntentHub3Text } from '../intents/hub3';
 import { formatIban, type SepaDetails } from '../tenants/db';
+import { intentReference, type ReferenceStyle } from '../tenants/rail';
 
 /// Minimal HTML escape for the tenant-supplied beneficiary block. These values
 /// come from the tenants table (admin-controlled), but they are still data —
@@ -74,11 +75,16 @@ export function renderCheckoutPage(
   intent: PaymentIntentRow,
   status: StageResult,
   sepa: SepaDetails,
+  /// Tenant's rail style; null/absent = the `mpt:` reference (default tenant).
+  style: ReferenceStyle | null = null,
 ): string {
   const sid = intent.sid;
   const amount = (intent.amount_cents / 100).toFixed(2);
   const target = intent.target_address;
-  const memo = `mpt:${target}?sid=${sid}`;
+  const memo = intentReference(style, intent);
+  // Direct mode: without the reference Monerium mints to the tenant's main
+  // Safe instead of the project, so the copy is a requirement, not a hint.
+  const direct = style?.mode === 'direct';
   // EPC text computed inline since the buyer's QR scan needs the text.
   // Beneficiary block comes from the intent's TENANT (migration 0013/0014),
   // never hardcoded — tenant #2 collects on its own Monerium IBAN.
@@ -161,6 +167,20 @@ h1 { font-size: 1.5rem; margin: 0 0 .4rem; }
 }
 #hub3Box svg { width: 100%; height: auto; display: block; shape-rendering: crispEdges; }
 .qr-hint { font-size: .85rem; color: var(--muted); text-align: center; line-height: 1.4; max-width: 22rem; }
+.ref-box {
+  width: 100%; max-width: 22rem; margin-top: .75rem; padding: .75rem;
+  border: 1px solid var(--border); border-radius: .5rem; background: var(--surface);
+}
+.ref-label { font-size: .75rem; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; }
+.ref-text {
+  display: block; margin: .35rem 0 .6rem; font-size: .85rem; font-weight: 600; color: var(--navy);
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; word-break: break-all;
+}
+.ref-copy {
+  width: 100%; padding: .6rem; font: inherit; font-weight: 700; cursor: pointer;
+  border: 0; border-radius: .4rem; background: var(--navy); color: #fff;
+}
+.ref-hint { font-size: .8rem; color: var(--muted); line-height: 1.4; margin: .6rem 0 0; }
 .amount-block { text-align: center; margin: .25rem 0 1rem; }
 .amount {
   font-size: 2.4rem; font-weight: 800; color: var(--navy);
@@ -316,6 +336,14 @@ footer a { color: var(--navy); text-decoration: none; font-weight: 600; }
       <div id="epcPane" class="qr-wrap" style="margin:0">
         <div id="qrBox">${renderQrSvg(epcText)}</div>
         <p class="qr-hint">EPC SEPA Credit Transfer (Revolut iOS, Erste, PBZ, OTP, RBA — sve podržavaju ovaj format)</p>
+        <div class="ref-box">
+          <div class="ref-label">Referenca (opis plaćanja)</div>
+          <code class="ref-text" id="refText">${escapeAttr(memo)}</code>
+          <button type="button" class="ref-copy" id="copyRef" onclick="copyRef()">Kopiraj referencu</button>
+          <p class="ref-hint"><b>Revolut:</b> nakon skeniranja polje <i>Reference</i> ostaje prazno. Prije slanja dodirnite ga i zalijepite kopiranu referencu${direct
+            ? '. Bez nje novac ne stiže izravno u projekt.'
+            : '.'}</p>
+        </div>
       </div>
       ${hub3Svg === null ? '' : `<div id="hub3Pane" class="qr-wrap" style="margin:0;display:none">
         <div id="hub3Box">${hub3Svg}</div>
@@ -366,6 +394,28 @@ let latest = INITIAL;
 let audioCtx;
 
 function $(id) { return document.getElementById(id); }
+
+// "Kopiraj referencu": Revolut leaves Reference empty after a QR scan, so the
+// payer pastes it by hand. Clipboard API first, selection fallback for
+// browsers that refuse it (non-secure context, old WebViews).
+async function copyRef() {
+  const text = (latest && latest.memo) || INITIAL.memo;
+  let ok = false;
+  try {
+    await navigator.clipboard.writeText(text);
+    ok = true;
+  } catch {
+    const range = document.createRange();
+    range.selectNodeContents($('refText'));
+    const sel = window.getSelection();
+    sel.removeAllRanges();
+    sel.addRange(range);
+    try { ok = document.execCommand('copy'); } catch {}
+  }
+  const btn = $('copyRef');
+  btn.textContent = ok ? 'Kopirano ✓' : 'Označeno — kopirajte ručno';
+  setTimeout(() => { btn.textContent = 'Kopiraj referencu'; }, 2500);
+}
 
 // Stage→copy table. Same wording as the Flutter table
 // (lib/models/payment_status.dart) — change both together.

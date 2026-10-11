@@ -42,11 +42,18 @@ export type ParkReason =
                           // this tenant forwards from — moving value out of
                           // that Safe would spend money this order never brought
   | 'over_cap'            // above the tenant's per-forward cap
-  | 'unsupported_currency'; // BW-23: a non-EUR issue order — never forwarded as EURe
+  | 'unsupported_currency' // BW-23: a non-EUR issue order — never forwarded as EURe
+  // Direct mode (migration 0026):
+  | 'not_minted_to_target'; // Monerium minted somewhere else than the intent's
+                          // project Safe (e.g. the payer dropped the reference);
+                          // a direct rail never forwards, so it stays there
 
 export type ForwardDecision =
   | { action: 'forward'; tenantId: string; reason?: undefined }
   | { action: 'self_noop'; tenantId: string; reason?: undefined }
+  /// Direct mode: Monerium already minted into the intent's target. Settle the
+  /// intent, move nothing.
+  | { action: 'direct_settle'; tenantId: string; sid: string; target: string; reason?: undefined }
   | { action: 'park'; tenantId: string | null; reason: ParkReason };
 
 /// Injected lookups — keeps the decision unit-testable without D1
@@ -81,6 +88,8 @@ export interface AuthorizeDeps {
   /// Per-forward cap in cents, STRICT (amount must be below it, matching the
   /// on-chain LessThan); null = none.
   maxForwardCents: number | null;
+  /// Rail mode (migration 0026). Absent = 'forward'.
+  mode?: 'forward' | 'direct';
 }
 
 /// Facts about the order itself (as opposed to its routing memo).
@@ -119,6 +128,7 @@ export function makeAuthorizeDeps(env: Env, rail: TenantRail): AuthorizeDeps {
     // 2026-10-10: every ITalk issue order since the Safe exists minted there).
     requireMintAt: rail.legacy && env.LEGACY_REQUIRE_MINT_AT !== '1' ? null : rail.receivingSafe,
     maxForwardCents: rail.maxForwardCents,
+    mode: rail.mode ?? 'forward',
   };
 }
 
@@ -136,6 +146,8 @@ export async function authorizeForward(
   routing: RoutingTarget,
   facts?: OrderFacts,
 ): Promise<ForwardDecision> {
+  if (deps.mode === 'direct') return authorizeDirect(deps, routing, facts);
+
   // Tenant rails only: the money must actually be in the Safe we would sign
   // from. Missing facts count as a mismatch (fail-closed).
   if (deps.requireMintAt && !eq(facts?.mintAddress, deps.requireMintAt)) {
@@ -212,6 +224,43 @@ export async function authorizeForward(
   return { action: 'forward', tenantId };
 }
 
+/// Direct mode: the reference `<chain>:0x<Safe> sid:<sid>` made Monerium mint
+/// into the project Safe itself. The only question is whether this order paid
+/// that intent; value never moves, so there is no whitelist, cap or signer.
+///
+/// Binding still holds: the sid must name an intent of THIS rail's tenant, and
+/// the order must have been minted at exactly that intent's target. Anything
+/// else parks (the EURe stays wherever Monerium put it, for an operator).
+async function authorizeDirect(
+  deps: AuthorizeDeps,
+  routing: RoutingTarget,
+  facts?: OrderFacts,
+): Promise<ForwardDecision> {
+  const observed = routing.target ?? routing.diagnosticTarget;
+  if (!routing.sid) {
+    return {
+      action: 'park',
+      tenantId: deps.railTenantId,
+      reason: observed ? 'missing_sid' : 'no_routing_target',
+    };
+  }
+  const intent = await deps.getIntentBySid(routing.sid);
+  if (!intent) return { action: 'park', tenantId: deps.railTenantId, reason: 'unknown_sid' };
+  const tenantId = intent.tenant_id ?? deps.defaultTenantId;
+  if (tenantId !== deps.railTenantId) return { action: 'park', tenantId, reason: 'tenant_mismatch' };
+  // The address the payer typed (if any) must be the intent's own target.
+  if (observed && !eq(observed, intent.target_address)) {
+    return { action: 'park', tenantId, reason: 'target_mismatch' };
+  }
+  if (!eq(facts?.mintAddress, intent.target_address)) {
+    return { action: 'park', tenantId, reason: 'not_minted_to_target' };
+  }
+  const status = await deps.getTenantStatus(tenantId);
+  if (status === null) return { action: 'park', tenantId, reason: 'tenant_unknown' };
+  if (status !== 'active') return { action: 'park', tenantId, reason: 'tenant_suspended' };
+  return { action: 'direct_settle', tenantId, sid: routing.sid, target: intent.target_address.toLowerCase() };
+}
+
 /// Human-readable one-liner for alerts and the admin UI.
 export function describeParkReason(reason: ParkReason): string {
   switch (reason) {
@@ -229,5 +278,6 @@ export function describeParkReason(reason: ParkReason): string {
     case 'mint_address_mismatch': return 'Monerium nije mintao na prihvatni Safe tenanta';
     case 'over_cap': return 'iznos je iznad kapice po forwardu za tenanta';
     case 'unsupported_currency': return 'valuta ordera nije EUR';
+    case 'not_minted_to_target': return 'Monerium nije mintao u Safe projekta (izravni način ne prosljeđuje)';
   }
 }

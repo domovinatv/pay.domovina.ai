@@ -93,8 +93,9 @@ export interface RoutingTarget {
   /// Campaign id extracted from `?id=…` (the `cmp:` permanent-QR protocol); null
   /// for the per-intent `mpt:`/`gnosis:` flows.
   campaignId: string | null;
-  /// Which prefix was matched, for audit ("mpt", "gnosis", "cmp", or null = bare).
-  prefix: 'mpt' | 'gnosis' | 'cmp' | null;
+  /// Which prefix was matched, for audit ("mpt", "gnosis", "chiado", "cmp", or
+  /// null = bare). `chiado:` is the sandbox twin of `gnosis:` (direct mode).
+  prefix: 'mpt' | 'gnosis' | 'chiado' | 'cmp' | null;
 }
 
 /// Prefixes that may produce a routing target at all. `gnosis:` was the
@@ -124,9 +125,10 @@ export function extractRoutingTarget(
   if (!memo) {
     return { target: null, diagnosticTarget: null, sid: null, campaignId: null, prefix: null };
   }
-  let prefix: 'mpt' | 'gnosis' | 'cmp' | null = null;
+  let prefix: RoutingTarget['prefix'] = null;
   if (/^mpt:/i.test(memo)) prefix = 'mpt';
   else if (/^gnosis:/i.test(memo)) prefix = 'gnosis';
+  else if (/^chiado:/i.test(memo)) prefix = 'chiado';
   else if (/^cmp:/i.test(memo)) prefix = 'cmp';
   const addrMatch = memo.match(ADDR_RE);
   const diagnosticTarget = addrMatch ? addrMatch[0].toLowerCase() : null;
