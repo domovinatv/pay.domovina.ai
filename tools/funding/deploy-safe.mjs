@@ -3,6 +3,7 @@
 //
 //   node deploy-safe.mjs --env sandbox --salt italk-sandbox:main --dry
 //   node deploy-safe.mjs --env sandbox --salt italk-sandbox:main
+//   node deploy-safe.mjs --env sandbox --salt project:x --pre-sign-link  # Safe se rodi s potpisanom Monerium porukom
 //   node deploy-safe.mjs --env sandbox --new-deployer     # generira deployer EOA
 //
 // Vlasnici su zadano tri energy potpisnika, prag 2 (lib.mjs). Adresa ovisi o
@@ -10,7 +11,7 @@
 import { parseArgs } from 'node:util';
 import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts';
 import { formatEther } from 'viem';
-import { DEFAULT_OWNERS, DEFAULT_THRESHOLD, clients, ensureSafe, loadEnv, setEnvVar, verifySafe } from './lib.mjs';
+import { DEFAULT_OWNERS, DEFAULT_THRESHOLD, clients, ensureSafe, isLinkSigned, loadEnv, setEnvVar, verifySafe } from './lib.mjs';
 
 const { values: a } = parseArgs({
   options: {
@@ -19,6 +20,7 @@ const { values: a } = parseArgs({
     owners: { type: 'string' },
     threshold: { type: 'string' },
     dry: { type: 'boolean', default: false },
+    'pre-sign-link': { type: 'boolean', default: false },
     'new-deployer': { type: 'boolean', default: false },
   },
 });
@@ -49,7 +51,7 @@ if (c.account) {
   console.log(`deployer ${c.account.address}, saldo ${formatEther(bal)} ${c.cfg.chain.nativeCurrency.symbol}`);
 }
 
-const r = await ensureSafe(c, { owners, threshold, saltLabel: a.salt, dryRun: a.dry });
+const r = await ensureSafe(c, { owners, threshold, saltLabel: a.salt, dryRun: a.dry, preSignLink: a['pre-sign-link'] });
 console.log(`Safe ${r.address} (${c.cfg.chain.name}) · salt "${a.salt}" · ${threshold}/${owners.length}`);
 if (r.existed) console.log('već deployan');
 else if (r.txHash) console.log(`deployan: ${c.cfg.explorer}/tx/${r.txHash}`);
@@ -59,5 +61,6 @@ if (r.deployed) {
   const v = await verifySafe(c.pub, r.address, owners, threshold);
   console.log(v.ok ? 'provjera vlasnika i praga: OK' : `PROVJERA PALA: ${JSON.stringify(v)}`);
   if (!v.ok) process.exit(1);
+  console.log(`Monerium link poruka potpisana (ERC-1271): ${(await isLinkSigned(c.pub, r.address)) ? 'DA' : 'ne'}`);
   console.log(`${c.cfg.explorer}/address/${r.address}`);
 }
