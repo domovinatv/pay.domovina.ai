@@ -189,6 +189,19 @@ describe('admin routes', () => {
     expect(sql.some((q) => q.includes('INSERT INTO tenant_rail'))).toBe(false);
   });
 
+  it('refuses a Monerium profile that already belongs to another tenant', async () => {
+    const body = { client_id: 'x', client_secret: 's', profile_id: 'prof-b', receiving_safe: SAFE };
+    const taken = fakeEnv({ 'FROM tenants WHERE id': { id: 'zupa-a', status: 'onboarding' }, 'WHERE profile_id = ?': { tenant_id: 'zupa-b' } });
+    const res = await call(taken.env, 'PUT', '/admin/api/tenants/zupa-a/rail', body);
+    expect(res.status).toBe(409);
+    expect(await res.json()).toEqual({ error: 'profile_in_use' });
+    expect(taken.sql.some((q) => q.includes('INSERT INTO tenant_rail'))).toBe(false);
+
+    const italk = fakeEnv({ 'FROM tenants WHERE id': { id: 'zupa-a', status: 'onboarding' } });
+    (italk.env as unknown as { MONERIUM_PROFILE_ID: string }).MONERIUM_PROFILE_ID = 'prof-b';
+    expect((await call(italk.env, 'PUT', '/admin/api/tenants/zupa-a/rail', body)).status).toBe(409);
+  });
+
   it('refuses activation before a passed verify', async () => {
     const { env, sql } = fakeEnv({ 'FROM tenants WHERE id': { id: 'zupa-a', status: 'onboarding' }, 'FROM tenant_rail': row({ verified_at: null }) });
     const res = await call(env, 'POST', '/admin/api/tenants/zupa-a/activate');
