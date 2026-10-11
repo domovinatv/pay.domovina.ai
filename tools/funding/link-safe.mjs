@@ -4,7 +4,13 @@
 // ili SignMessageLib transakciju vlasnika.
 //
 //   node link-safe.mjs --env sandbox --safe 0x…
+//   node link-safe.mjs --env sandbox --safe 0x… --name "Projekt kviz-app"
 //   node link-safe.mjs --env sandbox --list
+//
+// Ime adrese: javni Monerium API ga ne podržava (v2 nema polje, a
+// PATCH /addresses/:a/config postoji samo u web sučelju pod sesijom kolačića;
+// token Private appa dobiva 401, provjereno 11. 10. 2026.). Zato --name ispiše
+// naredbu za konzolu preglednika na monerium.app / sandbox.monerium.dev.
 import { parseArgs } from 'node:util';
 import { clients, isLinkSigned, loadEnv } from './lib.mjs';
 import { MONERIUM_CHAIN, moneriumClient } from './monerium.mjs';
@@ -15,6 +21,7 @@ const { values: a } = parseArgs({
     safe: { type: 'string' },
     profile: { type: 'string' },
     list: { type: 'boolean', default: false },
+    name: { type: 'string' },
   },
 });
 
@@ -47,9 +54,20 @@ if (!profile) {
 const already = ((await m.addresses()).json?.addresses ?? []).find((x) => x.address.toLowerCase() === a.safe.toLowerCase());
 if (already) {
   console.log(`već povezan: ${already.address} · ${already.chains.join(',')}`);
-  process.exit(0);
+} else {
+  const r = await m.linkAddress(profile, a.safe, chain);
+  console.log(`POST /addresses → ${r.status} ${JSON.stringify(r.json)}`);
+  if (r.status >= 300) process.exit(1);
 }
 
-const r = await m.linkAddress(profile, a.safe, chain);
-console.log(`POST /addresses → ${r.status} ${JSON.stringify(r.json)}`);
-if (r.status >= 300) process.exit(1);
+if (a.name) {
+  const ui = a.env === 'sandbox' ? 'https://sandbox.monerium.dev' : 'https://monerium.app';
+  console.log(`\nIme adrese (zalijepi u konzolu preglednika na ${ui}, prijavljen):`);
+  console.log(nameSnippet([{ address: a.safe, name: a.name }]));
+}
+
+/// Naredba za konzolu web sučelja Moneriuma: isti poziv koji radi "Save changes"
+/// u Wallets (PATCH /api/addresses/:a/config {name}), s kolačićem sesije.
+export function nameSnippet(items) {
+  return `for (const [a, name] of ${JSON.stringify(items.map((i) => [i.address, i.name]))}) console.log(a, (await fetch(\`/api/addresses/\${a}/config\`, { method: 'PATCH', headers: { Accept: 'application/json', 'Content-Type': 'application/json' }, body: JSON.stringify({ name }) })).status);`;
+}
