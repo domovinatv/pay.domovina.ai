@@ -142,6 +142,5 @@ Sve kombinacije opisa i mjesta minta, s pripadnim prijelazima: [state-machines.m
 3. Prod: `funding-init --env prod` za projekte (Safe 1.5.0, SignMessageLib adresa za
    1.5.0 još nije upisana u `lib.mjs`), deployer s xDAI na Gnosisu.
 4. Katalog: polje `funding` na kartici (`realtime-presentation`), gumb „Podrži".
-5. Admin: opoziv API ključa nije moguć kroz API, jer `GET …/keys` vraća samo `key_hash_short`, a
-   `DELETE …/keys/:keyHash` traži puni hash. Testni `pk_` ključ „karta-hrvatske test direct" za
-   `italk-sandbox` zato je još aktivan.
+5. ~~Admin: opoziv API ključa~~: gotovo (PR #90). `DELETE /admin/api/tenants/:id/keys/:ref` prima `id` iz
+   `GET …/keys` (12 hex) ili puni hash; nejednoznačan id → 409.
