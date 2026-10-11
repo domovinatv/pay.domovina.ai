@@ -4,7 +4,8 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import {
   createPublicClient, createWalletClient, http, encodeFunctionData,
-  keccak256, toBytes, hexToBigInt, getAddress, zeroAddress,
+  keccak256, toBytes, hexToBigInt, getAddress, zeroAddress, hashMessage, encodeAbiParameters,
+  encodePacked, concat, getContractAddress,
 } from 'viem';
 import { gnosis, gnosisChiado } from 'viem/chains';
 import { privateKeyToAccount } from 'viem/accounts';
@@ -25,6 +26,7 @@ export const SAFE_CONTRACTS = {
     factory: '0xa6B71E26C5e0845f74c812102Ca7114b6a896AB2',
     singletonL2: '0x3E5c63644E683549055b9Be8653de26E0B4CD36E',
     fallbackHandler: '0xf48f2B2d2a534e402487b3ee7C18c33Aec0Fe5e4',
+    signMessageLib: '0xA65387F16B013cf2Af4605Ad8aA5ec25a2cbA3a2',
   },
 };
 
@@ -42,6 +44,9 @@ export const ENVS = {
 };
 
 const factoryAbi = [{
+  type: 'function', name: 'proxyCreationCode', stateMutability: 'pure',
+  inputs: [], outputs: [{ type: 'bytes' }],
+}, {
   type: 'function', name: 'createProxyWithNonce', stateMutability: 'nonpayable',
   inputs: [{ name: '_singleton', type: 'address' }, { name: 'initializer', type: 'bytes' }, { name: 'saltNonce', type: 'uint256' }],
   outputs: [{ name: 'proxy', type: 'address' }],
@@ -99,18 +104,53 @@ export function saltFromLabel(label) {
   return hexToBigInt(keccak256(toBytes(label)));
 }
 
-export function safeInitializer(owners, threshold, fallbackHandler) {
+/// Poruka kojom Monerium traži dokaz vlasništva adrese (POST /addresses).
+export const MONERIUM_LINK_MESSAGE = 'I hereby declare that I am the address owner.';
+const ERC1271_MAGIC = '0x1626ba7e';
+
+const signMessageLibAbi = [{
+  type: 'function', name: 'signMessage', stateMutability: 'nonpayable',
+  inputs: [{ name: '_data', type: 'bytes' }], outputs: [],
+}];
+const isValidSignatureAbi = [{
+  type: 'function', name: 'isValidSignature', stateMutability: 'view',
+  inputs: [{ name: '_dataHash', type: 'bytes32' }, { name: '_signature', type: 'bytes' }],
+  outputs: [{ type: 'bytes4' }],
+}];
+
+/// Delegatecall u setup() koji Safe odmah pri rođenju "potpiše" Monerium poruku
+/// (SignMessageLib → signedMessages[hash] = 1). Fallback handler za ERC-1271 s
+/// praznim potpisom provjerava upravo signedMessages za
+/// SafeMessage(abi.encode(hashMessage(poruka))), pa je ovo isti zapis kao da
+/// su vlasnici izvršili SignMessageLib transakciju.
+export function linkSignatureSetupCall(sc) {
+  if (!sc.signMessageLib) throw new Error('SignMessageLib za ovu verziju Safea nije poznat');
+  const data = encodeAbiParameters([{ type: 'bytes32' }], [hashMessage(MONERIUM_LINK_MESSAGE)]);
+  return { to: sc.signMessageLib, data: encodeFunctionData({ abi: signMessageLibAbi, functionName: 'signMessage', args: [data] }) };
+}
+
+/// Prolazi li ERC-1271 provjera koju radi Monerium (isValidSignature(hash, "0x")).
+export async function isLinkSigned(pub, safe) {
+  try {
+    const r = await pub.readContract({ address: safe, abi: isValidSignatureAbi, functionName: 'isValidSignature', args: [hashMessage(MONERIUM_LINK_MESSAGE), '0x'] });
+    return r === ERC1271_MAGIC;
+  } catch {
+    return false;
+  }
+}
+
+export function safeInitializer(owners, threshold, fallbackHandler, setupCall = null) {
   return encodeFunctionData({
     abi: setupAbi, functionName: 'setup',
-    args: [owners.map((o) => o.toLowerCase()), BigInt(threshold), zeroAddress, '0x', fallbackHandler, zeroAddress, 0n, zeroAddress],
+    args: [owners.map((o) => o.toLowerCase()), BigInt(threshold), setupCall?.to ?? zeroAddress, setupCall?.data ?? '0x', fallbackHandler, zeroAddress, 0n, zeroAddress],
   });
 }
 
 /// Predvidi adresu (simulacijom tvornice) i, ako treba, deployaj Safe.
 /// Vraća { address, deployed, txHash }. Idempotentno: postojeći Safe se samo provjeri.
-export async function ensureSafe({ cfg, pub, wallet, account }, { owners, threshold, saltLabel, dryRun }) {
+export async function ensureSafe({ cfg, pub, wallet, account }, { owners, threshold, saltLabel, dryRun, preSignLink = false }) {
   const sc = SAFE_CONTRACTS[cfg.safeVersion];
-  const initializer = safeInitializer(owners, threshold, sc.fallbackHandler);
+  const initializer = safeInitializer(owners, threshold, sc.fallbackHandler, preSignLink ? linkSignatureSetupCall(sc) : null);
   const saltNonce = saltFromLabel(saltLabel);
   const args = [sc.singletonL2, initializer, saltNonce];
 
@@ -119,20 +159,18 @@ export async function ensureSafe({ cfg, pub, wallet, account }, { owners, thresh
     if (!code || code === '0x') throw new Error(`${name} ${a} nema koda na ovom chainu`);
   }
 
-  const from = account?.address ?? zeroAddress;
-  let address;
-  try {
-    ({ result: address } = await pub.simulateContract({ address: sc.factory, abi: factoryAbi, functionName: 'createProxyWithNonce', args, account: from }));
-  } catch (e) {
-    // Simulacija pada ako proxy s tim saltom već postoji ("Create2 call failed").
-    address = null;
-  }
+  // CREATE2 kao SafeProxyFactory: salt = keccak(keccak(initializer) ++ saltNonce),
+  // init code = proxyCreationCode ++ uint256(singleton). Radi i kad Safe već postoji.
+  const creationCode = await pub.readContract({ address: sc.factory, abi: factoryAbi, functionName: 'proxyCreationCode' });
+  const address = getContractAddress({
+    opcode: 'CREATE2',
+    from: sc.factory,
+    salt: keccak256(encodePacked(['bytes32', 'uint256'], [keccak256(initializer), saltNonce])),
+    bytecode: concat([creationCode, encodeAbiParameters([{ type: 'uint256' }], [hexToBigInt(sc.singletonL2)])]),
+  });
+  const existing = await pub.getCode({ address });
+  if (existing && existing !== '0x') return { address, deployed: true, txHash: null, existed: true };
 
-  if (address) {
-    const code = await pub.getCode({ address });
-    if (code && code !== '0x') return { address, deployed: true, txHash: null, existed: true };
-  }
-  if (!address) throw new Error('simulacija deploya nije uspjela; Safe s ovim saltom možda već postoji pod drugim vlasnicima');
   if (dryRun) return { address, deployed: false, txHash: null };
   if (!wallet) throw new Error('za deploy treba DEPLOYER_PRIVATE_KEY');
 

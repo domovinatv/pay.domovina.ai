@@ -263,6 +263,39 @@ If the address is linked on that chain, EURe mints there instead of the IBAN's d
 
 We've observed this in production data — outgoing reconciliation pings used `gnosis:<address>` memos to direct mints.
 
+### Usmjeravanje po memu: `chain:adresa` + razmak
+
+Uplata na IBAN profila minta se na adresu iz opisa plaćanja ako opis **počinje** s
+`<chain>:<adresa>` i iza adrese dolazi **razmak ili kraj**. Adresa mora biti
+povezana s profilom (`POST /addresses`). Inače mint ide na adresu vezanu uz IBAN.
+
+| Opis | Mint |
+|---|---|
+| `gnosis:0x<safe>` | `<safe>` |
+| `gnosis:0x<safe> sid:<sid>` | `<safe>`, a rail iz istog opisa izvuče `sid` (`sid.ts`, min. 6 znakova) |
+| `gnosis:0x<safe>?sid=<sid>` | zadana adresa IBAN-a (nastavak bez razmaka kvari adresu) |
+| `<tekst> gnosis:0x<safe>` | zadana adresa IBAN-a |
+| adresa malim slovima | `<safe>` |
+
+Dokazi:
+- **Produkcija, 11. 10. 2026.:** 1 € iz Revoluta, opis
+  `gnosis:0x4f7f…d0173 sid:test1` → 1 EURe na Lukavec Safe, rail Safe `0x449a…` ostao 0.
+- **Sandbox (Chiado), isti dan:** svih šest redaka tablice, `POST /api/treasury/fund`
+  s vlastitim memom (web sučelje, sesija).
+- Pokus 21. 5. 2026. (`gnosis:0x6693…?sid.dz4…`) pao je zbog nastavka **bez razmaka**,
+  a ne zbog „exact matcha na cijeli opis“, kako je tada zaključeno.
+
+Posljedica: izravna uplata u Safe projekta (bez forwarda i bez Roles) radi uz
+praćenje intenta, s opisom `gnosis:0x<safe> sid:<sid>`.
+
+Zamke:
+- **Revolut** nakon skeniranja QR-a ostavlja Reference prazno. Bez opisa uplata ide
+  na zadanu adresu, pa checkout mora nuditi kopiranje reference.
+- **PBZ** je instant uplatu na EE IBAN (opis netaknut) odbio (11. 10. 2026., ref.
+  `20261011001286300522`). Razlog nije naveden. Do sada su sve dolazne uplate na ITalk
+  IBAN stigle iz Revoluta (LT), nijedna iz HR banke.
+- HUB3 opis ima najviše 35 znakova, pa ovaj opis ne stane (vidi `docs/research/aircash/05`).
+
 ### Outgoing SEPA (redeem)
 
 ```jsonc
