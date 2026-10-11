@@ -66,3 +66,4 @@ scripts/.gp-spike-state.json
 # funding-init: Monerium vjerodajnice po okruženju
 tools/funding/.env.*
 !tools/funding/.env.example
+tools/funding/node_modules/
