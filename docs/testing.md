@@ -38,5 +38,8 @@ Zamke:
 - `node_modules` se u worktree linka simlinkom. Ako i radiš u worktreeu sa
   simlinkom `backend/node_modules`, pazi da ga ne commitaš.
 - Ako je skripta prekinuta, worktree `compat-check.*` ostaje u `$TMPDIR`.
+- Skripta u worktree prenosi samo `git diff HEAD`. Nova, još nepraćena datoteka zato
+  nedostaje, pa stari testovi koji je importaju padaju cijeli (14 datoteka, 12. 10. 2026.).
+  Prvo commit, pa provjera.
   Počisti ga s `git worktree prune`, ali tek kad nijedna druga sesija ne vrti
   skriptu.
