@@ -10,6 +10,7 @@ import { bytesToHex, type Hex } from 'viem';
 import qrcode from 'qrcode-generator';
 
 import { deriveReceiptSid } from '../sid';
+import type {} from './pdf-entry';
 
 interface StoredKey {
   v: 1;
@@ -32,6 +33,7 @@ interface Payment {
   amount_cents: number;
   placed_at: string | null;
   leaf_hash: string;
+  target_address?: string | null;
   anchor: Proof | null;
 }
 interface Receipt {
@@ -89,8 +91,8 @@ function fmtDate(iso: string | null): string {
   return Number.isNaN(d.getTime()) ? iso : d.toLocaleString('hr-HR');
 }
 
-function download(name: string, data: BlobPart, type = 'application/json'): void {
-  const url = URL.createObjectURL(new Blob([data], { type }));
+function download(name: string, data: BlobPart | Uint8Array, type = 'application/json'): void {
+  const url = URL.createObjectURL(new Blob([data as BlobPart], { type }));
   const a = el('a', { href: url, download: name });
   document.body.append(a);
   a.click();
@@ -282,6 +284,7 @@ function renderReceipt(rc: Receipt, key: StoredKey | null): void {
     el('td', {}, fmtDate(p.placed_at)),
     el('td', { class: 'num' }, eur(p.amount_cents)),
     el('td', {}, p.kind === 'direct' ? 'Izravna (ključ u referenci)' : 'Naknadna (isti IBAN uplatitelja)'),
+    el('td', {}, p.target_address ? el('code', {}, `${p.target_address.slice(0, 8)}…${p.target_address.slice(-4)}`) : '—'),
     el('td', {}, p.tx_hash
       ? el('a', { href: `https://gnosisscan.io/tx/${p.tx_hash}`, target: '_blank', rel: 'noopener' }, p.tx_hash.slice(0, 12) + '…')
       : '—'),
@@ -295,11 +298,38 @@ function renderReceipt(rc: Receipt, key: StoredKey | null): void {
       ' · chain_head ', el('code', {}, a.chain_head)));
 
   const actions = el('div', { class: 'actions no-print' });
-  const printBtn = el('button', { class: 'primary', type: 'button' }, 'Spremi kao PDF');
-  printBtn.addEventListener('click', () => window.print());
+  // PDF built here, offline: /potvrda/pdf.js (pdf-lib + fonts) was loaded with
+  // the page, so the click needs no network and opens no print dialog.
+  const printBtn = el('button', { class: 'primary', type: 'button' }, 'Preuzmi PDF');
+  const pdfMsg = el('span', { class: 'msg' });
+  printBtn.addEventListener('click', async () => {
+    const pdf = window.MptReceiptPdf;
+    if (!pdf) {
+      pdfMsg.textContent = ' PDF modul se još učitava; pokušajte za trenutak.';
+      return;
+    }
+    printBtn.setAttribute('disabled', '');
+    pdfMsg.textContent = ' Izrađujem PDF…';
+    try {
+      const bytes = await pdf.build({
+        receipt: rc,
+        owner: publicPart.owner,
+        salt: publicPart.salt,
+        canonicalJson: json,
+        statusText: STATUS_TEXT[rc.status] ?? `Stanje: ${rc.status}`,
+        generatedAt: new Date().toISOString().replace(/\.\d+Z$/, 'Z'),
+      });
+      download(pdf.fileName(rc.sid), bytes, 'application/pdf');
+      pdfMsg.textContent = '';
+    } catch (e) {
+      pdfMsg.textContent = ` PDF nije izrađen: ${(e as Error).message}`;
+    } finally {
+      printBtn.removeAttribute('disabled');
+    }
+  });
   const jsonBtn = el('button', { type: 'button' }, 'Preuzmi potvrdu (JSON)');
   jsonBtn.addEventListener('click', () => download(`mpt-potvrda-${rc.sid}.json`, json));
-  actions.append(printBtn, jsonBtn);
+  actions.append(printBtn, jsonBtn, pdfMsg);
 
   const doc = el('article', { class: 'receipt' },
     el('header', {}, el('h1', {}, 'Potvrda o uplati'), el('p', { class: 'muted' }, `MPT · ${rc.version}`)),
@@ -313,7 +343,7 @@ function renderReceipt(rc: Receipt, key: StoredKey | null): void {
     rc.payments.length === 0
       ? el('p', { class: 'warn' }, STATUS_TEXT[rc.status] ?? `Stanje: ${rc.status}`)
       : el('table', {},
-          el('thead', {}, el('tr', {}, ...['Datum', 'Iznos', 'Vrsta', 'Gnosis tx', 'Sidro'].map((h) => el('th', {}, h)))),
+          el('thead', {}, el('tr', {}, ...['Datum', 'Iznos', 'Vrsta', 'Primatelj', 'Gnosis tx', 'Sidro'].map((h) => el('th', {}, h)))),
           el('tbody', {}, ...rows)),
     !rc.lazy_included ? el('p', { class: 'muted' }, 'Naknadno pokrivene uplate vidi samo vlasnik ključa.') : null,
     el('section', {},

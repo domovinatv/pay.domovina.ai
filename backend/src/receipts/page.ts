@@ -3,7 +3,7 @@ import type { Hono } from 'hono';
 import type { Env } from '../types';
 import { escapeAttr, jsonForScript } from '../checkout/page';
 import { getIntent } from '../intents/db';
-import { RECEIPT_CLIENT_JS } from './client.generated';
+import { RECEIPT_CLIENT_JS, RECEIPT_PDF_JS } from './client.generated';
 import { isReceiptSid } from './sid';
 
 /// Payer-side receipt pages (ADR 0022 §4). Everything sensitive happens in
@@ -41,7 +41,7 @@ td.num { text-align: right; white-space: nowrap; }
 .qr-row { display: flex; gap: 1rem; align-items: center; flex-wrap: wrap; }
 .tricolor { display: flex; height: 6px; } .tricolor span { flex: 1; }
 .tricolor .red { background: var(--red); } .tricolor .white { background: #fff; } .tricolor .navy { background: var(--navy); }
-@media (max-width: 520px) { dl { grid-template-columns: 1fr; } th:nth-child(5), td:nth-child(5) { display: none; } }
+@media (max-width: 520px) { dl { grid-template-columns: 1fr; } th:nth-child(4), td:nth-child(4), th:nth-child(6), td:nth-child(6) { display: none; } }
 @media print {
   body { background: #fff; }
   .no-print, .tricolor { display: none !important; }
@@ -68,6 +68,7 @@ ${intro}
 <noscript><p class="warn">Potvrda se izrađuje u vašem pregledniku i treba JavaScript.</p></noscript>
 </main>
 <script type="application/json" id="receipt-config">${jsonForScript(config)}</script>
+<script src="/potvrda/pdf.js" defer></script>
 <script src="/potvrda/client.js" defer></script>
 </body>
 </html>`;
@@ -79,6 +80,14 @@ export function mountReceiptPages(app: Hono<{ Bindings: Env }>): void {
       headers: {
         'Content-Type': 'text/javascript; charset=utf-8',
         'Cache-Control': 'public, max-age=300',
+      },
+    }));
+
+  app.get('/potvrda/pdf.js', () =>
+    new Response(RECEIPT_PDF_JS, {
+      headers: {
+        'Content-Type': 'text/javascript; charset=utf-8',
+        'Cache-Control': 'public, max-age=3600',
       },
     }));
 

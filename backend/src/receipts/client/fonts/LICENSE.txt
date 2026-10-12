@@ -1,0 +1,3 @@
+inter-400.ttf, inter-600.ttf — Inter (The Inter Project Authors), SIL Open Font License 1.1
+Statične instance s fonts.googleapis.com (12. 10. 2026.). Ugrađuju se u PDF potvrde o uplati
+(rail: src/receipts/client/pdf.ts; preuzeto iz energy.domovina.ai public/fonts). Tekst licence: https://openfontlicense.org
