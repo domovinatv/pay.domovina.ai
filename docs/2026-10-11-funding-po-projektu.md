@@ -141,11 +141,15 @@ Test: lokalni Open SaaS (`opensaas-sandbox`, cilj Safe projekta `opensaas-sandbo
 - Forma za simulaciju prima **samo iznos**; memo je Moneriumov tekst. „Receive to" samo
   prikazuje podatke walleta, a mint ide walletu **kojem je IBAN povezan**. S IBAN-om na
   glavnom Safeu uplata postaje D4 `direct_owed` (stray resolver nađe intent po iznosu) i
-  checkout stoji na „prosljeđuje se". Za test toka do kraja: **„Move IBAN" na Safe
-  projekta**, pa je mint na cilju → `direct_mint`, intent `paid` za 13–19 s. Nakon testa
-  IBAN vratiti na glavni Safe (Verify `iban_linked_to_safe`). Neprovjerena alternativa:
-  izravni `POST /api/treasury/fund` s memoom iz konzole (gore); presretanje `fetch` za gumb
-  ne radi.
+  checkout stoji na „prosljeđuje se". Iz sučelja je jedini put „Move IBAN" na Safe
+  projekta i natrag; presretanje `fetch` za gumb ne radi.
+- **Iz terminala, bez Move IBAN:** `tools/funding/simulate-payment.mjs` zove isti
+  `POST https://sandbox.monerium.dev/api/treasury/fund` (endpoint web sučelja; javni API ga
+  nema), koji prima Bearer token Private appa i polje `memo`. Memo intenta
+  (`chiado:<Safe> sid:<sid>`) Moneriumu je i ruta: s IBAN-om na glavnom Safeu mint je
+  otišao na Safe projekta i intent `simtest-route-mv5ilqkd` (1.41 €) postao je
+  `paid`/`settled`. IBAN zato stoji na glavnom Safeu.
+  `node simulate-payment.mjs --env opensaas-sandbox --amount 1.00 --memo "<memo intenta>"`
 - Stray resolver daje uplatu **najnovijem** otvorenom intentu istog iznosa i cilja, pa
   svaki test treba novi intent.
 - PR #100: `http://localhost` `return_url` dopušten i tenantu s `monerium_env = 'sandbox'`
