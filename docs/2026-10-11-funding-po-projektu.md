@@ -133,6 +133,26 @@ s alarmom. Takvu uplatu operater ručno prebacuje u Safe projekta.
 
 Sve kombinacije opisa i mjesta minta, s pripadnim prijelazima: [state-machines.md](state-machines.md).
 
+## Simulacija uplate na Safe projekta i povratak u app (Open SaaS, 12. 10. 2026.)
+
+Test: lokalni Open SaaS (`opensaas-sandbox`, cilj Safe projekta `opensaas-sandbox-demo`
+`0xAbC3…ef8e`), kupnja 1 € → checkout → Monerium „Simulate bank transfer".
+
+- Forma za simulaciju prima **samo iznos**; memo je Moneriumov tekst. „Receive to" samo
+  prikazuje podatke walleta, a mint ide walletu **kojem je IBAN povezan**. S IBAN-om na
+  glavnom Safeu uplata postaje D4 `direct_owed` (stray resolver nađe intent po iznosu) i
+  checkout stoji na „prosljeđuje se". Za test toka do kraja: **„Move IBAN" na Safe
+  projekta**, pa je mint na cilju → `direct_mint`, intent `paid` za 13–19 s. Nakon testa
+  IBAN vratiti na glavni Safe (Verify `iban_linked_to_safe`). Neprovjerena alternativa:
+  izravni `POST /api/treasury/fund` s memoom iz konzole (gore); presretanje `fetch` za gumb
+  ne radi.
+- Stray resolver daje uplatu **najnovijem** otvorenom intentu istog iznosa i cilja, pa
+  svaki test treba novi intent.
+- PR #100: `http://localhost` `return_url` dopušten i tenantu s `monerium_env = 'sandbox'`
+  (prije samo sbx tenantu), `returnUrlAllowsLoopback` u `intents/api.ts`.
+- PR #101: checkout je nakon SSE `settled` jednom pollao, vidio `state = pending` i ugasio
+  polling, pa povratka u app nije bilo. `isFinal` sada čeka `paid` (ili underpaid/rejected).
+
 ## Otvorene stavke
 
 1. ~~Rail u načinu „direct"~~ i ~~gumb „kopiraj referencu"~~: gotovo, PR #85 (vidi niže).
@@ -144,3 +164,7 @@ Sve kombinacije opisa i mjesta minta, s pripadnim prijelazima: [state-machines.m
 4. Katalog: polje `funding` na kartici (`realtime-presentation`), gumb „Podrži".
 5. ~~Admin: opoziv API ključa~~: gotovo (PR #90). `DELETE /admin/api/tenants/:id/keys/:ref` prima `id` iz
    `GET …/keys` (12 hex) ili puni hash; nejednoznačan id → 409.
+6. Intent-potvrda (`POST /api/intents/:sid/receipt-intent`, ADR 0022) ne prenosi
+   `return_url`, a trgovac koji polla izvorni sid ne vidi uplatu na novi `r1…` sid. Prenijeti
+   `return_url` (checkout doda `mpt_sid` = novi sid) ili sakriti potvrdu za intente stvorene
+   sa `sk_` + `return_url`.
