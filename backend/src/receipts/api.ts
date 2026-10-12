@@ -36,6 +36,8 @@ interface LeafRow {
   placed_at: string | null;
   leaf_hash: string;
   anchor_id: number | null;
+  target_address: string | null;
+  tenant_id: string | null;
 }
 
 interface ReceiptPayment {
@@ -45,13 +47,26 @@ interface ReceiptPayment {
   amount_cents: number;
   placed_at: string | null;
   leaf_hash: string;
+  /// Where that payment went, so a lazy receipt spanning many payees does not
+  /// read as if every payment was for this intent. Informational: not part of
+  /// the leaf hash (the Gnosis tx itself shows the recipient).
+  target_address: string | null;
+  tenant_id: string | null;
   anchor: LeafProof | null;
 }
 
 async function leavesFor(env: Env, sid: string): Promise<LeafRow[]> {
   const rows = await env.DB.prepare(
-    `SELECT id, kind, sid, order_id, tx_hash, amount_cents, placed_at, leaf_hash, anchor_id
-       FROM receipt_leaves WHERE sid = ? ORDER BY placed_at, id`,
+    `SELECT l.id, l.kind, l.sid, l.order_id, l.tx_hash, l.amount_cents, l.placed_at, l.leaf_hash, l.anchor_id,
+            (SELECT f.target_address FROM monerium_forwards f
+              WHERE f.order_id = l.order_id AND f.status IN ('confirmed', 'resolved_offrail')
+              ORDER BY f.id DESC LIMIT 1) AS target_address,
+            COALESCE(
+              (SELECT f.tenant_id FROM monerium_forwards f
+                WHERE f.order_id = l.order_id AND f.status IN ('confirmed', 'resolved_offrail')
+                ORDER BY f.id DESC LIMIT 1),
+              (SELECT o.tenant_id FROM monerium_orders o WHERE o.id = l.order_id)) AS tenant_id
+       FROM receipt_leaves l WHERE l.sid = ? ORDER BY l.placed_at, l.id`,
   ).bind(sid).all<LeafRow>();
   return rows.results;
 }
@@ -64,6 +79,8 @@ async function toPayment(env: Env, l: LeafRow): Promise<ReceiptPayment> {
     amount_cents: l.amount_cents,
     placed_at: l.placed_at,
     leaf_hash: l.leaf_hash,
+    target_address: l.target_address ? l.target_address.toLowerCase() : null,
+    tenant_id: l.tenant_id,
     anchor: l.anchor_id !== null ? await proofForLeaf(env, l.id, l.anchor_id) : null,
   };
 }

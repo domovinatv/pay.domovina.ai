@@ -367,6 +367,9 @@ describe('receipt API', () => {
     expect(own.status).toBe(200);
     const body = await own.json() as { payments: Array<{ kind: string }>; owner: string };
     expect(body.payments.map((p) => p.kind).sort()).toEqual(['direct', 'lazy']);
+    // Each payment names its own payee (the lazy one may be for another Safe).
+    expect((body.payments as unknown as Array<{ target_address: string; tenant_id: string }>)
+      .every((p) => p.target_address === '0xpayee' && p.tenant_id === 'italk')).toBe(true);
     expect(body.owner).toBe(OWNER.toLowerCase());
   });
 
