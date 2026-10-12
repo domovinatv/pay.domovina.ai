@@ -384,3 +384,22 @@ Odstupanja od teksta iznad:
 - **Razina wallet:** backend je spreman (potpis se provjerava i kroz ERC-1271/6492), ali gumb
   „Plati s potvrdom“ u wallet.domovina.ai još nije napravljen.
 
+
+## Prvi test u produkciji (2026-10-12) i odbačena opcija
+
+**Test s 1 € iz energy.domovina.ai:** `sid` `r1q3aaa9q8q89bcrux5viiznnf` završio je kao
+`unbound_stray`. Monerium order `36063aa3-c609-11f1-a028-86f2570d9f29` ima prazan `memo` i prazan
+`reference_number`: Revolut (ekran „spremno za isplatu" kad stanje pokriva iznos) poslao je nalog
+**bez opisa**, pa `sid` nije stigao ni u kojem obliku. Rail je uplatu ispravno povezao po iznosu i
+vremenu (`memo_prefix = auto`, forward potvrđen) i, po §3, nije izdao izravnu potvrdu. U povijesti
+je 9 od 98 issue ordera stiglo bez opisa. Ako uplatitelj uvijek plaća tim tokom, ni naknadna
+potvrda ne nastaje, jer nijedna njegova uplata ne donosi referencu koja bi bila sidro.
+
+**Odbačeno: „jedinstveni iznos po otvorenom intentu"** (npr. 1,03 € umjesto 1,00 €, pa stray
+resolver veže uplatu uz ključ preko iznosa). Odluka Matije: to je hack, ne dokaz. Iznos nije
+kriptografska obveza na ključ i ne smije postati razina potvrde. **Ne predlagati ponovno.**
+
+Ostaje: izravna potvrda nastaje samo kad `sid` stigne u opisu naloga. Sučelje mora uplatitelja
+navesti da prije potvrde naloga provjeri da opis sadrži referencu (gumb „kopiraj referencu").
+Strukturirana RF referenca u EPC QR-u ostaje neprovjerena opcija, jer je Revolut ranije odbijao QR
+s tim poljem (memorija `feedback_epc_format`).
