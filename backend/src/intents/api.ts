@@ -1,10 +1,12 @@
-import { Hono } from 'hono';
+import { Hono, type Context } from 'hono';
 
 import type { Env } from '../types';
 import { countOpenIntentsForTarget, createIntent, getIntent, isTrustedTarget } from './db';
 import { generateSid } from './sid';
 import { isReceiptSid } from '../receipts/sid';
 import { registerReceiptRoutes } from '../receipts/api';
+import { registerSimulateRoute } from '../sandbox/api';
+import { isSandboxTenant, touchSandboxTenant } from '../sandbox/db';
 import { buildEpcText } from './epc';
 import { buildIntentHub3Text } from './hub3';
 import { computeStage, confirmForwardIfMined, loadStageContext } from './stage';
@@ -42,6 +44,9 @@ interface CreateIntentBody {
   /// remittance (`mpt:0x…?sid=<id>`) locally, then registers the same sid
   /// here so it can poll the status timeline. Server-generated when absent.
   sid?: string;
+  /// ADR 0024 D6: where the checkout sends the buyer back, with
+  /// `mpt_sid` + `mpt_status` appended. Secret key only.
+  return_url?: string;
 }
 
 const ADDR_RE = /^0x[0-9a-fA-F]{40}$/;
@@ -72,6 +77,20 @@ export function buildIntentApi(): Hono<{ Bindings: Env }> {
     const tenant = await resolveRequestTenant(c.env, c.req.raw.headers);
     if (!tenant.ok) {
       return c.json({ error: tenant.error }, tenant.error === 'tenant_suspended' ? 403 : 401);
+    }
+    // ADR 0024 D6: a public key (or none) could otherwise turn our checkout
+    // into a redirect to anywhere — pk_ keys are public by design.
+    let returnUrl: string | null = null;
+    if (body.return_url !== undefined && body.return_url !== null && body.return_url !== '') {
+      if (tenant.keyKind !== 'secret') return c.json({ error: 'return_url_requires_secret_key' }, 400);
+      returnUrl = validateReturnUrl(body.return_url, tenant.sandbox === true);
+      if (!returnUrl) return c.json({ error: 'invalid_return_url' }, 400);
+    }
+    // ADR 0024: a sandbox tenant has no rail, no IBAN and no money. Nothing
+    // can be paid or forwarded, so the whitelist and the SR-01 cap have
+    // nothing to protect; its payments are simulated (/:sid/simulate).
+    if (tenant.sandbox === true) {
+      return createSandboxIntent(c, body, tenant.tenantId, tenant.keyKind === 'secret', returnUrl);
     }
     // A non-default tenant collects on ITS OWN IBAN. Issuing a QR for that
     // IBAN while the rail cannot see the tenant's Monerium webhook would take
@@ -129,7 +148,7 @@ export function buildIntentApi(): Hono<{ Bindings: Env }> {
         return c.json({ error: 'too_many_open_intents', target_address: target.toLowerCase() }, 429);
       }
     }
-    const sid = await insertWithRetry(c.env, target, amountCents, ttl, body, tenant.tenantId, secretKey);
+    const sid = await insertWithRetry(c.env, target, amountCents, ttl, body, tenant.tenantId, secretKey, returnUrl);
     if (sid === 'conflict') return c.json({ error: 'sid_already_exists' }, 409);
     if (!sid) return c.json({ error: 'sid_collision_after_retries' }, 500);
     const intent = await getIntent(c.env, sid);
@@ -220,7 +239,9 @@ export function buildIntentApi(): Hono<{ Bindings: Env }> {
     const sepa = await getSepaDetails(c.env, intent.tenant_id ?? defaultTenantId(c.env));
     const style = await getReferenceStyle(c.env, intent.tenant_id);
     const status = await buildIntentStatus(c.env, intent, c.executionCtx);
-    return c.json({ ...intentResponseJson(intent, origin, sepa, style), status });
+    const json = intentResponseJson(intent, origin, sepa, style);
+    if (await isSandboxTenant(c.env, intent.tenant_id)) return c.json({ ...sandboxView(json, origin), status });
+    return c.json({ ...json, status });
   });
 
   // SSE (ADR 0017). Off → the historical 404, and EventSource clients fall
@@ -254,6 +275,8 @@ export function buildIntentApi(): Hono<{ Bindings: Env }> {
     }
     if (!isReceiptSid(body.sid)) return c.json({ error: 'invalid_receipt_sid' }, 400);
     const tenantId = original.tenant_id ?? defaultTenantId(c.env);
+    // Receipts are anchored on Gnosis; a simulated payment must never get one.
+    if (await isSandboxTenant(c.env, tenantId)) return c.json({ error: 'receipts_not_in_sandbox' }, 409);
     const railRefusal = await tenantRailRefusal(c.env, tenantId);
     if (railRefusal) return c.json({ error: railRefusal, tenant_id: tenantId }, 403);
     const target = original.target_address;
@@ -289,8 +312,81 @@ export function buildIntentApi(): Hono<{ Bindings: Env }> {
   });
 
   registerReceiptRoutes(api);
+  registerSimulateRoute(api);
 
   return api;
+}
+
+type IntentCtx = Context<{ Bindings: Env }>;
+
+/// POST /api/intents for a sandbox tenant (ADR 0024 D5). Same validation of
+/// amount, TTL and sid as production; no rail, whitelist or SR-01 cap, and no
+/// receipt sids (receipts are anchored on-chain).
+async function createSandboxIntent(
+  c: IntentCtx,
+  body: CreateIntentBody,
+  tenantId: string,
+  secretKey: boolean,
+  returnUrl: string | null,
+): Promise<Response> {
+  const target = (body.target_address ?? '').trim();
+  const amountEur = parseAmount(body.amount_eur);
+  if (amountEur === null) return c.json({ error: 'invalid_amount_eur' }, 400);
+  const amountCents = Math.round(amountEur * 100);
+  if (amountCents <= 0 || amountCents > MAX_AMOUNT_CENTS) {
+    return c.json({ error: 'amount_out_of_range', max: MAX_AMOUNT_CENTS }, 400);
+  }
+  if (body.expires_in_seconds !== undefined && !Number.isFinite(body.expires_in_seconds)) {
+    return c.json({ error: 'invalid_expires_in_seconds' }, 400);
+  }
+  const ttl = Math.min(Math.max(Math.floor(body.expires_in_seconds ?? DEFAULT_TTL_SECONDS), 60), MAX_TTL_SECONDS);
+  if (body.sid !== undefined && !SID_RE.test(body.sid)) return c.json({ error: 'invalid_sid' }, 400);
+  if (body.sid !== undefined && isReceiptSid(body.sid)) return c.json({ error: 'receipts_not_in_sandbox' }, 400);
+  const sid = await insertWithRetry(c.env, target, amountCents, ttl, body, tenantId, secretKey, returnUrl);
+  if (sid === 'conflict') return c.json({ error: 'sid_already_exists' }, 409);
+  if (!sid) return c.json({ error: 'sid_collision_after_retries' }, 500);
+  const intent = await getIntent(c.env, sid);
+  if (!intent) return c.json({ error: 'intent_not_persisted' }, 500);
+  await touchSandboxTenant(c.env, tenantId);
+  const origin = new URL(c.req.url).origin;
+  const sepa = await getSepaDetails(c.env, tenantId);
+  const status = computeStage({ intent, order: null, forward: null, now: Math.floor(Date.now() / 1000) });
+  return c.json({ ...sandboxView(intentResponseJson(intent, origin, sepa, null), origin), status });
+}
+
+/// A sandbox intent must never be payable with real money: no IBAN, no QR,
+/// no HUB3 (ADR 0024 D5). Everything else keeps the production shape.
+export function sandboxView(json: Record<string, unknown>, origin: string): Record<string, unknown> {
+  return {
+    ...json,
+    iban: null,
+    beneficiary_name: null,
+    bic: null,
+    epc_qr_data: null,
+    hub3_data: null,
+    sandbox: true,
+    simulate_url: `${origin}/api/intents/${json.sid as string}/simulate`,
+  };
+}
+
+const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]']);
+
+/// ADR 0024 D6. Absolute, ≤ 2048 chars, no credentials, no fragment; https,
+/// or http on a loopback host for sandbox tenants (local development).
+export function validateReturnUrl(raw: unknown, sandbox: boolean): string | null {
+  if (typeof raw !== 'string') return null;
+  const s = raw.trim();
+  if (!s || s.length > 2048) return null;
+  let u: URL;
+  try {
+    u = new URL(s);
+  } catch {
+    return null;
+  }
+  if (u.username || u.password || u.hash) return null;
+  if (u.protocol === 'https:') return u.toString();
+  if (u.protocol === 'http:' && sandbox && LOOPBACK_HOSTS.has(u.hostname)) return u.toString();
+  return null;
 }
 
 /// Why a tenant may not issue payment QRs right now, or null when it may.
@@ -354,6 +450,7 @@ export function intentResponseJson(
     monerium_order_id: intent.monerium_order_id,
     forward_tx_hash: intent.forward_tx_hash,
     amount_received_cents: intent.amount_received_cents,
+    return_url: intent.return_url ?? null,
   };
 }
 
@@ -386,6 +483,7 @@ async function insertWithRetry(
   body: CreateIntentBody,
   tenantId: string,
   createdWithKey: boolean,
+  returnUrl: string | null = null,
 ): Promise<string | 'conflict' | null> {
   // Client-supplied sid: single attempt. A real duplicate-sid collision is
   // the caller's error (409); ANY OTHER failure (transient D1 error, etc.)
@@ -403,6 +501,7 @@ async function insertWithRetry(
         ttlSeconds,
         tenantId,
         createdWithKey,
+        returnUrl,
       });
       return body.sid;
     } catch (e) {
@@ -424,6 +523,7 @@ async function insertWithRetry(
         ttlSeconds,
         tenantId,
         createdWithKey,
+        returnUrl,
       });
       return sid;
     } catch (e) {

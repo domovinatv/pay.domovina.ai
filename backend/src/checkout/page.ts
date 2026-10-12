@@ -60,6 +60,15 @@ export function jsonForScript(value: unknown): string {
     .replace(/\u2029/g, '\\u2029');
 }
 
+/// `return_url` + `mpt_sid` + `mpt_status` (ADR 0024 D6). The URL was
+/// validated at intent creation; existing query parameters are kept.
+export function returnHref(returnUrl: string, sid: string, status: 'paid' | 'expired' | 'cancelled'): string {
+  const u = new URL(returnUrl);
+  u.searchParams.set('mpt_sid', sid);
+  u.searchParams.set('mpt_status', status);
+  return u.toString();
+}
+
 /// Buyer-facing checkout page. Server-renders once with the snapshot, then
 /// client polls /api/intents/<sid> every 2s and re-renders the timeline.
 ///
@@ -78,8 +87,20 @@ export function renderCheckoutPage(
   sepa: SepaDetails,
   /// Tenant's rail style; null/absent = the `mpt:` reference (default tenant).
   style: ReferenceStyle | null = null,
+  /// ADR 0024: `sandbox` = a self-serve sandbox tenant — no IBAN, no QR,
+  /// simulate buttons instead.
+  opts: { sandbox?: boolean } = {},
 ): string {
   const sid = intent.sid;
+  const sandbox = opts.sandbox === true;
+  // ADR 0024 D6: where "Natrag u aplikaciju" leads, per outcome.
+  const ret = intent.return_url
+    ? {
+        paid: returnHref(intent.return_url, sid, 'paid'),
+        expired: returnHref(intent.return_url, sid, 'expired'),
+        cancelled: returnHref(intent.return_url, sid, 'cancelled'),
+      }
+    : null;
   const amount = (intent.amount_cents / 100).toFixed(2);
   const target = intent.target_address;
   const memo = intentReference(style, intent);
@@ -101,7 +122,9 @@ export function renderCheckoutPage(
   // ADR 0022: a receipt sid links to its receipt; any other pending intent
   // offers to re-issue itself under a key-bound sid from this browser.
   const receiptSid = isReceiptSid(sid);
-  const receiptBlock = receiptSid
+  const receiptBlock = sandbox
+    ? ''
+    : receiptSid
     ? `<p class="receipt-note">🧾 Ova uplata nosi <a href="/potvrda/${escapeAttr(sid)}">potvrdu o uplati</a>. Ključ potvrde je u ovom pregledniku.</p>`
     : intent.state === 'pending'
       ? `<p class="receipt-note"><a href="/potvrda/nova/${escapeAttr(sid)}">Želim potvrdu o uplati</a> — dokaz da ste baš vi platili, npr. za buduća prava.</p>`
@@ -119,6 +142,8 @@ export function renderCheckoutPage(
     forward_tx_hash: intent.forward_tx_hash,
     amount_received_cents: intent.amount_received_cents,
     status,
+    sandbox,
+    return: ret,
   };
 
   return `<!doctype html>
@@ -313,6 +338,29 @@ h1 { font-size: 1.5rem; margin: 0 0 .4rem; }
   background: none; border: 0; color: var(--muted); font-size: .85rem;
   text-decoration: underline; cursor: pointer;
 }
+.sandbox-ribbon {
+  background: var(--danger); color: #fff; text-align: center; font-weight: 800;
+  letter-spacing: .06em; padding: .45rem 1rem; font-size: .85rem;
+}
+.sandbox-box {
+  border: 2px dashed var(--danger); border-radius: .6rem; padding: 1rem; margin: 0 0 1rem;
+  background: #FFF5F5; display: flex; flex-direction: column; gap: .5rem;
+}
+.sandbox-box p { margin: 0; font-size: .9rem; line-height: 1.45; color: var(--navy); }
+.sandbox-box .sim-row { display: flex; flex-wrap: wrap; gap: .4rem; }
+.sandbox-box button {
+  flex: 1 1 9rem; padding: .55rem .6rem; font: inherit; font-size: .85rem; font-weight: 700; cursor: pointer;
+  border: 1px solid var(--navy); border-radius: .4rem; background: #fff; color: var(--navy);
+}
+.sandbox-box button.primary { background: var(--navy); color: #fff; }
+.sandbox-box button:disabled { opacity: .5; cursor: wait; }
+.sandbox-box .sim-msg { font-size: .85rem; color: var(--muted); min-height: 1.2em; }
+.return-links { margin: 1rem 0 0; text-align: center; font-size: .9rem; }
+.return-links a { color: var(--navy); font-weight: 600; }
+.success-modal .return-btn {
+  display: inline-block; margin-top: .6rem; padding: .7rem 1.2rem; border-radius: .5rem;
+  background: var(--navy); color: #fff; font-weight: 700; text-decoration: none;
+}
 .receipt-note { margin: 1rem 0 0; font-size: .9rem; color: var(--muted); text-align: center; }
 .receipt-note a { color: var(--navy); font-weight: 600; }
 footer {
@@ -332,14 +380,31 @@ footer a { color: var(--navy); text-decoration: none; font-weight: 600; }
 </head>
 <body>
 <div class="tricolor"><span class="red"></span><span class="white"></span><span class="navy"></span></div>
+${sandbox ? '<div class="sandbox-ribbon" role="note">SANDBOX · test, nema stvarne uplate</div>' : ''}
 <header>
   <div class="word">MPT · <span class="accent">Mint Pay Transfer</span></div>
 </header>
 <main>
-  <h1 id="title">Skenirajte za plaćanje</h1>
-  <p class="lede" id="lede">Otvorite Revolut ili banku, skenirajte EPC QR kod i potvrdite plaćanje. Stranica prati svaki korak uplate — od vaše banke do primatelja.</p>
+  ${sandbox
+    ? `<h1 id="title">Sandbox plaćanje</h1>
+  <p class="lede" id="lede">Ovo je testni checkout. Uplata se simulira gumbima ispod i prolazi isti put kao prava: status, timeline i webhookovi trgovcu (<code>payment.received</code>, <code>intent.paid</code>…).</p>`
+    : `<h1 id="title">Skenirajte za plaćanje</h1>
+  <p class="lede" id="lede">Otvorite Revolut ili banku, skenirajte EPC QR kod i potvrdite plaćanje. Stranica prati svaki korak uplate — od vaše banke do primatelja.</p>`}
   <div class="card">
-    <div class="qr-wrap" id="qrWrap">
+    ${sandbox ? `<div class="sandbox-box" id="sandboxBox">
+      <p><b>SANDBOX.</b> Nema IBAN-a ni QR koda: na ovaj intent nije moguće uplatiti stvarni novac.</p>
+      <div class="sim-row">
+        <button type="button" class="primary" onclick="simulate('paid')">Simuliraj uplatu</button>
+        <button type="button" onclick="simulate('received')">Samo zaprimljeno</button>
+      </div>
+      <div class="sim-row">
+        <button type="button" onclick="simulate('underpaid')">Premala uplata</button>
+        <button type="button" onclick="simulate('late')">Zakašnjela uplata</button>
+        <button type="button" onclick="simulate('rejected')">Odbijena uplata</button>
+      </div>
+      <div class="sim-msg" id="simMsg"></div>
+    </div>` : ''}
+    ${sandbox ? '<div id="qrWrap" style="display:none"></div>' : `<div class="qr-wrap" id="qrWrap">
       ${hub3Svg === null ? '' : `<div class="code-tabs" role="tablist">
         <button type="button" role="tab" id="tabEpc" aria-selected="true" onclick="showCode('epc')">EPC QR</button>
         <button type="button" role="tab" id="tabHub3" aria-selected="false" onclick="showCode('hub3')">HUB3 barkod (uplatnica)</button>
@@ -360,7 +425,7 @@ footer a { color: var(--navy); text-decoration: none; font-weight: 600; }
         <div id="hub3Box">${hub3Svg}</div>
         <p class="qr-hint">PDF417 barkod hrvatske uplatnice (HUB3) — skenirajte kao račun za režije. Opis plaćanja se ne prenosi: uplatu prepoznajemo po točnom iznosu i vremenu, pa iznos ne mijenjajte.</p>
       </div>`}
-    </div>
+    </div>`}
     <div class="amount-block">
       <div class="amount" id="amount">— EUR</div>
       <div class="amount-label" id="amountLabel">Iznos za plaćanje</div>
@@ -370,12 +435,13 @@ footer a { color: var(--navy); text-decoration: none; font-weight: 600; }
     <div class="detail-rows">
       <div class="row"><span class="label">Primatelj wallet</span><span class="value" id="targetVal">—</span></div>
       <div class="row"><span class="label">SEPA reference</span><span class="value" id="memoVal">—</span></div>
-      <div class="row"><span class="label">IBAN</span><span class="value">${escapeAttr(formatIban(sepa.iban))}</span></div>
-      <div class="row"><span class="label">Primatelj</span><span class="value">${escapeAttr(sepa.beneficiaryName)}</span></div>
+      ${sandbox ? '' : `<div class="row"><span class="label">IBAN</span><span class="value">${escapeAttr(formatIban(sepa.iban))}</span></div>
+      <div class="row"><span class="label">Primatelj</span><span class="value">${escapeAttr(sepa.beneficiaryName)}</span></div>`}
       <div class="row"><span class="label">Sesija</span><span class="value" id="sidVal">—</span></div>
     </div>
   </div>
   ${receiptBlock}
+  ${ret ? `<p class="return-links" id="returnLinks"><a id="returnLink" href="${escapeAttr(ret.cancelled)}">Odustani i vrati se u aplikaciju</a></p>` : ''}
 </main>
 <div id="successOverlay" class="success-overlay" style="display:none" role="dialog" aria-modal="true" aria-labelledby="successTitle">
   <div class="success-modal">
@@ -389,6 +455,7 @@ footer a { color: var(--navy); text-decoration: none; font-weight: 600; }
     <p class="settle-note" id="successNote"></p>
     <a id="txLink" class="tx-link" href="#" target="_blank" rel="noopener" style="display:none">Pogledaj transakciju na Gnosisscanu →</a>
     ${receiptSid ? `<a class="tx-link" href="/potvrda/${escapeAttr(sid)}">Preuzmi potvrdu o uplati →</a>` : ''}
+    ${ret ? `<a class="return-btn" id="returnBtn" href="${escapeAttr(ret.paid)}" style="display:none">Natrag u aplikaciju</a>` : ''}
     <button type="button" class="details-btn" id="successDetails">Prikaži detalje</button>
   </div>
 </div>
@@ -620,6 +687,52 @@ function applyState(s) {
   if (stage && stage !== 'awaiting_payment' && stage !== 'expired') {
     $('qrWrap').style.display = 'none';
   }
+  if (INITIAL.sandbox && (stage === 'settled' || stage === 'rejected') && $('sandboxBox')) {
+    $('sandboxBox').style.display = 'none';
+  }
+  applyReturn(s, stage);
+}
+
+// ADR 0024 D6: back to the merchant's app. Only a PAID intent returns as
+// paid (and automatically, after 3 s); the app still confirms server-side.
+let returnScheduled = false;
+function applyReturn(s, stage) {
+  const R = INITIAL.return;
+  if (!R) return;
+  const link = $('returnLink');
+  if (s.state === 'paid') {
+    if (link) link.style.display = 'none';
+    const btn = $('returnBtn');
+    if (btn) btn.style.display = 'inline-block';
+    if (!returnScheduled) {
+      returnScheduled = true;
+      setTimeout(() => { window.location.href = R.paid; }, 3000);
+    }
+  } else if (s.state === 'expired' || stage === 'expired') {
+    if (link) { link.href = R.expired; link.textContent = 'Natrag u aplikaciju'; }
+  }
+}
+
+async function simulate(outcome) {
+  const box = $('sandboxBox');
+  const msg = $('simMsg');
+  const buttons = box ? box.querySelectorAll('button') : [];
+  buttons.forEach((b) => { b.disabled = true; });
+  msg.textContent = 'Simuliram…';
+  try {
+    const r = await fetch('/api/intents/' + SID + '/simulate', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ outcome }),
+    });
+    const d = await r.json().catch(() => ({}));
+    msg.textContent = r.ok ? 'Simulirano: ' + outcome + '. Webhookovi su poslani trgovcu.' : 'Greška: ' + (d.error || r.status);
+  } catch (e) {
+    msg.textContent = 'Greška: ' + e;
+  }
+  buttons.forEach((b) => { b.disabled = false; });
+  await poll();
+  startPolling();
 }
 
 function eurCents(c) {

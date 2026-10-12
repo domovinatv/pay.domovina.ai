@@ -67,6 +67,8 @@ export function mountRailAdmin(app: Hono<{ Bindings: Env }>): void {
     const v = validateCreateTenant(body);
     if (!v.ok) return c.json({ error: v.error }, 400);
     if (isLegacyTenant(c.env, v.value.id)) return c.json({ error: 'default_tenant_uses_env' }, 400);
+    // `sbx-` is the self-serve sandbox namespace (ADR 0024).
+    if (v.value.id.startsWith('sbx-')) return c.json({ error: 'reserved_tenant_id' }, 400);
     const r = await createTenant(c.env, v.value);
     if (r === 'exists') return c.json({ error: 'tenant_exists' }, 409);
     await writeAudit(c.env, {
@@ -91,6 +93,9 @@ export function mountRailAdmin(app: Hono<{ Bindings: Env }>): void {
     if (isLegacyTenant(c.env, id)) return c.json({ error: 'default_tenant_uses_env' }, 400);
     const { tenant, row } = await loadTenantAndRail(c.env, id);
     if (!tenant) return c.json({ error: 'tenant_not_found' }, 404);
+    // ADR 0024: a sandbox tenant never gets a rail — production is a new
+    // tenant onboarded here after its own Monerium KYB.
+    if (tenant.sandbox === 1) return c.json({ error: 'sandbox_tenant_has_no_rail' }, 409);
     // Changing credentials, profile or Safe under a live tenant would let
     // payments in flight meet a different config. Suspend, change, verify.
     if (tenant.status === 'active') return c.json({ error: 'suspend_first' }, 409);

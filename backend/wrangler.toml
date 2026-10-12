@@ -111,6 +111,12 @@ INTENT_REQUIRE_TENANT_KEY = "0"
 MULTI_TENANT_RAIL = "1"
 INTENT_SSE = "1"
 
+# Self-serve sandbox tenants (ADR 0024 — docs/decisions/0024-*.md). "1" opens
+# POST /api/sandbox/tenants and /api/intents/:sid/simulate; "0" = 404. Prije
+# prvog "1": migracija 0029 na prod (db:migrate:prod), secret SANDBOX_IP_PEPPER,
+# WAF pravilo iz docs/runbook/rate-limits.md. Opcionalno SANDBOX_TURNSTILE_SECRET.
+SANDBOX_SELF_SERVE = "1"
+
 # Stray payment resolver (src/monerium/strayResolver.ts). "1": a SEPA payment
 # without a routing reference is matched to the tenant's open/recently expired
 # intent of the EXACT same amount; forwarded only when every candidate points

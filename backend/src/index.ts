@@ -42,6 +42,8 @@ import { publishIntentChange } from './intents/stream';
 import { checkRouterGas } from './tenants/onboarding';
 import { watchAllRailOutflows } from './monerium/outflowWatch';
 import { renderCheckoutPage } from './checkout/page';
+import { buildSandboxApi } from './sandbox/api';
+import { isSandboxTenant, sweepExpiredSandboxTenants } from './sandbox/db';
 import { sendAlert } from './alerts';
 import { anchorPendingLeaves, pullUpgradedOts } from './receipts/anchor';
 import { buildReceiptAnchorApi, receiptsEnabled } from './receipts/routes';
@@ -243,6 +245,9 @@ app.route('/api/monerium/admin', legacyMonerium);
 // Public payment-intents API (unauthenticated; rate-limit in Phase 2).
 app.route('/api/intents', buildIntentApi());
 
+// Self-serve sandbox tenants (ADR 0024). 404 unless SANDBOX_SELF_SERVE=1.
+app.route('/api/sandbox', buildSandboxApi());
+
 // Payment receipts (ADR 0022): anchor proofs + the payer-side receipt pages.
 app.route('/api/receipts', buildReceiptAnchorApi());
 mountReceiptPages(app);
@@ -292,7 +297,8 @@ app.get('/checkout/:sid', async (c) => {
   const status = await buildIntentStatus(c.env, intent, c.executionCtx);
   const sepa = await getSepaDetails(c.env, intent.tenant_id ?? defaultTenantId(c.env));
   const style = await getReferenceStyle(c.env, intent.tenant_id);
-  return c.html(renderCheckoutPage(intent, status, sepa, style));
+  const sandbox = await isSandboxTenant(c.env, intent.tenant_id);
+  return c.html(renderCheckoutPage(intent, status, sepa, style, { sandbox }));
 });
 
 // Branded HTML dashboard at /admin (Basic Auth gated).
@@ -473,6 +479,13 @@ export default {
           env.DB.prepare('DELETE FROM admin_sessions WHERE expires_at < ?').bind(new Date().toISOString()),
           env.DB.prepare('DELETE FROM admin_challenges WHERE expires_at < ?').bind(new Date().toISOString()),
         ]).catch((e) => console.error(`cron: admin session cleanup failed: ${e}`)),
+      );
+      // ADR 0024: sandbox tenants inactive for 90 days go, with all their rows.
+      ctx.waitUntil(
+        sweepExpiredSandboxTenants(env).then(
+          (n) => { if (n > 0) console.log(`cron: removed ${n} expired sandbox tenant(s)`); },
+          (e) => console.error(`cron: sandbox sweep failed: ${e}`),
+        ),
       );
       // Tenant routers (ADR 0017) need xDAI for gas; alert before they run dry.
       ctx.waitUntil(

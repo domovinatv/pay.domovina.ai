@@ -107,6 +107,7 @@ async function coverable(env: Env, iban: string, after: string | null, before: s
     `SELECT o.id, o.amount, o.tx_hashes, o.placed_at, o.counterpart_name
        FROM monerium_orders o
       WHERE o.kind = 'issue' AND o.state = 'processed'
+        AND o.id NOT LIKE 'sim\\_%' ESCAPE '\\'
         AND ${NORM_IBAN} = ?1
         AND o.placed_at < ?2
         AND (?3 IS NULL OR o.placed_at > ?3)
