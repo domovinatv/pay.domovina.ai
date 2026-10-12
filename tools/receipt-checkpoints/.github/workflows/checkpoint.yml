@@ -32,7 +32,12 @@ jobs:
             rm -f "$f.bak"
           done
       - name: Verify the whole chain (fails = public alarm)
-        run: python3 mpt_receipt_verify.py --checkpoints anchors/
+        run: |
+          if ls anchors/*.json >/dev/null 2>&1; then
+            python3 mpt_receipt_verify.py --checkpoints anchors/
+          else
+            echo "no anchors yet"
+          fi
       - name: Index
         run: python3 checkpoint.py index
       - name: Commit
