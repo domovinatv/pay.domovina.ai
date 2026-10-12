@@ -104,6 +104,17 @@ cp tools/backup-offline/ai.domovina.mpt-backup-offline.plist ~/Library/LaunchAge
 launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/ai.domovina.mpt-backup-offline.plist
 ```
 
+**Cloudflare API token** (preporučeno, inače job koristi osobni `wrangler login` OAuth,
+koji dijele svi wrangler procesi i koji je 12. 10. u 12:20 pao s `Authentication error`):
+dashboard → My Profile → API Tokens → Create Custom Token, račun D.O.M., dozvole
+*D1 Edit* (export to traži), *Workers KV Storage Read*, *Workers Scripts Read*. Upis u Keychain:
+
+```bash
+security add-generic-password -U -a "$USER" -s mpt-backup-cf-token -w '<token>'
+```
+
+Log pokazuje `(auth: api token)` kad ga job koristi. Export se pokuša 3 puta, 2 min razmaka.
+
 macOS ne dopušta launchd skripti pisanje na vanjski disk dok `/bin/bash` nema
 **Full Disk Access** (System Settings → Privacy & Security → Full Disk Access → `+` →
 Cmd+Shift+G `/bin/bash`). Bez toga je log pun `Operation not permitted` i stiže alarm.

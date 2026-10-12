@@ -29,6 +29,14 @@ KV_SAFE_KEYS="onchain:cursor:eure"          # monerium:access_token je tajna, ne
 TARGETS="/Volumes/DOMOVINA2TB/backup_offline_mpt /Volumes/DOMOVINA1TB/backup_offline_mpt"
 export CLOUDFLARE_ACCOUNT_ID="7dc7167b7e2e00923bfa7cd697df14e4"
 
+# Vlastiti API token iz Keychaina (D.O.M.: D1 Edit, Workers KV Storage Read,
+# Workers Scripts Read). Bez njega pada na osobni `wrangler login` OAuth, koji
+# dijele svi wrangler procesi na Macu i koji je 12. 10. u 12:20 vratio
+# „Authentication error 10000“. Upis:
+#   security add-generic-password -U -a "$USER" -s mpt-backup-cf-token -w '<token>'
+CF_TOKEN="$(/usr/bin/security find-generic-password -a "$USER" -s mpt-backup-cf-token -w 2>/dev/null || true)"
+[ -n "$CF_TOKEN" ] && export CLOUDFLARE_API_TOKEN="$CF_TOKEN"
+
 # launchd ne zna za nvm: uzmi najnoviji instalirani node.
 if ! command -v node >/dev/null 2>&1; then
   NODE_BIN="$(ls -d "$HOME"/.nvm/versions/node/*/bin 2>/dev/null | sort -V | tail -1)"
@@ -64,9 +72,16 @@ sha() { /usr/bin/shasum -a 256 "$1" | cut -d' ' -f1; }
 mkdir -p "$SNAP/config"
 
 # ── 1. D1 export ────────────────────────────────────────────────────────────
-log "export $DB_NAME"
-(cd "$BACKEND" && "$WRANGLER" d1 export "$DB_NAME" --remote --output="$WORK/dump.sql") \
-  >"$WORK/export.log" 2>&1 || { cat "$WORK/export.log"; fail "d1 export pao"; }
+AUTH="oauth login"; [ -n "${CLOUDFLARE_API_TOKEN:-}" ] && AUTH="api token"
+log "export $DB_NAME (auth: $AUTH)"
+attempt=1
+until (cd "$BACKEND" && "$WRANGLER" d1 export "$DB_NAME" --remote --output="$WORK/dump.sql") \
+    >"$WORK/export.log" 2>&1; do
+  grep -E "ERROR|error" -A2 "$WORK/export.log" | head -6
+  [ $attempt -ge 3 ] && fail "d1 export pao 3 puta"
+  log "export pokušaj $attempt pao, ponavljam za 2 min"
+  attempt=$((attempt + 1)); sleep 120
+done
 
 # ── 2. Provjera: dump se mora čisto učitati u sqlite ────────────────────────
 /usr/bin/sqlite3 "$WORK/check.db" <"$WORK/dump.sql" || fail "dump se ne učitava u sqlite"
