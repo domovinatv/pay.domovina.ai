@@ -838,18 +838,24 @@ async function poll() {
     };
     latest = flat;
     applyState(flat);
-    const stage = d.status ? d.status.stage : null;
-    if (stage === 'settled' || stage === 'rejected') {
-      stopPolling();
-    }
+    if (isFinal(flat)) stopPolling();
   } catch {}
+}
+
+// Nothing left to watch. 'settled' alone is not enough: the stream can report
+// it a moment before the intent's state turns 'paid', and the return to the
+// app waits for 'paid'. An underpaid intent settles but never turns 'paid'.
+function isFinal(s) {
+  const st = s.status ? s.status.stage : null;
+  if (st === 'rejected') return true;
+  if (st !== 'settled') return false;
+  return s.state === 'paid' || (s.status && s.status.amount_mismatch === 'under');
 }
 
 let pollInterval = null;
 function startPolling() {
   if (pollInterval) return;
-  const st = latest.status ? latest.status.stage : null;
-  if (st === 'settled' || st === 'rejected') return;
+  if (isFinal(latest)) return;
   pollInterval = setInterval(poll, 2000);
 }
 function stopPolling() {
@@ -881,10 +887,11 @@ function startStream() {
     if (stage === 'settled' || stage === 'rejected' || stage === 'expired') {
       // The server closes the stream on these; stop EventSource from
       // reconnecting into the same terminal snapshot, refresh the full
-      // record once, and keep watching an expired intent by polling.
+      // record once, and keep watching an expired intent by polling, as well
+      // as a settled one whose state has not turned 'paid' yet.
       es.close();
       poll();
-      if (stage === 'expired') startPolling();
+      if (stage === 'expired' || !isFinal(latest)) startPolling();
     }
   });
   es.onerror = () => {
