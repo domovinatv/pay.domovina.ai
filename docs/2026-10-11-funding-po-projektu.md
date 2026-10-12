@@ -154,6 +154,13 @@ Test: lokalni Open SaaS (`opensaas-sandbox`, cilj Safe projekta `opensaas-sandbo
   `GET /api/intents/<sid>` → skripta → intent `paid` za ~19 s, povratak u app s
   `mpt_status=paid`, krediti 93 → 103 (točno +10). Intenti `DXpwzcN4wvqMdj9Z`,
   `PEEiYxQReet7HXwn`.
+- **S checkouta, bez terminala (PR #103, deploy `fc9c389e` 12. 10. 2026.):** tenant s
+  `monerium_env = 'sandbox'` na checkoutu ima gumb „Simuliraj SEPA uplatu”, koji zove
+  `POST /api/intents/:sid/monerium-sandbox-transfer`. Rail šalje isti `treasury/fund`
+  poziv s iznosom intenta, IBAN-om tenanta i referencom checkouta. Uživo: intent
+  `x5vb938h5pkv` (1.23 €) bio je `paid`/`settled` već kod prvog polla, nakon 5 s.
+  Zaštite: produkcijski rail 404, intent koji nije `pending` 409, drugi klik unutar 60 s
+  429 (KV lock), greška Moneriuma 502 (lock se oslobodi).
 - Stray resolver daje uplatu **najnovijem** otvorenom intentu istog iznosa i cilja, pa
   svaki test treba novi intent.
 - PR #100: `http://localhost` `return_url` dopušten i tenantu s `monerium_env = 'sandbox'`
