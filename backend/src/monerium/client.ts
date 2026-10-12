@@ -12,6 +12,10 @@ import type {
 /// 404 for these paths.
 const API_ACCEPT = 'application/vnd.monerium.api-v2+json';
 
+export const MONERIUM_SANDBOX_API = 'https://api.monerium.dev';
+/// Web UI endpoint behind "Simulate bank transfer"; see monerium/sandboxFund.ts.
+export const SANDBOX_FUND_URL = 'https://sandbox.monerium.dev/api/treasury/fund';
+
 interface MoneriumAuthContext {
   userId?: string;
   profile?: string;
@@ -158,6 +162,20 @@ export class MoneriumClient {
     );
     if (Array.isArray(res)) return res;
     return res.ibans ?? [];
+  }
+
+  /// Sandbox only: a simulated SEPA transfer into one of this profile's
+  /// IBANs (see monerium/sandboxFund.ts). Never throws on an HTTP error, the
+  /// caller reports Monerium's status.
+  async sandboxFund(body: Record<string, unknown>): Promise<{ status: number; text: string }> {
+    if (this.creds.baseUrl !== MONERIUM_SANDBOX_API) throw new Error('sandboxFund: not a Monerium sandbox rail');
+    const token = await getAccessToken(this.env, this.creds);
+    const res = await fetch(SANDBOX_FUND_URL, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, Accept: 'application/json', 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    return { status: res.status, text: (await res.text()).slice(0, 500) };
   }
 
   async listWebhookSubscriptions(): Promise<MoneriumWebhookSubscription[]> {
