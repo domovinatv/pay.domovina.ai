@@ -150,6 +150,10 @@ Test: lokalni Open SaaS (`opensaas-sandbox`, cilj Safe projekta `opensaas-sandbo
   otišao na Safe projekta i intent `simtest-route-mv5ilqkd` (1.41 €) postao je
   `paid`/`settled`. IBAN zato stoji na glavnom Safeu.
   `node simulate-payment.mjs --env opensaas-sandbox --amount 1.00 --memo "<memo intenta>"`
+- E2E s lokalnim Open SaaS-om (isti dan): kupnja 10 Credits → checkout → memo intenta s
+  `GET /api/intents/<sid>` → skripta → intent `paid` za ~19 s, povratak u app s
+  `mpt_status=paid`, krediti 93 → 103 (točno +10). Intenti `DXpwzcN4wvqMdj9Z`,
+  `PEEiYxQReet7HXwn`.
 - Stray resolver daje uplatu **najnovijem** otvorenom intentu istog iznosa i cilja, pa
   svaki test treba novi intent.
 - PR #100: `http://localhost` `return_url` dopušten i tenantu s `monerium_env = 'sandbox'`
