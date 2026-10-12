@@ -116,6 +116,9 @@ INTENT_SSE = "1"
 # intent of the EXACT same amount; forwarded only when every candidate points
 # at the same whitelisted destination. "0": park as no_routing_target (old).
 STRAY_RESOLVER = "1"
+# ADR 0022 payment receipts: leaves on every cron tick, daily Merkle root stamped
+# on OpenTimestamps. "0" → no receipt rows are written and nothing is stamped.
+RECEIPTS = "1"
 
 # MT-03 (Fable 5.1 r2): ITalk forwards only issue orders minted at SAFE_ADDRESS,
 # as tenant rails always did. Pre-check 2026-10-10: every ITalk issue order

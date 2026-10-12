@@ -35,6 +35,7 @@ import { writeAudit } from '../tenants/db';
 import { defaultTenantId } from '../tenants/whitelist';
 import type { TenantRail } from '../tenants/rail';
 import { sendAlert } from '../alerts';
+import { receiptKind } from '../receipts/sid';
 import { publishIntentChange } from '../intents/stream';
 
 /// The forward hop: EURe that Monerium minted into the MPT Safe is pushed on
@@ -406,6 +407,9 @@ export async function handleForward(
     // batches `registry.record(...)` alongside the transfer so each forward
     // emits an onchain `Payment` event. Null → legacy single-transfer path.
     sessionId: routing.sid,
+    // ADR 0022 §3: a receipt sid is a direct receipt only when it came in the
+    // payer's own remittance; a resolved stray is marked unbound on-chain.
+    kind: receiptKind(routing.sid, via),
   };
   let result = await deps.forward(forwardArgs);
   // MT-10: two isolates picked the same router nonce. Our tx was NOT

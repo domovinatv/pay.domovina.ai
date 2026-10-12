@@ -42,6 +42,11 @@ import { publishIntentChange } from './intents/stream';
 import { checkRouterGas } from './tenants/onboarding';
 import { watchAllRailOutflows } from './monerium/outflowWatch';
 import { renderCheckoutPage } from './checkout/page';
+import { sendAlert } from './alerts';
+import { anchorPendingLeaves } from './receipts/anchor';
+import { buildReceiptAnchorApi, receiptsEnabled } from './receipts/routes';
+import { linkReceipts } from './receipts/link';
+import { mountReceiptPages } from './receipts/page';
 import { getSepaDetails } from './tenants/db';
 import { defaultTenantId } from './tenants/whitelist';
 
@@ -238,6 +243,10 @@ app.route('/api/monerium/admin', legacyMonerium);
 // Public payment-intents API (unauthenticated; rate-limit in Phase 2).
 app.route('/api/intents', buildIntentApi());
 
+// Payment receipts (ADR 0022): anchor proofs + the payer-side receipt pages.
+app.route('/api/receipts', buildReceiptAnchorApi());
+mountReceiptPages(app);
+
 // Self-custody wallet registry (Phase 3) + OTP-gated phone binding (Phase 4a).
 // See [[reference-wallet-domovina]] and [[reference-otp-domovina]].
 // Admin endpoints + HTML dashboard live under /admin/wallets (see admin/app.ts).
@@ -409,6 +418,25 @@ export default {
         (e) => console.error(`cron: webhook outbox failed: ${e}`),
       ),
     );
+
+    // Payment receipts (ADR 0022): direct + lazy (same-IBAN) leaves on every
+    // tick; one Merkle root + OpenTimestamps stamp per day (00:00 UTC tick).
+    if (receiptsEnabled(env)) {
+      ctx.waitUntil(
+        linkReceipts(env, { alert: (t) => sendAlert(env, t) }).then(
+          (r) => { if (r.anchors > 0) console.log(`cron: receipts anchors=${r.anchors} lazy=${r.lazy} mismatches=${r.mismatches}`); },
+          (e) => console.error(`cron: receipts link failed: ${e}`),
+        ),
+      );
+      if (event.cron === '0 */6 * * *' && new Date(event.scheduledTime).getUTCHours() === 0) {
+        ctx.waitUntil(
+          anchorPendingLeaves(env).then(
+            (r) => { if (r) console.log(`cron: receipts anchor #${r.anchorId} root=${r.root} leaves=${r.leaves} ots=${r.calendars}`); },
+            (e) => console.error(`cron: receipts anchor failed: ${e}`),
+          ),
+        );
+      }
+    }
 
     // Missed-webhook backstop: every RECONCILE_INTERVAL_S, pull recent orders
     // from the Monerium API (only while something is in flight).

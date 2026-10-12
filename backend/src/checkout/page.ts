@@ -7,11 +7,12 @@ import { buildEpcText } from '../intents/epc';
 import { buildIntentHub3Text } from '../intents/hub3';
 import { formatIban, type SepaDetails } from '../tenants/db';
 import { intentReference, type ReferenceStyle } from '../tenants/rail';
+import { isReceiptSid } from '../receipts/sid';
 
 /// Minimal HTML escape for the tenant-supplied beneficiary block. These values
 /// come from the tenants table (admin-controlled), but they are still data —
 /// never interpolate them raw.
-function escapeAttr(s: string): string {
+export function escapeAttr(s: string): string {
   return s.replace(/[&<>"']/g, (c) =>
     ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c] as string));
 }
@@ -50,7 +51,7 @@ const HUB3_PDF417 = { columns: 9, eclevel: 4, rowmult: 3 };
 /// /api/intents) containing `</script>` would break out of the tag → stored
 /// XSS on the payments origin. Escaping `<`, `>`, `&` and the JS-only line
 /// terminators U+2028/U+2029 makes the output inert while staying valid JSON.
-function jsonForScript(value: unknown): string {
+export function jsonForScript(value: unknown): string {
   return JSON.stringify(value)
     .replace(/</g, '\\u003c')
     .replace(/>/g, '\\u003e')
@@ -97,6 +98,14 @@ export function renderCheckoutPage(
     bic: sepa.bic,
   });
   const hub3Svg = renderPdf417Svg(buildIntentHub3Text(intent, sepa));
+  // ADR 0022: a receipt sid links to its receipt; any other pending intent
+  // offers to re-issue itself under a key-bound sid from this browser.
+  const receiptSid = isReceiptSid(sid);
+  const receiptBlock = receiptSid
+    ? `<p class="receipt-note">🧾 Ova uplata nosi <a href="/potvrda/${escapeAttr(sid)}">potvrdu o uplati</a>. Ključ potvrde je u ovom pregledniku.</p>`
+    : intent.state === 'pending'
+      ? `<p class="receipt-note"><a href="/potvrda/nova/${escapeAttr(sid)}">Želim potvrdu o uplati</a> — dokaz da ste baš vi platili, npr. za buduća prava.</p>`
+      : '';
   // Embed initial snapshot into the page so JS doesn't need to fetch on load.
   const initialState = {
     sid,
@@ -304,6 +313,8 @@ h1 { font-size: 1.5rem; margin: 0 0 .4rem; }
   background: none; border: 0; color: var(--muted); font-size: .85rem;
   text-decoration: underline; cursor: pointer;
 }
+.receipt-note { margin: 1rem 0 0; font-size: .9rem; color: var(--muted); text-align: center; }
+.receipt-note a { color: var(--navy); font-weight: 600; }
 footer {
   padding: 1rem 1.25rem; border-top: 1px solid var(--border);
   color: var(--muted); font-size: .8rem; text-align: center;
@@ -364,6 +375,7 @@ footer a { color: var(--navy); text-decoration: none; font-weight: 600; }
       <div class="row"><span class="label">Sesija</span><span class="value" id="sidVal">—</span></div>
     </div>
   </div>
+  ${receiptBlock}
 </main>
 <div id="successOverlay" class="success-overlay" style="display:none" role="dialog" aria-modal="true" aria-labelledby="successTitle">
   <div class="success-modal">
@@ -376,6 +388,7 @@ footer a { color: var(--navy); text-decoration: none; font-weight: 600; }
     <p class="sub"><strong id="successAmount">—</strong> EUR je stiglo.</p>
     <p class="settle-note" id="successNote"></p>
     <a id="txLink" class="tx-link" href="#" target="_blank" rel="noopener" style="display:none">Pogledaj transakciju na Gnosisscanu →</a>
+    ${receiptSid ? `<a class="tx-link" href="/potvrda/${escapeAttr(sid)}">Preuzmi potvrdu o uplati →</a>` : ''}
     <button type="button" class="details-btn" id="successDetails">Prikaži detalje</button>
   </div>
 </div>
