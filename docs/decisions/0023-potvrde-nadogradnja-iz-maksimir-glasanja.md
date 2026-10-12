@@ -231,3 +231,23 @@ Ispravljeno u istoj grani; zlatni vektor je `r183ns4pcpn659hd2z3xtaqiwq` i jedna
 pregledničkom bundleu i u Pythonu. To je točno ona vrsta greške zbog koje Maksimir ima neovisni
 verifikator.
 
+
+## Dopuna (2026-10-12): javni repo nije izvor istine
+
+Pitanje: što ako netko (GitHub, ukraden token ili mi) prepiše povijest repoa
+`mpt-receipts-checkpoints`? Odgovor: sigurnost ne smije ovisiti o Git povijesti, nego o
+Bitcoinu, a repo služi samo dostupnosti. Zato:
+
+1. **Verifikator provjerava Bitcoin vrijeme** (`--btc-api`, Esplora API, npr. mempool.space i
+   blockstream.info, koji se moraju slagati). `.ots` se parsira i izvršava do Bitcoin
+   atestacije, zaglavlje bloka se provjerava (hash i merkle root), a vrijeme bloka mora biti
+   između `created_at − 2 h` i `created_at + 48 h`. Lanac krivotvoren naknadno ima mlađe dokaze
+   i pada.
+2. **Potvrda nosi svoj `.ots`** (`payments[].anchor.ots`, `ots_bitcoin`). Worker na svakom
+   6-satnom ticku iz javnog repoa povuče dokaz koji je Action nadogradio na Bitcoin. Prihvaća ga
+   samo ako žigoše isti `chain_head` i ima Bitcoin atestaciju. Svaki uplatitelj je tako neovisan
+   svjedok originalnog lanca, bez repoa i bez MPT-a.
+3. **Ruleset na `main`** (`non_fast_forward` + `deletion`) štiti od ukradenog tokena i greške.
+   Admina ne zaustavlja, i to je prihvatljivo: svaki klon, fork i potvrda drži originalni lanac.
+4. **Software Heritage**: Action nakon svakog commita traži arhiviranje, pa postoji neovisna
+   kopija izvan GitHuba.

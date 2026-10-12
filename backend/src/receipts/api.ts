@@ -5,7 +5,7 @@ import { gnosis } from 'viem/chains';
 import type { Env } from '../types';
 import { sendAlert } from '../alerts';
 import { getIntent } from '../intents/db';
-import { getAnchor, latestAnchor, listAnchors, proofForLeaf, type AnchorRow, type LeafProof } from './anchor';
+import { getAnchor, latestAnchor, listAnchors, otsHasBitcoin, proofForLeaf, type AnchorRow, type LeafProof } from './anchor';
 import { linkReceipts } from './link';
 import { isReceiptSid, receiptSidMatches } from './sid';
 
@@ -187,6 +187,7 @@ function anchorJson(a: AnchorRow) {
     total_cents: a.total_cents,
     lazy_count: a.lazy_count,
     ots_available: a.ots !== null,
+    ots_bitcoin: a.ots !== null && otsHasBitcoin(hexToBytes(a.ots as Hex)),
     ots_calendars: a.ots_calendars ? (JSON.parse(a.ots_calendars) as string[]) : [],
     chain_tx_hash: a.chain_tx_hash,
     created_at: a.created_at,

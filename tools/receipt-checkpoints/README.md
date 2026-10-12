@@ -10,7 +10,22 @@ Svaki dan (00:40 UTC) GitHub Action, **bez ikakve tajne**:
 2. zapiše `anchors/<seq>.json` i `anchors/<seq>.ots` (OpenTimestamps dokaz za `sha256(chain_head)`);
 3. napravi `ots upgrade` za dokaze koji još čekaju Bitcoin blok;
 4. provjeri cijeli lanac skriptom `mpt_receipt_verify.py`. **Ako lanac puca, Action pada**;
-5. osvježi `index.json` (`"bitcoin": true` kad dokaz ima Bitcoin atestaciju).
+5. osvježi `index.json` (`"bitcoin": true` kad dokaz ima Bitcoin atestaciju);
+6. zatraži arhiviranje repoa u [Software Heritage](https://archive.softwareheritage.org)
+   (neovisna kopija izvan GitHuba).
+
+## Zašto Git povijest nije izvor istine
+
+Sigurnost ne ovisi o tome da ova povijest ostane netaknuta:
+
+- svako sidro ima **Bitcoin** dokaz (`.ots`) da je `chain_head` postojao najkasnije u trenutku
+  bloka, a takav se dokaz ne može izraditi unatrag;
+- verifikator (`--btc-api`) provjerava da je Bitcoin vrijeme blizu `created_at` sidra, pa lanac
+  krivotvoren kasnije pada, jer su mu dokazi mlađi od sidara;
+- svaka potvrda o uplati nosi `.ots` svog sidra, pa je svaki uplatitelj, svaki klon i svaki fork
+  neovisan svjedok originalnog lanca;
+- `main` ima ruleset koji zabranjuje force-push i brisanje (zaštita od ukradenog tokena ili
+  greške; admin ga može isključiti, ali stari klonovi i Bitcoin dokazi ostaju).
 
 Zašto: dokazi ne smiju postojati samo u MPT-ovoj bazi. Ovaj repo ih čuva i kad MPT nestane, a
 povijest commitova pokazuje kad je koje sidro prvi put viđeno.
@@ -21,7 +36,8 @@ povijest commitova pokazuje kad je koje sidro prvi put viđeno.
 git clone https://github.com/domovinatv/mpt-receipts-checkpoints
 python3 mpt-receipts-checkpoints/mpt_receipt_verify.py mpt-potvrda-<sid>.json \
   --checkpoints mpt-receipts-checkpoints/anchors \
-  --rpc https://rpc.gnosischain.com --rpc https://gnosis.drpc.org
+  --rpc https://rpc.gnosischain.com --rpc https://gnosis.drpc.org \
+  --btc-api https://mempool.space/api --btc-api https://blockstream.info/api
 ots verify -d $(python3 -c "import json,hashlib;print(hashlib.sha256(bytes.fromhex(json.load(open('mpt-receipts-checkpoints/anchors/1.json'))['chain_head'][2:])).hexdigest())") mpt-receipts-checkpoints/anchors/1.ots
 ```
 

@@ -43,7 +43,7 @@ import { checkRouterGas } from './tenants/onboarding';
 import { watchAllRailOutflows } from './monerium/outflowWatch';
 import { renderCheckoutPage } from './checkout/page';
 import { sendAlert } from './alerts';
-import { anchorPendingLeaves } from './receipts/anchor';
+import { anchorPendingLeaves, pullUpgradedOts } from './receipts/anchor';
 import { buildReceiptAnchorApi, receiptsEnabled } from './receipts/routes';
 import { linkReceipts } from './receipts/link';
 import { mountReceiptPages } from './receipts/page';
@@ -434,6 +434,16 @@ export default {
           anchorPendingLeaves(env, { heartbeat: true }).then(
             (r) => { if (r) console.log(`cron: receipts anchor #${r.seq} chain_head=${r.chainHead} leaves=${r.leaves} ots=${r.calendars}`); },
             (e) => console.error(`cron: receipts anchor failed: ${e}`),
+          ),
+        );
+      }
+      // The public checkpoint repo upgrades .ots to Bitcoin at 00:40 UTC; pull
+      // the upgraded proofs back on every 6-hourly tick (ADR 0023 §3).
+      if (event.cron === '0 */6 * * *') {
+        ctx.waitUntil(
+          pullUpgradedOts(env).then(
+            (n) => { if (n > 0) console.log(`cron: receipts ots upgraded=${n}`); },
+            (e) => console.error(`cron: receipts ots pull failed: ${e}`),
           ),
         );
       }

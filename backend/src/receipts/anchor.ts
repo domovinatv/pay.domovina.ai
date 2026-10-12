@@ -191,6 +191,62 @@ export async function anchorPendingLeaves(
   return { seq, chainHead: ch, root, leaves: leaves.length, calendars: stamp.calendars.length };
 }
 
+/// OTS attestation tag of a Bitcoin block header (python-opentimestamps).
+const BITCOIN_ATTESTATION = new Uint8Array([0x05, 0x88, 0x96, 0x0d, 0x73, 0xd7, 0x19, 0x01]);
+
+export function otsHasBitcoin(ots: Uint8Array): boolean {
+  outer: for (let i = 0; i + BITCOIN_ATTESTATION.length <= ots.length; i++) {
+    for (let j = 0; j < BITCOIN_ATTESTATION.length; j++) {
+      if (ots[i + j] !== BITCOIN_ATTESTATION[j]) continue outer;
+    }
+    return true;
+  }
+  return false;
+}
+
+/// True iff `ots` is a detached proof for sha256(chain_head).
+export async function otsStampsChainHead(ots: Uint8Array, head: Hex): Promise<boolean> {
+  const n = OTS_MAGIC.length;
+  if (ots.length < n + 34) return false;
+  for (let i = 0; i < n; i++) if (ots[i] !== OTS_MAGIC[i]) return false;
+  if (ots[n] !== OTS_VERSION || ots[n + 1] !== OP_SHA256) return false;
+  const digest = await sha256(hexToBytes(head));
+  return digest.every((b, i) => ots[n + 2 + i] === b);
+}
+
+export const CHECKPOINT_RAW =
+  'https://raw.githubusercontent.com/domovinatv/mpt-receipts-checkpoints/main/anchors';
+
+/// ADR 0023 §3: the public checkpoint repo runs `ots upgrade`; D1 keeps the
+/// calendars' pending proof. Pull the upgraded proof back so every receipt can
+/// embed a Bitcoin-attested .ots. Accepted only if it stamps the same
+/// chain_head and carries a Bitcoin attestation; anything else is ignored (the
+/// file could be wrong, never trusted). Returns how many were upgraded.
+export async function pullUpgradedOts(
+  env: Env,
+  opts: { fetchImpl?: typeof fetch; base?: string; limit?: number } = {},
+): Promise<number> {
+  const rows = await env.DB.prepare(
+    `SELECT seq, chain_head, ots FROM receipt_anchors ORDER BY seq DESC LIMIT ?`,
+  ).bind(opts.limit ?? 60).all<{ seq: number; chain_head: Hex; ots: string | null }>();
+  const doFetch = opts.fetchImpl ?? fetch;
+  let upgraded = 0;
+  for (const r of rows.results) {
+    if (r.ots && otsHasBitcoin(hexToBytes(r.ots as Hex))) continue;
+    try {
+      const res = await doFetch(`${opts.base ?? CHECKPOINT_RAW}/${r.seq}.ots`, { signal: AbortSignal.timeout(10_000) });
+      if (!res.ok) continue;
+      const body = new Uint8Array(await res.arrayBuffer());
+      if (body.length > 100_000 || !otsHasBitcoin(body) || !(await otsStampsChainHead(body, r.chain_head))) continue;
+      await env.DB.prepare(`UPDATE receipt_anchors SET ots = ? WHERE seq = ?`).bind(toHex(body), r.seq).run();
+      upgraded++;
+    } catch {
+      /* repo unreachable: try again next tick */
+    }
+  }
+  return upgraded;
+}
+
 export interface LeafProof {
   anchor_id: number;
   seq: number;
@@ -203,6 +259,10 @@ export interface LeafProof {
   total_cents: number;
   lazy_count: number;
   ots_available: boolean;
+  /// The .ots itself (0x hex), so the receipt is a standalone witness of the
+  /// chain (ADR 0023 §3): pending until the checkpoint repo upgraded it.
+  ots: Hex | null;
+  ots_bitcoin: boolean;
   anchored_at: number;
 }
 
@@ -229,6 +289,8 @@ export async function proofForLeaf(env: Env, leafId: number, seq: number): Promi
     total_cents: anchor.total_cents,
     lazy_count: anchor.lazy_count,
     ots_available: anchor.ots !== null,
+    ots: (anchor.ots as Hex | null) ?? null,
+    ots_bitcoin: anchor.ots !== null && otsHasBitcoin(hexToBytes(anchor.ots as Hex)),
     anchored_at: anchor.created_at,
   };
 }

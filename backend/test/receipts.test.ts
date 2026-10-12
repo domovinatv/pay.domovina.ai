@@ -8,7 +8,9 @@ import { generateSid } from '../src/intents/sid';
 import { handleForward, type ForwardDeps } from '../src/monerium/forward';
 import type { MoneriumOrder } from '../src/monerium/types';
 import { receiptRequestMessage } from '../src/receipts/api';
-import { anchorPendingLeaves, buildOtsFile, chainHead, proofForLeaf, sha256, ZERO32 } from '../src/receipts/anchor';
+import {
+  anchorPendingLeaves, buildOtsFile, chainHead, otsHasBitcoin, proofForLeaf, pullUpgradedOts, sha256, ZERO32,
+} from '../src/receipts/anchor';
 import { linkReceipts, sameHolder } from '../src/receipts/link';
 import { leafHash, merkleProof, merkleRoot, verifyMerkleProof } from '../src/receipts/merkle';
 import {
@@ -457,5 +459,43 @@ describe('anchor chain (ADR 0023 §2)', () => {
     expect(list.anchors.map((a) => a.seq)).toEqual([1, 2]);
     expect((await api.request('/anchors/1.ots', undefined, env)).status).toBe(200);
     expect((await api.request('/anchors/9', undefined, env)).status).toBe(404);
+  });
+});
+
+// ---- ADR 0023 §3: upgraded .ots pulled back from the public repo, embedded in receipts ----
+
+describe('upgraded OTS pull-back', () => {
+  const quiet = (async () => new Response(new Uint8Array([1]), { status: 200 })) as unknown as typeof fetch;
+  const BTC = [0x00, 0x05, 0x88, 0x96, 0x0d, 0x73, 0xd7, 0x19, 0x01, 0x01, 0x07];
+
+  async function anchored() {
+    const s = setup();
+    s.pay('anchor', '2026-10-04T10:00:00Z', { sid: ANCHOR_SID, prefix: 'mpt' });
+    await linkReceipts(s.env, s.deps);
+    const a = await anchorPendingLeaves(s.env, { fetchImpl: quiet });
+    return { ...s, head: a!.chainHead };
+  }
+  const serve = (body: Uint8Array) => (async () => new Response(body, { status: 200 })) as unknown as typeof fetch;
+
+  it('takes a Bitcoin-attested proof of the same chain_head and embeds it in the receipt', async () => {
+    const { env, raw, head } = await anchored();
+    const good = buildOtsFile(await sha256(hexToBytes(head)), [new Uint8Array(BTC)]);
+    expect(await pullUpgradedOts(env, { fetchImpl: serve(good) })).toBe(1);
+    expect(await pullUpgradedOts(env, { fetchImpl: serve(good) })).toBe(0); // already upgraded
+    const leaf = raw.prepare(`SELECT id FROM receipt_leaves`).get() as { id: number };
+    const p = (await proofForLeaf(env, leaf.id, 1))!;
+    expect(p).toMatchObject({ ots_bitcoin: true, ots: bytesToHex(good) });
+  });
+
+  it('ignores a proof for another digest, or one without a Bitcoin attestation', async () => {
+    const { env, raw, head } = await anchored();
+    const wrong = buildOtsFile(await sha256(hexToBytes(ZERO32)), [new Uint8Array(BTC)]);
+    const pending = buildOtsFile(await sha256(hexToBytes(head)), [new Uint8Array([0x00, 0x83, 0xdf, 0xe3, 0x0d, 0x2e, 0xf9, 0x0c, 0x8e, 0x00])]);
+    expect(await pullUpgradedOts(env, { fetchImpl: serve(wrong) })).toBe(0);
+    expect(await pullUpgradedOts(env, { fetchImpl: serve(pending) })).toBe(0);
+    const down = (async () => { throw new Error('offline'); }) as unknown as typeof fetch;
+    expect(await pullUpgradedOts(env, { fetchImpl: down })).toBe(0);
+    const row = raw.prepare(`SELECT ots FROM receipt_anchors WHERE seq = 1`).get() as { ots: string };
+    expect(otsHasBitcoin(hexToBytes(row.ots as Hex))).toBe(false);
   });
 });

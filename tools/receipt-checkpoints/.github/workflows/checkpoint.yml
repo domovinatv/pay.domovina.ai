@@ -47,3 +47,7 @@ jobs:
           git add -A anchors index.json
           git diff --cached --quiet || git commit -m "checkpoint $(date -u +%Y-%m-%dT%H:%MZ)"
           git push
+      - name: Archive in Software Heritage (independent copy outside GitHub)
+        run: |
+          curl -fsS -X POST "https://archive.softwareheritage.org/api/1/origin/save/git/url/https://github.com/${GITHUB_REPOSITORY}/" \
+            || echo "Software Heritage request failed (rate limit?), next run retries"
