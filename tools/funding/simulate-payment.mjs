@@ -66,14 +66,9 @@ const body = {
 console.log('POST https://sandbox.monerium.dev/api/treasury/fund', JSON.stringify(body));
 if (a['dry-run']) process.exit(0);
 
-const tok = await (await fetch(`${vars.MONERIUM_BASE_URL}/auth/token`, {
-  method: 'POST',
-  headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-  body: new URLSearchParams({ grant_type: 'client_credentials', client_id: vars.MONERIUM_CLIENT_ID, client_secret: vars.MONERIUM_CLIENT_SECRET }),
-})).json();
 const r = await fetch('https://sandbox.monerium.dev/api/treasury/fund', {
   method: 'POST',
-  headers: { Authorization: `Bearer ${tok.access_token}`, Accept: 'application/json', 'Content-Type': 'application/json' },
+  headers: { Authorization: `Bearer ${m.accessToken}`, Accept: 'application/json', 'Content-Type': 'application/json' },
   body: JSON.stringify(body),
 });
 const text = await r.text();

@@ -27,6 +27,8 @@ export async function moneriumClient(vars) {
   };
   return {
     call,
+    /// Za pozive izvan javnog API-ja (sandbox.monerium.dev/api/treasury/fund). Ne ispisivati.
+    accessToken: tok.access_token,
     profiles: () => call('GET', '/profiles'),
     addresses: () => call('GET', '/addresses'),
     ibans: () => call('GET', '/ibans'),
