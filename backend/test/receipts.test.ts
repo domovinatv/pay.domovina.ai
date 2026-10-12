@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { bytesToHex, hexToBytes, type Hex } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
 
@@ -516,5 +516,27 @@ describe('long-used IBAN (first real test covered 73 payments)', () => {
     for (const { id } of raw.prepare(`SELECT id FROM receipt_leaves`).all() as Array<{ id: number }>) {
       expect(many.get(id)).toEqual(await proofForLeaf(env, id, 1));
     }
+  });
+});
+
+describe('ad-hoc anchor trigger', () => {
+  it('off without a key, 401 with a wrong one, anchors with the right one', async () => {
+    // The route stamps with the global fetch: keep the test off the real calendars.
+    vi.stubGlobal('fetch', async () => new Response(new Uint8Array([1]), { status: 200 }));
+    const { env, pay } = setup();
+    pay('anchor', '2026-10-04T10:00:00Z', { sid: ANCHOR_SID, prefix: 'mpt' });
+    const api = buildReceiptAnchorApi();
+    const post = (e: Env, key?: string) =>
+      api.request('/anchors/now', { method: 'POST', headers: key ? { 'x-anchor-key': key } : {} }, e);
+    expect((await post(env, 'x')).status).toBe(404);
+    const keyed = { ...env, RECEIPT_ANCHOR_KEY: 'k-123', TELEGRAM_BOT_TOKEN: '' } as Env;
+    expect((await post(keyed, 'wrong')).status).toBe(401);
+    expect((await post(keyed)).status).toBe(401);
+    const ok = await post(keyed, 'k-123');
+    expect(ok.status).toBe(200);
+    const j = await ok.json() as { linked: { anchors: number }; anchor: { seq: number; leaves: number } };
+    expect(j.linked.anchors).toBe(1);
+    expect(j.anchor).toMatchObject({ seq: 1, leaves: 1, calendars: 4 });
+    vi.unstubAllGlobals();
   });
 });
