@@ -28,8 +28,11 @@ Wrangler env var: `MONERIUM_BASE_URL`.
 |---|---|---|---|
 | Production | ITalk d.o.o. | `pay.domovina.ai` | `italk` (konfiguracija iz `env`, bez reda u `tenant_rail`) |
 | Sandbox | ITalk sandbox | `italk_domovina_projekti_sandbox` | `italk-sandbox` (red u `tenant_rail`, Chiado) |
+| Sandbox | `opensaas-sandbox@mpt.hr` | `opensaas-sandbox` | `opensaas-sandbox` (direct, Chiado; Safe `0x47b3…923e`, IBAN `EE11 7863 3891 6150 7282`) |
 
-Imena appova ne moraju biti konzistentna; rail ih nigdje ne čita.
+Rail imena appova nigdje ne čita, ali od 12. 10. 2026. vrijedi pravilo: **isti identifikator** za
+lokalni dio e-maila Monerium računa, ime Private appa i MPT tenant id (npr. `opensaas-sandbox`).
+Za kupce `<kupac>-sandbox` i `<kupac>`. `italk_domovina_projekti_sandbox` je stariji izuzetak.
 
 Na istom računu smije postojati više appova (Private app = par
 `client_id`/`client_secret`), npr. za drugi sustav. Svi dijele isti profil, isti

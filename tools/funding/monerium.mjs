@@ -33,6 +33,7 @@ export async function moneriumClient(vars) {
     /// Safe koji je poruku već potpisao on-chain (SignMessageLib) šalje signature "0x".
     linkAddress: (profile, address, chain, signature = '0x') =>
       call('POST', '/addresses', { profile, address, chain, message: MONERIUM_LINK_MESSAGE, signature }),
+    requestIban: (address, chain) => call('POST', '/ibans', { address, chain }),
     moveIban: (iban, address, chain) => call('PATCH', `/ibans/${iban.replace(/\s+/g, '')}`, { address, chain }),
   };
 }

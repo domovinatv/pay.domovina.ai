@@ -66,8 +66,10 @@ const safeReadAbi = [
   { type: 'function', name: 'getThreshold', stateMutability: 'view', inputs: [], outputs: [{ type: 'uint256' }] },
 ];
 
+/// `env` is an environment name (`.env.<env>` next to these scripts) or, when
+/// it contains a slash, a path to the env file itself.
 export function envFile(env) {
-  return join(HERE, `.env.${env}`);
+  return env.includes('/') ? env : join(HERE, `.env.${env}`);
 }
 
 export function loadEnv(env) {
