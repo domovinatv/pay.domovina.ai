@@ -3,6 +3,8 @@ import { Hono } from 'hono';
 import type { Env } from '../types';
 import { countOpenIntentsForTarget, createIntent, getIntent, isTrustedTarget } from './db';
 import { generateSid } from './sid';
+import { isReceiptSid } from '../receipts/sid';
+import { registerReceiptRoutes } from '../receipts/api';
 import { buildEpcText } from './epc';
 import { buildIntentHub3Text } from './hub3';
 import { computeStage, confirmForwardIfMined, loadStageContext } from './stage';
@@ -232,6 +234,61 @@ export function buildIntentApi(): Hono<{ Bindings: Env }> {
     if (!SID_RE.test(sid)) return c.json({ error: 'intent_not_found' }, 404);
     return openIntentStream(c.env, sid);
   });
+
+  // ADR 0022: the payer's browser re-issues a pending intent under a receipt
+  // sid it derived from its own key. Same tenant, target, amount and label;
+  // the original stays as it is. No key needed (the original sid is public
+  // anyway), so the same SR-01 cap as keyless creation applies.
+  api.post('/:sid/receipt-intent', async (c) => {
+    const original = await getIntent(c.env, c.req.param('sid'));
+    if (!original) return c.json({ error: 'intent_not_found' }, 404);
+    const now = Math.floor(Date.now() / 1000);
+    if (original.state !== 'pending' || original.expires_at <= now) {
+      return c.json({ error: 'intent_not_pending' }, 409);
+    }
+    let body: { sid?: string };
+    try {
+      body = await c.req.json<{ sid?: string }>();
+    } catch {
+      return c.json({ error: 'invalid_json' }, 400);
+    }
+    if (!isReceiptSid(body.sid)) return c.json({ error: 'invalid_receipt_sid' }, 400);
+    const tenantId = original.tenant_id ?? defaultTenantId(c.env);
+    const railRefusal = await tenantRailRefusal(c.env, tenantId);
+    if (railRefusal) return c.json({ error: railRefusal, tenant_id: tenantId }, 403);
+    const target = original.target_address;
+    const style = await getReferenceStyle(c.env, tenantId);
+    const direct = style?.mode === 'direct';
+    if (!direct && !(await isAddressWhitelisted(c.env, tenantId, target))) {
+      return c.json({ error: 'target_not_whitelisted', tenant_id: tenantId, target_address: target }, 403);
+    }
+    if (!direct && !(await isTrustedTarget(c.env, tenantId, target))) {
+      const open = await countOpenIntentsForTarget(c.env, tenantId, target, now);
+      if (open >= maxOpenIntentsPerTarget(c.env)) {
+        return c.json({ error: 'too_many_open_intents', target_address: target }, 429);
+      }
+    }
+    const metadata = {
+      ...(original.metadata_json ? (JSON.parse(original.metadata_json) as Record<string, unknown>) : {}),
+      receipt_of: original.sid,
+    };
+    const sid = await insertWithRetry(
+      c.env, target, original.amount_cents,
+      Math.max(original.expires_at - now, DEFAULT_TTL_SECONDS),
+      { target_address: target, sid: body.sid, label: original.label ?? undefined, metadata },
+      tenantId, original.created_with_key === 1,
+    );
+    if (sid === 'conflict') return c.json({ error: 'sid_already_exists' }, 409);
+    if (!sid) return c.json({ error: 'sid_collision_after_retries' }, 500);
+    const intent = await getIntent(c.env, sid);
+    if (!intent) return c.json({ error: 'intent_not_persisted' }, 500);
+    const origin = new URL(c.req.url).origin;
+    const sepa = await getSepaDetails(c.env, tenantId);
+    const status = computeStage({ intent, order: null, forward: null, now });
+    return c.json({ ...intentResponseJson(intent, origin, sepa, style), status }, 201);
+  });
+
+  registerReceiptRoutes(api);
 
   return api;
 }

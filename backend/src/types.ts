@@ -76,6 +76,7 @@ export interface Env {
   TENANT_SECRETS_KEK: string;         // SECRET — base64 of 32 bytes; AES-GCM key for tenant_rail *_enc columns
   TENANT_SECRETS_KEK_PREV?: string;   // SECRET, only during a KEK rotation: the previous KEK, read-only (docs/runbook/kek-rotation.md)
   INTENT_SSE: string;                 // "1" → GET /api/intents/:sid/stream serves SSE; else 404 as before
+  RECEIPTS?: string;                  // "1" → ADR 0022 receipt leaves (cron) + daily Merkle root on OpenTimestamps
   STRAY_RESOLVER?: string;            // "1" → reference-less payments are matched to an intent by amount + time (src/monerium/strayResolver.ts)
   WATCH_HEARTBEAT_URL?: string;        // secret: dead-man ping after every healthy theft-detector tick (TD-02), e.g. healthchecks.io
   RECONCILE_FORWARDS?: string;         // "1" → the reconcile cron runs the forward path on a processed order with no forward row (SR-05)
