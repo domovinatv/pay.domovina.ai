@@ -60,6 +60,7 @@ history.
 | [0020](0020-hr-iban-listener-bez-minta.md) | MPT kao „payment listener“ za hrvatski IBAN: HUB3 + bank-push-gateway, bez minta (novac izravno na tenantov HR račun, MPT samo dojava i uparivanje) | 2026-10-11 | 📝 Proposed | ⏳ HUB3 za HR IBAN gotov (#77); čeka gateway fazu 1–2 |
 | [0021](0021-mpt-hr-javni-hostovi-i-api-v1.md) | Javni hostovi pod `*.mpt.hr` (`api.` `/v1`, `pay.`, `dashboard.`, `docs.`, `sandbox-api.`); `*.domovina.ai` trajni alias bez redirecta | 2026-10-11 | 📝 Proposed | ⏳ Plan i rubni slučajevi zapisani; faza 0 (priprema zone) sljedeća |
 | [0022](0022-potvrda-o-uplati-vezana-uz-kljuc-uplatitelja.md) | Potvrda o uplati vezana uz ključ uplatitelja: `sid` = otisak ključa (`r1…`), offline PDF, `kind=rcpt1` na Gnosisu + OpenTimestamps; matrica kad da/ne; naknadno (lazy) izdavanje za ranije uplate s istog IBAN-a | 2026-10-12 | 📝 Proposed | ⏳ Faza 0 (spike: `r1` sid + PDF u pregledniku) sljedeća |
+| [0023](0023-potvrde-nadogradnja-iz-maksimir-glasanja.md) | Nadogradnja potvrda iz glasanja Maksimir: 24 riječi + passkey PRF (ključ po potvrdi izveden iz jedne tajne, PDF bez ključa), append-only lanac sidara s brojevima, javni checkpoint repo + `ots upgrade`, stdlib verifikator, `MptReceiptAnchorV1` bez ovlasti nad novcem, Semaphore anonimni claim | 2026-10-12 | 📝 Proposed | ⏳ Faze 1–3 (lanac sidara, verifikator, javni repo) sljedeće |
 
 ---
 
