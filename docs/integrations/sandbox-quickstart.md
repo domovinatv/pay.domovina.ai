@@ -94,7 +94,22 @@ part of `whsec_…`. Dedup on `webhook-id`. Grant credits on `intent.paid` (and 
 Make it idempotent on `sid`, the same as the webhook handler. No CORS is needed because
 the call does not come from the browser.
 
-## 5. Production
+## 5. List intents and totals
+
+Secret key only. Always scoped to your tenant.
+
+```bash
+# newest first; follow next_cursor while has_more
+curl -s "$MPT_API_URL/api/intents?state=paid&limit=50" -H "authorization: Bearer $MPT_SECRET_KEY"
+
+# totals per outcome: paid, late, underpaid, pending, expired
+curl -s "$MPT_API_URL/api/intents/stats?created_from=2026-10-01T00:00:00Z" -H "authorization: Bearer $MPT_SECRET_KEY"
+```
+
+Total revenue = `paid.amount_received_cents`, plus `late.amount_received_cents` if you credit
+late payments.
+
+## 6. Production
 
 Production needs a real MPT tenant. You need your own Monerium account (KYB). MPT then
 onboards your IBAN, Safe and webhook and issues `sk_…`. Replace `sk_test_…` with `sk_…`

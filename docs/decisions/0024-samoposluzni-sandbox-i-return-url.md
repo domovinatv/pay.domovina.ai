@@ -167,11 +167,27 @@ potreban i `localhost:3000` ne ulazi u `ALLOWED_ORIGINS`. Server kredite daje id
 `sid`-u, isti kod kao webhook handler. U produkciji webhook i polling rade zajedno, a prvi koji
 stigne daje kredite.
 
-### D8. Lista plaćenih intenta (rupa 4): zaseban PR
+### D8. Lista intenta i zbrojevi (rupa 4): PR 2
 
-`GET /api/intents?state=paid&since=<iso>&limit=` samo sa `sk_` / `sk_test_` ključem, filtrirano
-po tenantu ključa, kursor po `paid_at`. Oblik stavke = postojeći `intentResponseJson` bez
-QR polja. Dovoljno za `fetchTotalRevenue`.
+Oba endpointa traže **tajni** ključ (`sk_` ili `sk_test_`): bez ključa `401 missing_tenant_key`,
+a s `pk_` ključem `403 secret_key_required`. Uvijek su filtrirani po tenantu ključa. Default
+tenant (ITalk) vidi i stare redove bez `tenant_id`.
+
+- `GET /api/intents?state=&created_from=&created_to=&limit=&cursor=` vraća
+  `{ data, has_more, next_cursor }`. Redoslijed je najnoviji prvi (`created_at`, pa `sid`).
+  Kursor je keyset, pa se stranica ne pomiče kad stižu novi intenti. `limit` je 1–200
+  (default 50). `created_from` je uključiv, a `created_to` isključiv, oba u ISO-8601.
+  Stavka ima oblik `intentResponseJson`, uključujući `metadata`, ali bez `epc_qr_data` i
+  `hub3_data`. Za sandbox tenanta dodatno vrijedi `sandboxView`.
+- `GET /api/intents/stats?created_from=&created_to=` vraća po jedan zbroj
+  (`count`, `amount_cents`, `amount_received_cents`) za svaki ishod:
+  - `paid`;
+  - `late`: istekao, ali novac je stigao;
+  - `underpaid`: novac je stigao, ali premalo, intent i dalje `pending`;
+  - `pending`;
+  - `expired`: istekao bez novca.
+
+  Open SaaS `fetchTotalRevenue` = `paid.amount_received_cents` (+ `late`, ako ih kreditira).
 
 ### D9. Javni host (rupa 5)
 
@@ -215,6 +231,7 @@ Ključevi `*_test_` već odgovaraju planu iz P9.
 | Checkout: traka, gumbi, povratak | `backend/src/checkout/page.ts` |
 | Admin: `sbx-` rezerviran, sandbox ne dobiva rail | `backend/src/tenants/railAdmin.ts` |
 | Testovi (35) | `backend/test/sandbox.test.ts` |
+| PR 2: lista + zbrojevi (16 testova) | `backend/src/intents/list.ts`, `intents/api.ts`, `backend/test/intentList.test.ts` |
 | Upute za developere | [`docs/integrations/sandbox-quickstart.md`](../integrations/sandbox-quickstart.md) |
 
 `compat-check.sh`: svi stari testovi (backend, shopify/worker, wallet) prolaze bez izmjena.
