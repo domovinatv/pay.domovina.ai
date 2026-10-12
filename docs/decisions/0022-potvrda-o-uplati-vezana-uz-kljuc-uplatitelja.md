@@ -1,6 +1,6 @@
 # ADR 0022 — Potvrda o uplati vezana uz ključ uplatitelja: `sid` = otisak ključa, offline PDF, sidrenje na Gnosisu i OpenTimestamps
 
-- **Status:** Proposed (2026-10-12). Ništa još nije implementirano.
+- **Status:** Proposed (2026-10-12). Faze 1, 2 i 4 implementirane na grani `feat/receipts-0022` (vidi „Implementacija“ na dnu).
 - **Kontekst:** MPT rail (`backend/`), intent API (`backend/src/intents/api.ts`), generator `sid`-a
   (`backend/src/intents/sid.ts`), `PaymentRegistry` (`backend/contracts/PaymentRegistry.sol`),
   forward s `registry.record(...)` (`backend/src/router/safe.ts`), checkout stranica i Flutter
@@ -174,9 +174,9 @@ sequenceDiagram
    jer se vlasnik ključa u međuvremenu mogao promijeniti (izgubljen ključ, novi uređaj).
 5. **Svi tenanti.** Pokriva se po IBAN-u, neovisno o tenantu, jer je uplatitelj ista osoba. Veza
    nije javna (§ niže), pa tenant B ne saznaje za uplate tenantu A.
-6. **Identifikator uplate** je Moneriumov mint na Gnosisu (`chainId`, tx hash, `logIndex`
-   `Transfer` loga), jer postoji i za uplate koje nemaju forward kroz MPT Safe (slučaj 4).
-   `monerium_orders.tx_hashes` ga već sprema.
+6. **Identifikator uplate** je Moneriumov order (u listu kao `keccak256(orderId)`) i njegova mint
+   transakcija na Gnosisu (prva iz `monerium_orders.tx_hashes`). Mint postoji i za uplate koje
+   nemaju forward kroz MPT Safe (slučaj 4). `logIndex` minta se ne sprema, pa ga list ne nosi.
 7. **Nesigurni slučajevi idu u alarm, ne u blokadu** (isto načelo kao ADR 0018): ako se ime
    uplatitelja na sidru i na pokrivenoj uplati razlikuje, uplata se ipak pokriva, a admin dobije
    Telegram obavijest.
@@ -190,7 +190,9 @@ da takve uplate nikad ne dobiju potvrdu.
 svima pokazao sve uplate jedne osobe (jedan `sid` povezan s N uplata kroz tenante). Umjesto toga:
 
 - svaka veza je list u dnevnom Merkle stablu iz §5:
-  `leaf = keccak256("MPT-RECEIPT-LAZY-v1" ‖ anchorSid ‖ chainId ‖ mintTxHash ‖ mintLogIndex ‖ amount)`
+  `leaf = keccak256(abi.encode("MPT-RECEIPT-LAZY-v1", anchorSid, keccak256(orderId), mintTxHash, amountCents))`;
+  izravni list je isti oblik s domenom `"MPT-RECEIPT-DIRECT-v1"` i forward tx hashom
+  (`backend/src/receipts/merkle.ts`)
 - na lanac i u OpenTimestamps ide samo korijen (`kind = "rcpt1-root"`, `amount = 0`,
   `token = 0`, pa ga nijedan indexer ne može pročitati kao uplatu)
 - Merkle dokaze vraća `GET /api/intents/:sid/receipt` **samo uz potpis vlasnika** nad svježim
@@ -305,9 +307,10 @@ minimalni iznos) odlučuje ADR claim programa, ne ovaj.
 - `salt` sprječava vezanje poznate Safe adrese uz `sid`. Tko ima dio A potvrde, vidi tu vezu. Zato
   dio A treba dijeliti svjesno.
 - Iznos i vrijeme su ionako javni u forward transakciji. Potvrda tu ne otkriva ništa novo.
-- Naknadno uparivanje koristi IBAN koji MPT već čuva (`monerium_orders.counterpart_iban`). Za
-  uparivanje se uvodi `payer_iban_hmac` (HMAC-SHA256 s `IBAN_PEPPER`), da indeks i log ne nose
-  sirovi IBAN. Sirovi IBAN ne izlazi ni u PDF ni na lanac.
+- Naknadno uparivanje koristi IBAN koji MPT već čuva (`monerium_orders.counterpart_iban`), preko
+  indeksa nad normaliziranim IBAN-om (migracija 0027). Nova kopija IBAN-a ne nastaje; tablica
+  `receipt_leaves` ga ne sadrži. Sirovi IBAN ne izlazi ni u PDF ni na lanac. Zamjena HMAC-om
+  (`IBAN_PEPPER`) je moguće proširenje ako se sirovi IBAN ikad prestane čuvati.
 - Brisanje podataka o uplatitelju (GDPR) prekida buduće naknadno uparivanje za te uplate
   (slučaj 8). Već izdane veze ostaju, jer list sadrži samo hash mint transakcije, ne IBAN.
 
@@ -356,3 +359,28 @@ Claim ugovor nije dio ove odluke.
    se ne uparuju automatski; ručno povezivanje u adminu je moguće proširenje.
 7. **`metadataURI`.** Za `rcpt1` ostaje prazan. Ako se ikad popuni, ne smije sadržavati podatke
    koji otkrivaju uplatitelja.
+
+## Implementacija (grana `feat/receipts-0022`)
+
+| Dio | Gdje | Napomena |
+|---|---|---|
+| `r1` sid, `kind` | `backend/src/receipts/sid.ts`, `monerium/forward.ts` | `kind` nastaje iz `via` (null = referenca iz naloga); dijeljeno s preglednikom |
+| listovi, lazy | `backend/src/receipts/link.ts`, migracija `0027_receipts.sql` | cron svake 2 min + na zahtjev iz API-ja; granica prethodnog sidra računa se i iz nepotvrđenih sidara, pa redoslijed potvrda ne mijenja ishod |
+| sidrenje | `backend/src/receipts/anchor.ts` | dnevno (00:00 UTC tick), OTS na 4 kalendara; `.ots` provjeren službenim `ots info` |
+| API | `backend/src/receipts/api.ts`, `intents/api.ts` | `GET`/`POST /api/intents/:sid/receipt`, `POST /api/intents/:sid/receipt-intent`, `GET /api/receipts/anchors/:id[.ots]` |
+| stranice | `backend/src/receipts/page.ts`, `client/main.ts` | `/potvrda/nova/:sid`, `/potvrda/:sid`; bundle `client.generated.ts` (`npm run build:receipt-client`) |
+| zastavica | `RECEIPTS` u `wrangler.toml` | `"0"` gasi cron i pisanje listova |
+
+Odstupanja od teksta iznad:
+
+- **PDF nastaje ispisom stranice** (`window.print()` → „Spremi kao PDF“), ne knjižnicom pdf-lib.
+  Ostaje offline, bez ovisnosti, a hrvatska slova rade (standardni PDF fontovi nemaju č/ć/đ).
+  Kanonski JSON je u PDF-u kao tekst i preuzima se zasebno; nije PDF prilog.
+- **Korijen se još ne upisuje u PaymentRegistry.** `PAYMENT_REGISTRY_ADDRESS` je u produkciji
+  prazan (safe-tx/004 nije izvršen), pa ni forward danas ne emitira `Payment` event, a `kind`
+  postoji tek kad se registry uključi. Do tada je OpenTimestamps jedino vanjsko sidro, a izravna
+  potvrda se oslanja na forward tx (prijenos EURe primatelju) + Merkle list.
+- **Način `direct`:** izravni list koristi mint tx kad forward tx ne postoji.
+- **Razina wallet:** backend je spreman (potpis se provjerava i kroz ERC-1271/6492), ali gumb
+  „Plati s potvrdom“ u wallet.domovina.ai još nije napravljen.
+
