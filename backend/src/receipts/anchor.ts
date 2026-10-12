@@ -71,6 +71,9 @@ export async function stampOts(
   return { ots: buildOtsFile(digest, ok.map((a) => a.body)), calendars: ok.map((a) => a.cal) };
 }
 
+/// ⚠️ COPIES — change together, with their golden values: scripts/mpt_receipt_verify.py
+/// (+ tools/receipt-checkpoints/), energy.domovina.ai lib/receipt-sid.ts and its
+/// browser verifier /beta/provjera/ (lib + tests compare against this file).
 export const ZERO32: Hex = `0x${'00'.repeat(32)}`;
 
 /// ADR 0023 §2: every anchor commits to the previous one and to running

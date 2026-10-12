@@ -12,6 +12,9 @@ import { concat, getAddress, hexToBytes, isAddress, keccak256, toBytes, type Hex
 /// Isomorphic: the Worker and the browser bundle (receipts/client) share this
 /// file, so both sides derive byte-identical sids.
 
+/// ⚠️ COPIES — change together, with their golden values: scripts/mpt_receipt_verify.py
+/// (+ tools/receipt-checkpoints/), energy.domovina.ai lib/receipt-sid.ts and its
+/// browser verifier /beta/provjera/ (lib + tests compare against this file).
 export const RECEIPT_SID_PREFIX = 'r1';
 export const RECEIPT_DOMAIN = 'MPT-RECEIPT-v1';
 /// Same confusable-free alphabet as generateSid() (intents/sid.ts): lowercase

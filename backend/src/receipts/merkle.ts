@@ -10,6 +10,9 @@ import { encodeAbiParameters, keccak256, toBytes, type Hex } from 'viem';
 /// replayed as a lazy one (or vice versa). The Monerium order id is hashed:
 /// the leaf names the payment without putting a provider id on any chain.
 
+/// ⚠️ COPIES — change together, with their golden values: scripts/mpt_receipt_verify.py
+/// (+ tools/receipt-checkpoints/), energy.domovina.ai lib/receipt-sid.ts and its
+/// browser verifier /beta/provjera/ (lib + tests compare against this file).
 export const DIRECT_LEAF_DOMAIN = 'MPT-RECEIPT-DIRECT-v1';
 export const LAZY_LEAF_DOMAIN = 'MPT-RECEIPT-LAZY-v1';
 
