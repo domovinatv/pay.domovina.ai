@@ -251,3 +251,7 @@ Bitcoinu, a repo služi samo dostupnosti. Zato:
    Admina ne zaustavlja, i to je prihvatljivo: svaki klon, fork i potvrda drži originalni lanac.
 4. **Software Heritage**: Action nakon svakog commita traži arhiviranje, pa postoji neovisna
    kopija izvan GitHuba.
+
+## Vezani dokumenti
+
+- [Dnevnik izvedbe 12. 10. 2026.](../2026-10-12-potvrde-o-uplati-dnevnik.md): mjerenja, zamke, nesigurni prozor, otvoreno
