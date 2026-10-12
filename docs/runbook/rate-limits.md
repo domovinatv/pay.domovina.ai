@@ -5,14 +5,18 @@ WAF pravila treba ručno upisati u CF dashboard za zonu `domovina.ai`
 (Security → WAF → Rate limiting rules) i ovdje zapisati ID svakog pravila.
 Fable 5.1 r2: P0-1.8, P0-6.4 (MT-09, SR-01).
 
+**Free plan zone `domovina.ai` dopušta samo 1 rate-limit pravilo** (prozor i blok
+samo 10 s, ključ samo IP). To jedno mjesto od 2026-10-12 drže sandbox rute (ADR 0024).
+Ostala pravila iz tablice traže Pro plan ili zamjenu postojećeg. `/api/intents` je
+namjerno izvan pravila: trgovci ga zovu sa servera, često s dijeljenih CF IP-ova.
+
 | Putanja (host `monerium.domovina.ai` i `mpt.domovina.ai`) | Metoda | Limit | Akcija | Pravilo ID |
 |---|---|---|---|---|
 | `/api/intents` | POST | 30 / min / IP | block 10 min | — |
 | `/api/wallets*` | POST | 10 / min / IP | block 10 min | — |
 | `/api/monerium/webhook*` | POST | 60 / min / IP | block 1 min | — |
 | `/api/intents/*/stream` | GET | 10 / min / IP | block 1 min | — |
-| `/api/sandbox/tenants` (ADR 0024) | POST | 3 / min / IP | block 1 h | — |
-| `/api/intents/*/simulate` (ADR 0024) | POST | 20 / min / IP | block 10 min | — |
+| `/api/sandbox/tenants` + `…/simulate` (ADR 0024), host `mpt.` i `monerium.` | sve | 5 / 10 s / IP | block 10 s | ✅ „MPT sandbox (ADR 0024): create tenant + simulate“ (2026-10-12) |
 
 Napomena za webhook: Monerium šalje s malog broja IP-ova i retry ima backoff;
 60/min je daleko iznad normalnog prometa, ali provjeri u CF Analytics prije
