@@ -1,6 +1,6 @@
 # ADR 0024 — Samoposlužni sandbox tenant (simulirane uplate) i `return_url` na intentu
 
-- **Status:** Proposed (2026-10-12). Plan; kod tek nakon potvrde.
+- **Status:** Accepted (2026-10-12). PR 1 implementiran na grani `feat/open-saas-rail` (vidi „Implementacija“ na dnu).
 - **Kontekst:** MPT payment provider za Open SaaS (Wasp SaaS starter): upstream prijedlog
   [wasp-lang/open-saas#746](https://github.com/wasp-lang/open-saas/issues/746), kod na
   `stepanic/open-saas` grana `feat/mpt-payment-provider`. Provider koristi isti ugovor kao
@@ -113,8 +113,9 @@ spam u D1, odlazni webhookovi prema tuđim URL-ovima i checkout stranice na naš
 - Radi samo za intent sandbox tenanta (inače `404`, da se ne otkriva postojanje). Ovlast je `sid`,
   kao za status (sandbox nema vrijednost koju bi trebalo štititi), pa gumb na checkoutu radi bez
   ključa.
-- Tijelo: `{ "outcome": "paid" | "late" | "underpaid" | "rejected", "amount_eur"?: "…" }`.
-  Default `paid` s punim iznosom.
+- Tijelo: `{ "outcome": "paid" | "received" | "late" | "underpaid" | "rejected", "amount_eur"?: "…" }`.
+  Default `paid` s punim iznosom. `received` staje nakon `payment.received` (Monerium drži
+  novac), a sljedeći poziv nastavlja isti order.
 - Isti put kao prava uplata, ništa paralelno: sintetički order `sim_<sid>_<n>` i forward red
   (`status = confirmed`, `error = 'simulated'`, `amount_wei = 0`, bez tx-a), zatim postojeći
   `flipPaidAndNotify` / `markIntentUnderpaid` / `markIntentLate`. Događaji su redom
@@ -123,8 +124,11 @@ spam u D1, odlazni webhookovi prema tuđim URL-ovima i checkout stranice na naš
   promjenu kao inače.
 - Pošiljatelj u payloadu: fiksni testni IBAN (`DE89370400440532013000`, javni primjer iz
   ISO 13616) i ime „Sandbox Payer“.
-- Admin pregledi i alarmi preskaču forward redove s `error = 'simulated'`; nijedan Telegram
-  alarm ne smije zazvoniti zbog sandboxa.
+- Nijedan Telegram alarm ne zvoni zbog sandboxa: outbox ne javlja neisporučen webhook sandbox
+  tenanta (`OutboxDeps.quiet`). Admin pregledi prikazuju sandbox redove pod tenantom `sbx-…`
+  (forward `error = 'simulated'`, order `sim_…`), što je korisno za podršku developerima.
+- Simulirani orderi (`sim_…`) ne bude ITalkov reconcile (globalni upit „order u letu“) i nikad
+  ne ulaze u potvrde o uplati (`receipts/link.ts`). Sandbox intent ne smije nositi receipt sid.
 
 ### D5. Checkout i odgovor za sandbox intent
 
@@ -198,3 +202,26 @@ Ključevi `*_test_` već odgovaraju planu iz P9.
   za isti učinak. Ako ga zatraži klijent koji nema server (čisti browser), dodaje se kasnije.
 - **Proširiti `ALLOWED_ORIGINS` na `localhost:3000` za polling iz preglednika:** nije potrebno
   (D7), a otvara rail svakom lokalnom originu.
+
+## Implementacija (PR 1, 2026-10-12)
+
+| Dio | Gdje |
+|---|---|
+| Migracija 0029: `tenants.sandbox`, `sandbox_tenants`, `payment_intents.return_url` | `backend/migrations/0029_sandbox_tenants.sql` |
+| Kreiranje, webhook, `/me`, limiti, Turnstile, istek | `backend/src/sandbox/db.ts`, `sandbox/api.ts` |
+| Simulacija kroz `upsertMoneriumOrder` → `emitOrderLifecycleWebhook` → `insertForward` → `settleNonRoutedPaid` | `backend/src/sandbox/simulate.ts` |
+| `*_test_` ključevi i njihovo uparivanje s tenantom | `backend/src/tenants/auth.ts`, `tenants/admin.ts` |
+| Grananje u `POST /api/intents`, `sandboxView`, `validateReturnUrl` | `backend/src/intents/api.ts` |
+| Checkout: traka, gumbi, povratak | `backend/src/checkout/page.ts` |
+| Admin: `sbx-` rezerviran, sandbox ne dobiva rail | `backend/src/tenants/railAdmin.ts` |
+| Testovi (35) | `backend/test/sandbox.test.ts` |
+| Upute za developere | [`docs/integrations/sandbox-quickstart.md`](../integrations/sandbox-quickstart.md) |
+
+`compat-check.sh`: svi stari testovi (backend, shopify/worker, wallet) prolaze bez izmjena.
+
+**Redoslijed uključivanja na produkciji:**
+1. `npm run db:migrate:prod` (0029). Kod čita `tenants.sandbox`, pa deploy bez migracije
+   ruši checkout i status.
+2. `wrangler secret put SANDBOX_IP_PEPPER`.
+3. Upisati WAF pravila iz `docs/runbook/rate-limits.md`.
+4. Deploy, pa `SANDBOX_SELF_SERVE = "1"` u `wrangler.toml` i ponovni deploy.
