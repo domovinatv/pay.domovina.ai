@@ -107,7 +107,7 @@ launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/ai.domovina.mpt-backup-o
 **Cloudflare API token** (preporučeno, inače job koristi osobni `wrangler login` OAuth,
 koji dijele svi wrangler procesi i koji je 12. 10. u 12:20 pao s `Authentication error`):
 dashboard → My Profile → API Tokens → Create Custom Token, račun D.O.M., dozvole
-*D1 Edit* (export to traži), *Workers KV Storage Read*, *Workers Scripts Read*. Upis u Keychain:
+*D1 Edit* (export s D1 Read pada s `Authentication error 10000`), *Workers KV Storage Read*, *Workers Scripts Read*; bez TTL-a (token `mpt-backup-offline`, kreiran 12. 10. 2026). Upis u Keychain:
 
 ```bash
 security add-generic-password -U -a "$USER" -s mpt-backup-cf-token -w '<token>'
