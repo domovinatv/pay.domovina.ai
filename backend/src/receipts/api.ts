@@ -5,7 +5,7 @@ import { gnosis } from 'viem/chains';
 import type { Env } from '../types';
 import { sendAlert } from '../alerts';
 import { getIntent } from '../intents/db';
-import { getAnchor, latestAnchor, listAnchors, otsHasBitcoin, proofForLeaf, type AnchorRow, type LeafProof } from './anchor';
+import { getAnchor, latestAnchor, listAnchors, otsHasBitcoin, proofsForAnchor, type AnchorRow, type LeafProof } from './anchor';
 import { linkReceipts } from './link';
 import { isReceiptSid, receiptSidMatches } from './sid';
 
@@ -71,7 +71,7 @@ async function leavesFor(env: Env, sid: string): Promise<LeafRow[]> {
   return rows.results;
 }
 
-async function toPayment(env: Env, l: LeafRow): Promise<ReceiptPayment> {
+function toPayment(l: LeafRow, proofs: Map<number, Map<number, LeafProof>>): ReceiptPayment {
   return {
     kind: l.kind,
     order_id: l.order_id,
@@ -81,7 +81,7 @@ async function toPayment(env: Env, l: LeafRow): Promise<ReceiptPayment> {
     leaf_hash: l.leaf_hash,
     target_address: l.target_address ? l.target_address.toLowerCase() : null,
     tenant_id: l.tenant_id,
-    anchor: l.anchor_id !== null ? await proofForLeaf(env, l.id, l.anchor_id) : null,
+    anchor: l.anchor_id !== null ? proofs.get(l.anchor_id)?.get(l.id) ?? null : null,
   };
 }
 
@@ -106,9 +106,12 @@ async function buildReceipt(env: Env, sid: string, includeLazy: boolean) {
   if (!intent) return null;
   const direct = await directStatus(env, sid);
   const all = await leavesFor(env, sid);
-  const payments = await Promise.all(
-    all.filter((l) => includeLazy || l.kind === 'direct').map((l) => toPayment(env, l)),
-  );
+  const shown = all.filter((l) => includeLazy || l.kind === 'direct');
+  const proofs = new Map<number, Map<number, LeafProof>>();
+  for (const seq of new Set(shown.flatMap((l) => (l.anchor_id !== null ? [l.anchor_id] : [])))) {
+    proofs.set(seq, await proofsForAnchor(env, seq));
+  }
+  const payments = shown.map((l) => toPayment(l, proofs));
   return {
     version: RECEIPT_VERSION,
     sid,

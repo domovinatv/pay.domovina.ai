@@ -121,30 +121,38 @@ async function coverable(env: Env, iban: string, after: string | null, before: s
   return rows.results;
 }
 
-async function insertLeaf(
-  env: Env,
-  row: {
-    kind: 'direct' | 'lazy';
-    sid: string;
-    orderId: string;
-    txHash: string | null;
-    amountCents: number;
-    placedAt: string | null;
-    nameMismatch: boolean;
-    now: number;
-  },
-): Promise<boolean> {
+interface LeafInsert {
+  kind: 'direct' | 'lazy';
+  sid: string;
+  orderId: string;
+  txHash: string | null;
+  amountCents: number;
+  placedAt: string | null;
+  nameMismatch: boolean;
+  now: number;
+}
+
+function leafInsert(env: Env, row: LeafInsert): D1PreparedStatement {
   const hash = leafHash({
     kind: row.kind, sid: row.sid, orderId: row.orderId, txHash: row.txHash, amountCents: row.amountCents,
   });
-  const res = await env.DB.prepare(
+  return env.DB.prepare(
     `INSERT OR IGNORE INTO receipt_leaves
        (kind, sid, order_id, tx_hash, amount_cents, placed_at, leaf_hash, name_mismatch, created_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).bind(
     row.kind, row.sid, row.orderId, row.txHash, row.amountCents, row.placedAt, hash,
     row.nameMismatch ? 1 : 0, row.now,
-  ).run();
+  );
+}
+
+/// One D1 round trip per chunk instead of one per leaf: a first receipt from a
+/// long-used IBAN can cover dozens of earlier payments (73 in the first real
+/// test), and the on-demand path runs inside the payer's request.
+const LINK_BATCH = 50;
+
+async function insertLeaf(env: Env, row: LeafInsert): Promise<boolean> {
+  const res = await leafInsert(env, row).run();
   return (res.meta?.changes ?? 0) > 0;
 }
 
@@ -166,23 +174,33 @@ export async function linkReceipts(env: Env, deps: LinkDeps, sid?: string): Prom
     const iban = normalizeIban(a.counterpart_iban);
     if (!iban || !a.placed_at) continue; // §3 case 6: nothing to match on
     const after = await previousAnchorPlacedAt(env, iban, a.placed_at);
-    for (const c of await coverable(env, iban, after, a.placed_at)) {
-      const mismatch = !sameHolder(a.counterpart_name, c.counterpart_name);
-      const ok = await insertLeaf(env, {
+    const rows = (await coverable(env, iban, after, a.placed_at)).map((c) => ({
+      c,
+      mismatch: !sameHolder(a.counterpart_name, c.counterpart_name),
+    }));
+    const mismatched: CoveredRow[] = [];
+    for (let i = 0; i < rows.length; i += LINK_BATCH) {
+      const chunk = rows.slice(i, i + LINK_BATCH);
+      const results = await env.DB.batch(chunk.map(({ c, mismatch }) => leafInsert(env, {
         kind: 'lazy', sid: a.sid, orderId: c.id, txHash: firstTx(c.tx_hashes),
         amountCents: parseAmountCents(c.amount) ?? 0, placedAt: c.placed_at, nameMismatch: mismatch, now,
+      })));
+      chunk.forEach(({ c, mismatch }, j) => {
+        if ((results[j]?.meta?.changes ?? 0) === 0) return;
+        out.lazy++;
+        if (mismatch) mismatched.push(c);
       });
-      if (!ok) continue;
-      out.lazy++;
-      if (mismatch) {
-        out.mismatches++;
-        await deps.alert(
-          `🧾 <b>Naknadna potvrda: različito ime uplatitelja, isti IBAN</b>\n` +
-            `potvrda: <code>${a.sid}</code> (${a.counterpart_name ?? '-'})\n` +
-            `pokrivena uplata: <code>${c.id}</code> (${c.counterpart_name ?? '-'})\n` +
-            `Povezano po IBAN-u (ADR 0022 §3a); provjeriti ako je sumnjivo.`,
-        ).catch(() => {});
-      }
+    }
+    if (mismatched.length > 0) {
+      out.mismatches += mismatched.length;
+      // One alert per receipt, not one per covered payment.
+      await deps.alert(
+        `🧾 <b>Naknadna potvrda: različito ime uplatitelja, isti IBAN</b>\n` +
+          `potvrda: <code>${a.sid}</code> (${a.counterpart_name ?? '-'})\n` +
+          `${mismatched.length} pokrivenih uplata s drugim imenom, npr.:\n` +
+          mismatched.slice(0, 5).map((c) => `• <code>${c.id}</code> (${c.counterpart_name ?? '-'})`).join('\n') +
+          `\nPovezano po IBAN-u (ADR 0022 §3a); provjeriti ako je sumnjivo.`,
+      ).catch(() => {});
     }
   }
   return out;
