@@ -2,6 +2,7 @@ import type { Env } from '../types';
 import { sendAlert } from '../alerts';
 import { getTenantRail } from '../tenants/rail';
 import { defaultTenantId } from '../tenants/whitelist';
+import { isSandboxTenant, sandboxEndpoint } from '../sandbox/db';
 
 /// Durable delivery of outbound merchant webhooks (migration 0015).
 ///
@@ -68,6 +69,9 @@ export interface OutboxDeps {
   /// to that tenant's receiver.
   send(id: string, body: string, tenantId: string | null): Promise<SendResult>;
   alert(text: string): Promise<void>;
+  /// ADR 0024: true for a tenant whose failed deliveries must not page the
+  /// operator (self-serve sandbox). Absent = every failure alerts.
+  quiet?(tenantId: string | null): Promise<boolean>;
 }
 
 export function classifyResponse(status: number | null): 'delivered' | 'retry' | 'permanent' {
@@ -127,6 +131,7 @@ export async function attemptDelivery(
     return 'retry';
   }
   await deps.markFailed(row.id, attempts, res.status, res.error ?? null);
+  if (await deps.quiet?.(row.tenant_id)) return 'failed';
   await deps.alert(
     `📭 <b>Merchant webhook NIJE isporučen</b>\n` +
       `event: <code>${row.type}</code> · id: <code>${row.id}</code>\n` +
@@ -164,7 +169,9 @@ async function endpointFor(
   tenantId: string | null,
 ): Promise<{ url: string; secret: string } | null> {
   const rail = await getTenantRail(env, tenantId ?? defaultTenantId(env));
-  return rail?.outboundWebhook ?? null;
+  if (rail) return rail.outboundWebhook;
+  // ADR 0024: a sandbox tenant has no rail; its endpoint is in sandbox_tenants.
+  return tenantId ? sandboxEndpoint(env, tenantId) : null;
 }
 
 export function makeOutboxDeps(env: Env): OutboxDeps {
@@ -212,6 +219,7 @@ export function makeOutboxDeps(env: Env): OutboxDeps {
     },
     send: (id, body, tenantId) => signedPost(env, id, body, tenantId),
     alert: (text) => sendAlert(env, text),
+    quiet: (tenantId) => isSandboxTenant(env, tenantId),
   };
 }
 

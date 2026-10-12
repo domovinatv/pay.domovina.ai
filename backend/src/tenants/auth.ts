@@ -16,7 +16,9 @@ import { defaultTenantId } from './whitelist';
 /// revoked / absent keys start being rejected.
 
 export type TenantResolution =
-  | { ok: true; tenantId: string; keyKind: 'public' | 'secret' | null }
+  /// `sandbox` is set only when a key was presented (ADR 0024): true for a
+  /// `*_test_` key of a sandbox tenant.
+  | { ok: true; tenantId: string; keyKind: 'public' | 'secret' | null; sandbox?: boolean }
   | { ok: false; error: 'missing_tenant_key' | 'invalid_tenant_key' | 'tenant_suspended' };
 
 /// Accepted transports, in order: `x-mpt-key: <key>` header, then
@@ -50,18 +52,24 @@ export async function resolveRequestTenant(
     return { ok: true, tenantId: defaultTenantId(env), keyKind: null };
   }
 
-  if (!/^(pk|sk)_[0-9a-f]{16,}$/.test(raw)) return { ok: false, error: 'invalid_tenant_key' };
+  const m = raw.match(/^(pk|sk)_(test_)?[0-9a-f]{16,}$/);
+  if (!m) return { ok: false, error: 'invalid_tenant_key' };
   const found = await getTenantByKeyHash(env, await hashApiKey(raw));
   if (!found) return { ok: false, error: 'invalid_tenant_key' };
+  // ADR 0024 D2: a test key only ever names a sandbox tenant and a live key
+  // only a real one, so swapping the key is what switches the environment.
+  const sandbox = (found.tenant as { sandbox?: number }).sandbox === 1;
+  if (Boolean(m[2]) !== sandbox) return { ok: false, error: 'invalid_tenant_key' };
   if (found.tenant.status !== 'active') return { ok: false, error: 'tenant_suspended' };
-  return { ok: true, tenantId: found.tenant.id, keyKind: found.key.kind };
+  return { ok: true, tenantId: found.tenant.id, keyKind: found.key.kind, sandbox };
 }
 
 /// Generate a fresh API key. Returned raw exactly once by the admin endpoint;
 /// only its sha256 is persisted.
-export function generateApiKey(kind: 'public' | 'secret'): string {
+/// `test` (ADR 0024): a sandbox tenant's key, `pk_test_…` / `sk_test_…`.
+export function generateApiKey(kind: 'public' | 'secret', opts: { test?: boolean } = {}): string {
   const bytes = new Uint8Array(24);
   crypto.getRandomValues(bytes);
   const body = [...bytes].map((b) => b.toString(16).padStart(2, '0')).join('');
-  return `${kind === 'public' ? 'pk' : 'sk'}_${body}`;
+  return `${kind === 'public' ? 'pk' : 'sk'}_${opts.test ? 'test_' : ''}${body}`;
 }

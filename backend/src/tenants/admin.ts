@@ -206,7 +206,8 @@ export function mountTenantAdmin(app: Hono<{ Bindings: Env }>): void {
       return c.json({ error: 'invalid_json' }, 400);
     }
     const kind = body.kind === 'secret' ? 'secret' : 'public';
-    const raw = generateApiKey(kind);
+    // ADR 0024 D2: a sandbox tenant only ever gets test keys.
+    const raw = generateApiKey(kind, { test: tenant.sandbox === 1 });
     const keyHash = await hashApiKey(raw);
     const label = (body.label ?? '').trim() || null;
     await insertApiKey(c.env, { tenantId, keyHash, kind, label });

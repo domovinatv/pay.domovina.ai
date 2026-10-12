@@ -21,6 +21,9 @@ export interface PaymentIntentRow {
   /// created before tenants existed; the forward gate falls back to
   /// DEFAULT_TENANT_ID for those.
   tenant_id: string | null;
+  /// Migration 0029 (ADR 0024 D6): where the checkout sends the buyer back.
+  /// Absent on rows read by older code paths/tests.
+  return_url?: string | null;
 }
 
 export interface CreateIntentArgs {
@@ -34,6 +37,8 @@ export interface CreateIntentArgs {
   tenantId: string;
   /// Created with the tenant's SECRET key (SR-01) — a trusted stray candidate.
   createdWithKey?: boolean;
+  /// ADR 0024 D6, validated by the caller (secret key only).
+  returnUrl?: string | null;
 }
 
 export async function createIntent(
@@ -44,8 +49,8 @@ export async function createIntent(
   await env.DB.prepare(
     `INSERT INTO payment_intents
        (sid, target_address, amount_cents, currency, label, metadata_json,
-        state, created_at, expires_at, tenant_id, created_with_key)
-     VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?)`,
+        state, created_at, expires_at, tenant_id, created_with_key, return_url)
+     VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?)`,
   )
     .bind(
       args.sid,
@@ -58,6 +63,7 @@ export async function createIntent(
       now + args.ttlSeconds,
       args.tenantId,
       args.createdWithKey ? 1 : 0,
+      args.returnUrl ?? null,
     )
     .run();
 }

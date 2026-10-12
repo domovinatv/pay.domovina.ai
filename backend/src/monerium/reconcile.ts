@@ -51,7 +51,8 @@ async function somethingInFlight(env: Env, rail: TenantRail, nowUnix: number): P
     const row = await env.DB.prepare(
       `SELECT 1 AS hit WHERE
          EXISTS (SELECT 1 FROM payment_intents WHERE state = 'pending' AND created_at > ?1)
-         OR EXISTS (SELECT 1 FROM monerium_orders WHERE state IN ('placed', 'pending'))
+         OR EXISTS (SELECT 1 FROM monerium_orders WHERE state IN ('placed', 'pending')
+                     AND id NOT LIKE 'sim\\_%' ESCAPE '\\')
          OR EXISTS (SELECT 1 FROM monerium_orders o
                      WHERE o.kind = 'issue' AND o.state = 'processed' AND o.updated_at > ?2
                        AND (o.tenant_id IS NULL OR o.tenant_id = ?3)

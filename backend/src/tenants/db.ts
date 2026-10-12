@@ -20,6 +20,9 @@ export interface TenantRow {
   bic: string | null;
   created_at: number;
   updated_at: number;
+  /// Migration 0029 (ADR 0024): 1 = self-serve sandbox tenant (no rail,
+  /// simulated payments). Absent in fixtures written before it = 0.
+  sandbox?: number;
 }
 
 /// The beneficiary block baked into a tenant's EPC/QR payload.

@@ -73,6 +73,12 @@ export interface Env {
   // Multi-tenant rail (ADR 0017). Every tenant other than DEFAULT_TENANT_ID
   // has its own Monerium account, webhook and signer in `tenant_rail`.
   MULTI_TENANT_RAIL: string;          // "1" → tenant rails live; anything else → only the default tenant
+
+  // Self-serve sandbox tenants (ADR 0024): no Monerium, simulated payments.
+  SANDBOX_SELF_SERVE?: string;        // "1" → POST /api/sandbox/tenants is open; else 404
+  SANDBOX_MAX_TENANTS?: string;       // active sandbox tenants rail-wide (default 500)
+  SANDBOX_IP_PEPPER?: string;         // SECRET, optional — HMAC key for caller IPs (falls back to PHONE_PEPPER)
+  SANDBOX_TURNSTILE_SECRET?: string;  // SECRET, optional — when set, creation needs a Turnstile token
   TENANT_SECRETS_KEK: string;         // SECRET — base64 of 32 bytes; AES-GCM key for tenant_rail *_enc columns
   TENANT_SECRETS_KEK_PREV?: string;   // SECRET, only during a KEK rotation: the previous KEK, read-only (docs/runbook/kek-rotation.md)
   INTENT_SSE: string;                 // "1" → GET /api/intents/:sid/stream serves SSE; else 404 as before
