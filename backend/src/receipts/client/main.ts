@@ -20,7 +20,10 @@ interface StoredKey {
   created_at: number;
 }
 
-interface Proof { anchor_id: number; root: string; proof: string[]; ots_available: boolean; anchored_at: number }
+interface Proof {
+  anchor_id: number; seq: number; root: string; proof: string[]; prev_chain_head: string; chain_head: string;
+  leaf_count: number; total_leaves: number; total_cents: number; lazy_count: number; ots_available: boolean; anchored_at: number;
+}
 interface Payment {
   kind: 'direct' | 'lazy';
   order_id: string;
@@ -286,8 +289,8 @@ function renderReceipt(rc: Receipt, key: StoredKey | null): void {
 
   const anchors = [...new Map(rc.payments.filter((p) => p.anchor).map((p) => [p.anchor!.anchor_id, p.anchor!])).values()];
   const otsLinks = anchors.filter((a) => a.ots_available).map((a) =>
-    el('li', {}, el('a', { href: `/api/receipts/anchors/${a.anchor_id}.ots` }, `Sidro #${a.anchor_id} (.ots)`),
-      ' korijen ', el('code', {}, a.root)));
+    el('li', {}, el('a', { href: `/api/receipts/anchors/${a.seq}.ots` }, `Sidro #${a.seq} (.ots)`),
+      ' chain_head ', el('code', {}, a.chain_head)));
 
   const actions = el('div', { class: 'actions no-print' });
   const printBtn = el('button', { class: 'primary', type: 'button' }, 'Spremi kao PDF');
@@ -316,7 +319,8 @@ function renderReceipt(rc: Receipt, key: StoredKey | null): void {
       el('ol', {},
         el('li', {}, 'keccak256("MPT-RECEIPT-v1" ‖ vlasnik ‖ salt), prvih 120 bitova u base32 (abeceda abcdefghijkmnpqrstuvwxyz23456789) s prefiksom "r1", mora dati referencu.'),
         el('li', {}, 'Za izravnu uplatu: Gnosis transakcija prenosi iznos primatelju; s uključenim PaymentRegistryjem nosi i Payment event s ovom referencom i kind = rcpt1.'),
-        el('li', {}, 'Svaki redak je list Merkle stabla; dokaz i korijen su u JSON-u ispod. Korijen je vremenski žigosan na Bitcoinu (OpenTimestamps).'),
+        el('li', {}, 'Svaki redak je list Merkle stabla; dokaz i korijen su u JSON-u ispod. Sidro veže korijen uz sva prethodna sidra (chain_head), a sha256(chain_head) je vremenski žigosan na Bitcoinu (OpenTimestamps).'),
+        el('li', {}, 'Sve to provjerava skripta scripts/mpt_receipt_verify.py iz repozitorija pay.domovina.ai, bez MPT-a; javna kopija sidara je u repozitoriju mpt-receipts-checkpoints.'),
         el('li', {}, 'Vlasnik dokazuje da je on uplatitelj potpisom nasumične poruke ključem iz dijela B.')),
       otsLinks.length ? el('ul', {}, ...otsLinks) : null,
       el('p', {}, el('code', {}, `salt: ${publicPart.salt ?? '—'}`))),

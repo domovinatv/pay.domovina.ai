@@ -19,6 +19,19 @@ export function migratedD1(): { db: D1Database; raw: DatabaseSync } {
       return { meta: { changes: Number(r.changes), last_row_id: Number(r.lastInsertRowid) } };
     },
   });
-  const db = { prepare: (sql: string) => stmt(sql), batch: async () => [] } as unknown as D1Database;
+  // D1 batch = one transaction: all statements or none.
+  const batch = async (stmts: Array<{ run(): Promise<unknown> }>) => {
+    raw.exec('BEGIN');
+    try {
+      const out = [];
+      for (const st of stmts) out.push(await st.run());
+      raw.exec('COMMIT');
+      return out;
+    } catch (e) {
+      raw.exec('ROLLBACK');
+      throw e;
+    }
+  };
+  const db = { prepare: (sql: string) => stmt(sql), batch } as unknown as D1Database;
   return { db, raw };
 }
