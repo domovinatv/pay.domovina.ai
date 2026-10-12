@@ -7,6 +7,14 @@ import { isReceiptSid } from '../receipts/sid';
 import { registerReceiptRoutes } from '../receipts/api';
 import { registerSimulateRoute } from '../sandbox/api';
 import { isSandboxTenant, touchSandboxTenant } from '../sandbox/db';
+import {
+  LIST_DEFAULT_LIMIT,
+  LIST_MAX_LIMIT,
+  decodeCursor,
+  listTenantIntents,
+  tenantIntentStats,
+  type IntentStateFilter,
+} from './list';
 import { buildEpcText } from './epc';
 import { buildIntentHub3Text } from './hub3';
 import { computeStage, confirmForwardIfMined, loadStageContext } from './stage';
@@ -231,6 +239,68 @@ export function buildIntentApi(): Hono<{ Bindings: Env }> {
     });
   });
 
+  // ADR 0024 D8: the caller's own intents, newest first. Secret key only —
+  // the list carries metadata and amounts a public key must not reveal.
+  api.get('/', async (c) => {
+    const who = await secretKeyCaller(c);
+    if (!who.ok) return c.json({ error: who.error }, who.status);
+    const range = parseRange(c.req.query('created_from'), c.req.query('created_to'));
+    if (!range.ok) return c.json({ error: range.error }, 400);
+    const stateRaw = c.req.query('state');
+    if (stateRaw !== undefined && !STATES.includes(stateRaw as IntentStateFilter)) {
+      return c.json({ error: 'invalid_state', allowed: STATES }, 400);
+    }
+    const limitRaw = c.req.query('limit');
+    const limit = limitRaw === undefined ? LIST_DEFAULT_LIMIT : Number(limitRaw);
+    if (!Number.isInteger(limit) || limit < 1 || limit > LIST_MAX_LIMIT) {
+      return c.json({ error: 'invalid_limit', max: LIST_MAX_LIMIT }, 400);
+    }
+    const cursorRaw = c.req.query('cursor');
+    const cursor = cursorRaw ? decodeCursor(cursorRaw) : null;
+    if (cursorRaw && !cursor) return c.json({ error: 'invalid_cursor' }, 400);
+    const { items, nextCursor } = await listTenantIntents(c.env, {
+      tenantId: who.tenantId,
+      includeLegacyNull: isLegacyTenant(c.env, who.tenantId),
+      state: (stateRaw as IntentStateFilter | undefined) ?? null,
+      createdFrom: range.from,
+      createdTo: range.to,
+      limit,
+      cursor,
+    });
+    const origin = new URL(c.req.url).origin;
+    const sepa = await getSepaDetails(c.env, who.tenantId);
+    const style = await getReferenceStyle(c.env, who.tenantId);
+    const data = items.map((intent) => {
+      const json = intentResponseJson(intent, origin, sepa, style);
+      const view = who.sandbox ? sandboxView(json, origin) : json;
+      // A list is for bookkeeping; payment codes stay on the single intent.
+      const { epc_qr_data: _e, hub3_data: _h, ...rest } = view;
+      return rest;
+    });
+    return c.json({ data, has_more: nextCursor !== null, next_cursor: nextCursor });
+  });
+
+  // ADR 0024 D8: totals per outcome (Open SaaS `fetchTotalRevenue`).
+  api.get('/stats', async (c) => {
+    const who = await secretKeyCaller(c);
+    if (!who.ok) return c.json({ error: who.error }, who.status);
+    const range = parseRange(c.req.query('created_from'), c.req.query('created_to'));
+    if (!range.ok) return c.json({ error: range.error }, 400);
+    const stats = await tenantIntentStats(c.env, {
+      tenantId: who.tenantId,
+      includeLegacyNull: isLegacyTenant(c.env, who.tenantId),
+      createdFrom: range.from,
+      createdTo: range.to,
+    });
+    return c.json({
+      tenant_id: who.tenantId,
+      currency: 'eur',
+      created_from: range.from === null ? null : isoFromUnix(range.from),
+      created_to: range.to === null ? null : isoFromUnix(range.to),
+      ...stats,
+    });
+  });
+
   api.get('/:sid', async (c) => {
     const sid = c.req.param('sid');
     const intent = await getIntent(c.env, sid);
@@ -367,6 +437,36 @@ export function sandboxView(json: Record<string, unknown>, origin: string): Reco
     sandbox: true,
     simulate_url: `${origin}/api/intents/${json.sid as string}/simulate`,
   };
+}
+
+const STATES: readonly IntentStateFilter[] = ['pending', 'paid', 'expired'];
+
+/// The tenant behind a SECRET key (live or test), or why not.
+async function secretKeyCaller(
+  c: IntentCtx,
+): Promise<{ ok: true; tenantId: string; sandbox: boolean } | { ok: false; status: 401 | 403; error: string }> {
+  const r = await resolveRequestTenant(c.env, c.req.raw.headers);
+  if (!r.ok) return { ok: false, status: r.error === 'tenant_suspended' ? 403 : 401, error: r.error };
+  if (r.keyKind === null) return { ok: false, status: 401, error: 'missing_tenant_key' };
+  if (r.keyKind !== 'secret') return { ok: false, status: 403, error: 'secret_key_required' };
+  return { ok: true, tenantId: r.tenantId, sandbox: r.sandbox === true };
+}
+
+/// ISO-8601 `created_from` (inclusive) / `created_to` (exclusive).
+function parseRange(
+  fromRaw: string | undefined,
+  toRaw: string | undefined,
+): { ok: true; from: number | null; to: number | null } | { ok: false; error: string } {
+  const parse = (v: string | undefined): number | null | 'bad' => {
+    if (v === undefined || v === '') return null;
+    const ms = Date.parse(v);
+    return Number.isFinite(ms) ? Math.floor(ms / 1000) : 'bad';
+  };
+  const from = parse(fromRaw);
+  if (from === 'bad') return { ok: false, error: 'invalid_created_from' };
+  const to = parse(toRaw);
+  if (to === 'bad') return { ok: false, error: 'invalid_created_to' };
+  return { ok: true, from, to };
 }
 
 const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]']);
