@@ -9,7 +9,7 @@ import { handleForward, type ForwardDeps } from '../src/monerium/forward';
 import type { MoneriumOrder } from '../src/monerium/types';
 import { receiptRequestMessage } from '../src/receipts/api';
 import {
-  anchorPendingLeaves, buildOtsFile, chainHead, otsHasBitcoin, proofForLeaf, pullUpgradedOts, sha256, ZERO32,
+  anchorPendingLeaves, buildOtsFile, chainHead, otsHasBitcoin, proofForLeaf, proofsForAnchor, pullUpgradedOts, sha256, ZERO32,
 } from '../src/receipts/anchor';
 import { linkReceipts, sameHolder } from '../src/receipts/link';
 import { leafHash, merkleProof, merkleRoot, verifyMerkleProof } from '../src/receipts/merkle';
@@ -367,6 +367,9 @@ describe('receipt API', () => {
     expect(own.status).toBe(200);
     const body = await own.json() as { payments: Array<{ kind: string }>; owner: string };
     expect(body.payments.map((p) => p.kind).sort()).toEqual(['direct', 'lazy']);
+    // Each payment names its own payee (the lazy one may be for another Safe).
+    expect((body.payments as unknown as Array<{ target_address: string; tenant_id: string }>)
+      .every((p) => p.target_address === '0xpayee' && p.tenant_id === 'italk')).toBe(true);
     expect(body.owner).toBe(OWNER.toLowerCase());
   });
 
@@ -497,5 +500,21 @@ describe('upgraded OTS pull-back', () => {
     expect(await pullUpgradedOts(env, { fetchImpl: down })).toBe(0);
     const row = raw.prepare(`SELECT ots FROM receipt_anchors WHERE seq = 1`).get() as { ots: string };
     expect(otsHasBitcoin(hexToBytes(row.ots as Hex))).toBe(false);
+  });
+});
+
+describe('long-used IBAN (first real test covered 73 payments)', () => {
+  it('120 earlier payments are linked in batches and every proof matches the per-leaf proof', async () => {
+    const { env, raw, pay, deps } = setup();
+    for (let i = 0; i < 120; i++) pay(`old${i}`, `2026-09-01T10:${String(i % 60).padStart(2, '0')}:${String(Math.floor(i / 60)).padStart(2, '0')}Z`);
+    pay('anchor', '2026-10-04T10:00:00Z', { sid: ANCHOR_SID, prefix: 'mpt' });
+    expect(await linkReceipts(env, deps)).toEqual({ anchors: 1, lazy: 120, mismatches: 0 });
+    const quiet = (async () => new Response(new Uint8Array([1]), { status: 200 })) as unknown as typeof fetch;
+    await anchorPendingLeaves(env, { fetchImpl: quiet });
+    const many = await proofsForAnchor(env, 1);
+    expect(many.size).toBe(121);
+    for (const { id } of raw.prepare(`SELECT id FROM receipt_leaves`).all() as Array<{ id: number }>) {
+      expect(many.get(id)).toEqual(await proofForLeaf(env, id, 1));
+    }
   });
 });

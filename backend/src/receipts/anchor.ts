@@ -266,6 +266,39 @@ export interface LeafProof {
   anchored_at: number;
 }
 
+/// Proofs for every leaf of one anchor in two queries (the receipt API groups
+/// a receipt's leaves by anchor; one query per leaf was O(n) round trips).
+export async function proofsForAnchor(env: Env, seq: number): Promise<Map<number, LeafProof>> {
+  const out = new Map<number, LeafProof>();
+  const anchor = await getAnchor(env, seq);
+  if (!anchor) return out;
+  const rows = await env.DB.prepare(
+    `SELECT id, leaf_hash FROM receipt_leaves WHERE anchor_id = ? ORDER BY id`,
+  ).bind(seq).all<{ id: number; leaf_hash: string }>();
+  const hashes = rows.results.map((r) => r.leaf_hash as Hex);
+  const ots = (anchor.ots as Hex | null) ?? null;
+  const otsBitcoin = ots !== null && otsHasBitcoin(hexToBytes(ots));
+  rows.results.forEach((r, index) => {
+    out.set(r.id, {
+      anchor_id: anchor.seq,
+      seq: anchor.seq,
+      root: anchor.root,
+      proof: merkleProof(hashes, index),
+      prev_chain_head: anchor.prev_chain_head,
+      chain_head: anchor.chain_head,
+      leaf_count: anchor.leaf_count,
+      total_leaves: anchor.total_leaves,
+      total_cents: anchor.total_cents,
+      lazy_count: anchor.lazy_count,
+      ots_available: ots !== null,
+      ots,
+      ots_bitcoin: otsBitcoin,
+      anchored_at: anchor.created_at,
+    });
+  });
+  return out;
+}
+
 /// Inclusion proof for one leaf, rebuilt from the anchor's leaves (id order),
 /// with everything needed to recompute the anchor's chain_head offline.
 export async function proofForLeaf(env: Env, leafId: number, seq: number): Promise<LeafProof | null> {
