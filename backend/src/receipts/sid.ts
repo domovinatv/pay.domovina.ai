@@ -1,4 +1,4 @@
-import { concat, getAddress, isAddress, keccak256, toBytes, type Hex } from 'viem';
+import { concat, getAddress, hexToBytes, isAddress, keccak256, toBytes, type Hex } from 'viem';
 
 /// Receipt-bound session ids (ADR 0022 §1).
 ///
@@ -50,7 +50,10 @@ function base32Prefix(bytes: Uint8Array, chars: number): string {
 export function receiptDigest(owner: string, salt: Hex): Hex {
   if (!isAddress(owner, { strict: false })) throw new Error('invalid_owner');
   if (!isReceiptSalt(salt)) throw new Error('invalid_salt');
-  return keccak256(concat([toBytes(RECEIPT_DOMAIN), getAddress(owner), salt]));
+  // All three as BYTES (14 + 20 + 16 = 50). viem's concat must never get a mix
+  // of Uint8Array and hex strings: it then copies the hex string char by char
+  // and every a–f becomes 0 (caught by scripts/mpt_receipt_verify.py, ADR 0023).
+  return keccak256(concat([toBytes(RECEIPT_DOMAIN), hexToBytes(getAddress(owner)), hexToBytes(salt)]));
 }
 
 export function deriveReceiptSid(owner: string, salt: Hex): string {

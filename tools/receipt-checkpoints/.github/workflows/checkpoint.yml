@@ -1,0 +1,44 @@
+name: checkpoint
+
+on:
+  schedule:
+    - cron: "40 0 * * *"   # 40 min after the MPT anchor (00:00 UTC)
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+concurrency:
+  group: checkpoint
+  cancel-in-progress: false
+
+jobs:
+  checkpoint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: OpenTimestamps client
+        run: pip install opentimestamps-client==0.7.2
+      - name: Fetch new anchors
+        run: python3 checkpoint.py fetch
+      - name: Upgrade pending proofs to Bitcoin
+        run: |
+          for f in anchors/*.ots; do
+            [ -e "$f" ] || continue
+            ots upgrade "$f" || true   # still pending is normal for a few hours
+            rm -f "$f.bak"
+          done
+      - name: Verify the whole chain (fails = public alarm)
+        run: python3 mpt_receipt_verify.py --checkpoints anchors/
+      - name: Index
+        run: python3 checkpoint.py index
+      - name: Commit
+        run: |
+          git config user.name "mpt-checkpoint"
+          git config user.email "mpt-checkpoint@users.noreply.github.com"
+          git add -A anchors index.json
+          git diff --cached --quiet || git commit -m "checkpoint $(date -u +%Y-%m-%dT%H:%MZ)"
+          git push

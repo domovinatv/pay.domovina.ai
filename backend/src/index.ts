@@ -420,7 +420,7 @@ export default {
     );
 
     // Payment receipts (ADR 0022): direct + lazy (same-IBAN) leaves on every
-    // tick; one Merkle root + OpenTimestamps stamp per day (00:00 UTC tick).
+    // tick; one chained anchor + OpenTimestamps stamp per day (00:00 UTC tick).
     if (receiptsEnabled(env)) {
       ctx.waitUntil(
         linkReceipts(env, { alert: (t) => sendAlert(env, t) }).then(
@@ -430,8 +430,9 @@ export default {
       );
       if (event.cron === '0 */6 * * *' && new Date(event.scheduledTime).getUTCHours() === 0) {
         ctx.waitUntil(
-          anchorPendingLeaves(env).then(
-            (r) => { if (r) console.log(`cron: receipts anchor #${r.anchorId} root=${r.root} leaves=${r.leaves} ots=${r.calendars}`); },
+          // Heartbeat: one anchor per day even with no new leaves (ADR 0023 §2).
+          anchorPendingLeaves(env, { heartbeat: true }).then(
+            (r) => { if (r) console.log(`cron: receipts anchor #${r.seq} chain_head=${r.chainHead} leaves=${r.leaves} ots=${r.calendars}`); },
             (e) => console.error(`cron: receipts anchor failed: ${e}`),
           ),
         );

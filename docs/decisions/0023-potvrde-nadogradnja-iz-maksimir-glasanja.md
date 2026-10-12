@@ -1,6 +1,6 @@
 # ADR 0023 — Nadogradnja potvrda o uplati iskustvima iz glasanja Maksimir: ključ iz 24 riječi i passkeyja, ulančani append-only zapis, javni checkpointi, neovisni verifikator, sidro bez novca, anonimni claim
 
-- **Status:** Proposed (2026-10-12). Ništa još nije implementirano.
+- **Status:** Proposed (2026-10-12). Faze 1–3 implementirane na grani `feat/receipts-0023-faze-1-3` (vidi „Implementacija“ na dnu).
 - **Gradi na:** [0022](0022-potvrda-o-uplati-vezana-uz-kljuc-uplatitelja.md) (potvrde, deployano
   2026-10-12) · [0001](0001-no-server-side-recovery.md) (self-custody) ·
   [0005](0005-phase-5d-croatian-eid-attestation.md) (Certilia) ·
@@ -83,7 +83,8 @@ Jedna kopija na papiru tako pokriva i potvrde i anonimni claim.
   `anchor_id: NULL → vrijednost` i `name_mismatch` pri upisu. `receipt_anchors` odbija `DELETE` i
   izmjenu `root`, `seq`, `chain_head`, a dopušta samo dopunu `ots` i `chain_tx_hash`.
 - **Lanac sidara:** svako sidro dobiva `seq` (bez rupa) i
-  `chain_head = keccak256(prev_chain_head ‖ seq ‖ root ‖ leaf_count ‖ total_cents ‖ lazy_count)`.
+  `chain_head = keccak256(abi.encode(prev_chain_head, seq, root, leaf_count, total_leaves, total_cents, lazy_count))`,
+  gdje su `total_*` i `lazy_count` tekući zbrojevi od prvog sidra.
   Na OpenTimestamps i na lanac ide `chain_head`, ne sam korijen. Izbacivanje bilo kojeg starog
   sidra ili lista mijenja svaki kasniji `chain_head`.
 - **Brojevi u sidru:** broj listova, ukupni iznos i broj naknadnih veza. Nagli skok (npr. masovno
@@ -214,3 +215,19 @@ korisnika i treba je napraviti prije nego što potvrde dobiju stvarnu vrijednost
 4. **Gap limit 20** pretpostavlja da korisnik ne stvori više od 20 neplaćenih `r1` intenata
    zaredom. Neplaćeni intent se ne vidi kao potvrda, pa skeniranje mora brojiti i intente koji
    postoje, ne samo plaćene.
+
+## Implementacija faza 1–3 (grana `feat/receipts-0023-faze-1-3`)
+
+| Faza | Gdje |
+|---|---|
+| 1 | migracija `0028_receipt_anchor_chain.sql` (sidro po `seq`, `chain_head`, tekući zbrojevi, 4 okidača), `backend/src/receipts/anchor.ts` (sidro i listovi u jednoj D1 transakciji, `seq` je latch, heartbeat), `GET /api/receipts/anchors[?after=N]`, `/latest`, `/:seq`, `/:seq.ots` |
+| 2 | `scripts/mpt_receipt_verify.py` (samo stdlib, keccak u čistom Pythonu); `backend/test/receiptVerify.test.ts` pokreće ga u oba smjera |
+| 3 | `tools/receipt-checkpoints/`: predložak javnog repoa `domovinatv/mpt-receipts-checkpoints` (`checkpoint.py`, Action u 00:40 UTC, README). Repo još nije stvoren |
+
+**Nalaz verifikatora (12. 10. 2026.):** `deriveReceiptSid` je `viem.concat`-u davao mješavinu
+`Uint8Array` i hex stringova, pa su slova a–f adrese i salta postajala 0 (90 bajtova umjesto 50) i
+vezanje sida uz vlasnika bilo je oslabljeno. U produkciji tada nije bilo nijednog `r1` intenta.
+Ispravljeno u istoj grani; zlatni vektor je `r183ns4pcpn659hd2z3xtaqiwq` i jednak je u TS-u, u
+pregledničkom bundleu i u Pythonu. To je točno ona vrsta greške zbog koje Maksimir ima neovisni
+verifikator.
+

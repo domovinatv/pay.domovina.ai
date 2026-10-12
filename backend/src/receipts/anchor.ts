@@ -1,12 +1,12 @@
-import { hexToBytes, toHex, type Hex } from 'viem';
+import { encodeAbiParameters, hexToBytes, keccak256, toHex, type Hex } from 'viem';
 
 import type { Env } from '../types';
 import { merkleProof, merkleRoot } from './merkle';
 
-/// Batch anchoring (ADR 0022 §5): every not-yet-anchored leaf goes into one
-/// Merkle root; the root is stamped on OpenTimestamps (Bitcoin). Recording the
-/// root in PaymentRegistry waits for the registry deploy (safe-tx/004) — until
-/// then chain_tx_hash stays NULL and OTS is the independent anchor.
+/// Batch anchoring (ADR 0022 §5, ADR 0023 §2): every not-yet-anchored leaf goes
+/// into one Merkle root; the anchor chains to the previous one (chain_head) and
+/// sha256(chain_head) is stamped on OpenTimestamps (Bitcoin). The Gnosis anchor
+/// contract (ADR 0023 §5) is not deployed yet — chain_tx_hash stays NULL.
 
 export const OTS_CALENDARS = [
   'https://a.pool.opentimestamps.org',
@@ -71,68 +71,163 @@ export async function stampOts(
   return { ots: buildOtsFile(digest, ok.map((a) => a.body)), calendars: ok.map((a) => a.cal) };
 }
 
+export const ZERO32: Hex = `0x${'00'.repeat(32)}`;
+
+/// ADR 0023 §2: every anchor commits to the previous one and to running
+/// totals, so dropping or rewriting any earlier anchor changes every later
+/// chain_head. abi.encode so a Solidity contract can recompute it.
+export function chainHead(a: {
+  prevChainHead: Hex;
+  seq: number;
+  root: Hex;
+  leafCount: number;
+  totalLeaves: number;
+  totalCents: number;
+  lazyCount: number;
+}): Hex {
+  return keccak256(encodeAbiParameters(
+    [{ type: 'bytes32' }, { type: 'uint64' }, { type: 'bytes32' }, { type: 'uint32' },
+      { type: 'uint64' }, { type: 'uint64' }, { type: 'uint64' }],
+    [a.prevChainHead, BigInt(a.seq), a.root, a.leafCount, BigInt(a.totalLeaves), BigInt(a.totalCents), BigInt(a.lazyCount)],
+  ));
+}
+
+export interface AnchorRow {
+  seq: number;
+  prev_chain_head: Hex;
+  chain_head: Hex;
+  root: Hex;
+  leaf_count: number;
+  total_leaves: number;
+  total_cents: number;
+  lazy_count: number;
+  ots: string | null;
+  ots_calendars: string | null;
+  chain_tx_hash: string | null;
+  created_at: number;
+}
+
+const ANCHOR_COLS = `seq, prev_chain_head, chain_head, root, leaf_count, total_leaves, total_cents,
+  lazy_count, ots, ots_calendars, chain_tx_hash, created_at`;
+
+export async function latestAnchor(env: Env): Promise<AnchorRow | null> {
+  return env.DB.prepare(`SELECT ${ANCHOR_COLS} FROM receipt_anchors ORDER BY seq DESC LIMIT 1`).first<AnchorRow>();
+}
+
+export async function getAnchor(env: Env, seq: number): Promise<AnchorRow | null> {
+  return env.DB.prepare(`SELECT ${ANCHOR_COLS} FROM receipt_anchors WHERE seq = ?`).bind(seq).first<AnchorRow>();
+}
+
+export async function listAnchors(env: Env, after: number, limit = 100): Promise<AnchorRow[]> {
+  const rows = await env.DB.prepare(
+    `SELECT ${ANCHOR_COLS} FROM receipt_anchors WHERE seq > ? ORDER BY seq LIMIT ?`,
+  ).bind(after, limit).all<AnchorRow>();
+  return rows.results;
+}
+
 export interface AnchorResult {
-  anchorId: number;
+  seq: number;
+  chainHead: Hex;
   root: Hex;
   leaves: number;
   calendars: number;
 }
 
-/// Fold every pending leaf into one anchor. Returns null when nothing waits.
+/// Fold every pending leaf into the next anchor. With `heartbeat` an anchor is
+/// made even when nothing is pending (the daily tick: "nothing changed" is
+/// itself stamped). Returns null when there is nothing to do or a concurrent
+/// run took this seq.
 export async function anchorPendingLeaves(
   env: Env,
-  opts: { nowUnix?: number; fetchImpl?: typeof fetch; maxLeaves?: number } = {},
+  opts: { nowUnix?: number; fetchImpl?: typeof fetch; maxLeaves?: number; heartbeat?: boolean } = {},
 ): Promise<AnchorResult | null> {
   const now = opts.nowUnix ?? Math.floor(Date.now() / 1000);
   const rows = await env.DB.prepare(
-    `SELECT id, leaf_hash FROM receipt_leaves WHERE anchor_id IS NULL ORDER BY id LIMIT ?`,
-  ).bind(opts.maxLeaves ?? 4096).all<{ id: number; leaf_hash: string }>();
+    `SELECT id, leaf_hash, amount_cents, kind FROM receipt_leaves WHERE anchor_id IS NULL ORDER BY id LIMIT ?`,
+  ).bind(opts.maxLeaves ?? 4096).all<{ id: number; leaf_hash: string; amount_cents: number; kind: string }>();
   const leaves = rows.results;
-  if (leaves.length === 0) return null;
-  const root = merkleRoot(leaves.map((l) => l.leaf_hash as Hex));
+  if (leaves.length === 0 && !opts.heartbeat) return null;
 
-  // The UNIQUE root is the latch: a concurrent run over the same leaves loses.
-  const ins = await env.DB.prepare(
-    `INSERT OR IGNORE INTO receipt_anchors (root, leaf_count, created_at) VALUES (?, ?, ?)`,
-  ).bind(root, leaves.length, now).run();
-  if ((ins.meta?.changes ?? 0) === 0) return null;
-  const anchorId = Number(ins.meta.last_row_id);
+  const prev = await latestAnchor(env);
+  const seq = (prev?.seq ?? 0) + 1;
+  const root = leaves.length > 0 ? merkleRoot(leaves.map((l) => l.leaf_hash as Hex)) : ZERO32;
+  const head = {
+    prevChainHead: (prev?.chain_head ?? ZERO32) as Hex,
+    seq,
+    root,
+    leafCount: leaves.length,
+    totalLeaves: (prev?.total_leaves ?? 0) + leaves.length,
+    totalCents: (prev?.total_cents ?? 0) + leaves.reduce((s, l) => s + l.amount_cents, 0),
+    lazyCount: (prev?.lazy_count ?? 0) + leaves.filter((l) => l.kind === 'lazy').length,
+  };
+  const ch = chainHead(head);
+
+  // One transaction: the anchor row (seq is the latch) and its leaves. The
+  // leaf UPDATE only fires if THIS run's row won the seq.
   const ids = leaves.map((l) => l.id);
-  await env.DB.prepare(
-    `UPDATE receipt_leaves SET anchor_id = ? WHERE anchor_id IS NULL AND id >= ? AND id <= ?`,
-  ).bind(anchorId, ids[0], ids[ids.length - 1]).run();
-
-  const stamp = await stampOts(await sha256(hexToBytes(root)), opts.fetchImpl);
-  if (stamp.ots) {
-    await env.DB.prepare(`UPDATE receipt_anchors SET ots = ?, ots_calendars = ? WHERE id = ?`)
-      .bind(toHex(stamp.ots), JSON.stringify(stamp.calendars), anchorId).run();
+  const stmts = [
+    env.DB.prepare(
+      `INSERT OR IGNORE INTO receipt_anchors
+         (seq, prev_chain_head, chain_head, root, leaf_count, total_leaves, total_cents, lazy_count, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).bind(seq, head.prevChainHead, ch, root, head.leafCount, head.totalLeaves, head.totalCents, head.lazyCount, now),
+  ];
+  if (ids.length > 0) {
+    stmts.push(env.DB.prepare(
+      `UPDATE receipt_leaves SET anchor_id = ?1
+        WHERE anchor_id IS NULL AND id >= ?2 AND id <= ?3
+          AND (SELECT chain_head FROM receipt_anchors WHERE seq = ?1) = ?4`,
+    ).bind(seq, ids[0], ids[ids.length - 1], ch));
   }
-  return { anchorId, root, leaves: leaves.length, calendars: stamp.calendars.length };
+  await env.DB.batch(stmts);
+  const won = await getAnchor(env, seq);
+  if (!won || won.chain_head !== ch) return null;
+
+  const stamp = await stampOts(await sha256(hexToBytes(ch)), opts.fetchImpl);
+  if (stamp.ots) {
+    await env.DB.prepare(`UPDATE receipt_anchors SET ots = ?, ots_calendars = ? WHERE seq = ?`)
+      .bind(toHex(stamp.ots), JSON.stringify(stamp.calendars), seq).run();
+  }
+  return { seq, chainHead: ch, root, leaves: leaves.length, calendars: stamp.calendars.length };
 }
 
 export interface LeafProof {
   anchor_id: number;
+  seq: number;
   root: Hex;
   proof: Hex[];
+  prev_chain_head: Hex;
+  chain_head: Hex;
+  leaf_count: number;
+  total_leaves: number;
+  total_cents: number;
+  lazy_count: number;
   ots_available: boolean;
   anchored_at: number;
 }
 
-/// Inclusion proof for one leaf, rebuilt from the anchor's leaves (id order).
-export async function proofForLeaf(env: Env, leafId: number, anchorId: number): Promise<LeafProof | null> {
-  const anchor = await env.DB.prepare(`SELECT id, root, ots, created_at FROM receipt_anchors WHERE id = ?`)
-    .bind(anchorId).first<{ id: number; root: string; ots: string | null; created_at: number }>();
+/// Inclusion proof for one leaf, rebuilt from the anchor's leaves (id order),
+/// with everything needed to recompute the anchor's chain_head offline.
+export async function proofForLeaf(env: Env, leafId: number, seq: number): Promise<LeafProof | null> {
+  const anchor = await getAnchor(env, seq);
   if (!anchor) return null;
   const rows = await env.DB.prepare(
     `SELECT id, leaf_hash FROM receipt_leaves WHERE anchor_id = ? ORDER BY id`,
-  ).bind(anchorId).all<{ id: number; leaf_hash: string }>();
+  ).bind(seq).all<{ id: number; leaf_hash: string }>();
   const hashes = rows.results.map((r) => r.leaf_hash as Hex);
   const index = rows.results.findIndex((r) => r.id === leafId);
   if (index < 0) return null;
   return {
-    anchor_id: anchor.id,
-    root: anchor.root as Hex,
+    anchor_id: anchor.seq,
+    seq: anchor.seq,
+    root: anchor.root,
     proof: merkleProof(hashes, index),
+    prev_chain_head: anchor.prev_chain_head,
+    chain_head: anchor.chain_head,
+    leaf_count: anchor.leaf_count,
+    total_leaves: anchor.total_leaves,
+    total_cents: anchor.total_cents,
+    lazy_count: anchor.lazy_count,
     ots_available: anchor.ots !== null,
     anchored_at: anchor.created_at,
   };

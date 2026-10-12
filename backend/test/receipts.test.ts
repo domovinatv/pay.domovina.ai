@@ -3,11 +3,12 @@ import { bytesToHex, hexToBytes, type Hex } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
 
 import { buildIntentApi } from '../src/intents/api';
+import { buildReceiptAnchorApi } from '../src/receipts/routes';
 import { generateSid } from '../src/intents/sid';
 import { handleForward, type ForwardDeps } from '../src/monerium/forward';
 import type { MoneriumOrder } from '../src/monerium/types';
 import { receiptRequestMessage } from '../src/receipts/api';
-import { anchorPendingLeaves, buildOtsFile, proofForLeaf, sha256 } from '../src/receipts/anchor';
+import { anchorPendingLeaves, buildOtsFile, chainHead, proofForLeaf, sha256, ZERO32 } from '../src/receipts/anchor';
 import { linkReceipts, sameHolder } from '../src/receipts/link';
 import { leafHash, merkleProof, merkleRoot, verifyMerkleProof } from '../src/receipts/merkle';
 import {
@@ -32,6 +33,19 @@ describe('receipt sid (§1)', () => {
     expect(deriveReceiptSid(OWNER.toLowerCase(), SALT)).toBe(sid);
     expect(isReceiptSid(sid)).toBe(true);
     expect(sid.length).toBeLessThanOrEqual(32); // fits SID_RE and bytes32
+  });
+
+  it('golden vector: keccak over exactly domain ‖ owner (20 B) ‖ salt (16 B)', () => {
+    // Same value from scripts/mpt_receipt_verify.py (pure-Python keccak) and
+    // energy.domovina.ai docs/16 — the three implementations must agree.
+    expect(deriveReceiptSid(OWNER, SALT)).toBe('r183ns4pcpn659hd2z3xtaqiwq');
+    expect(OWNER).toBe('0x70997970C51812dc3A010C7d01b50e0d17dc79C8');
+  });
+
+  it('every hex letter of the owner matters', () => {
+    const a = '0x' + 'a'.repeat(40);
+    const b = '0x' + 'b'.repeat(40);
+    expect(deriveReceiptSid(a, SALT)).not.toBe(deriveReceiptSid(b, SALT));
   });
 
   it('binds owner and salt: any change gives another sid', () => {
@@ -222,7 +236,7 @@ describe('anchoring + OpenTimestamps (§5)', () => {
       return new Response(new Uint8Array([0xf0, 0x10, 1, 2, 3]), { status: 200 });
     }) as unknown as typeof fetch;
     const r = await anchorPendingLeaves(env, { nowUnix: 2_000, fetchImpl: fakeFetch });
-    expect(r).toMatchObject({ leaves: 3, calendars: 4 });
+    expect(r).toMatchObject({ seq: 1, leaves: 3, calendars: 4 });
     expect(calls.every((u) => u.endsWith('/digest'))).toBe(true);
     expect(await anchorPendingLeaves(env, { fetchImpl: fakeFetch })).toBeNull(); // nothing pending
 
@@ -237,7 +251,8 @@ describe('anchoring + OpenTimestamps (§5)', () => {
     const ots = raw.prepare(`SELECT ots FROM receipt_anchors`).get() as { ots: Hex };
     const bytes = hexToBytes(ots.ots);
     expect(new TextDecoder().decode(bytes.slice(1, 15))).toBe('OpenTimestamps');
-    expect(bytesToHex(bytes.slice(33, 65))).toBe(bytesToHex(await sha256(hexToBytes(r!.root))));
+    // The stamp covers the chain head, not just this batch's root (ADR 0023 §2).
+    expect(bytesToHex(bytes.slice(33, 65))).toBe(bytesToHex(await sha256(hexToBytes(r!.chainHead))));
   });
 
   it('every calendar down → anchor kept without OTS', async () => {
@@ -380,5 +395,67 @@ describe('receipt API', () => {
     expect(bad.status).toBe(400);
     const dup = await call('/z232pb646itg/receipt-intent', { method: 'POST', body: JSON.stringify({ sid: ANCHOR_SID }) });
     expect(dup.status).toBe(409);
+  });
+});
+
+// ---- ADR 0023 §2: chained anchors, heartbeat, append-only ----
+
+describe('anchor chain (ADR 0023 §2)', () => {
+  const quiet = (async () => new Response(new Uint8Array([1]), { status: 200 })) as unknown as typeof fetch;
+
+  it('each anchor commits to the previous one and to running totals', async () => {
+    const { env, raw, pay, deps } = setup();
+    pay('o1', '2026-10-01T10:00:00Z');
+    pay('anchor', '2026-10-04T10:00:00Z', { sid: ANCHOR_SID, prefix: 'mpt' });
+    await linkReceipts(env, deps);
+    const a1 = await anchorPendingLeaves(env, { nowUnix: 10, fetchImpl: quiet });
+    const a2 = await anchorPendingLeaves(env, { nowUnix: 20, fetchImpl: quiet, heartbeat: true });
+    expect(a1).toMatchObject({ seq: 1, leaves: 2 });
+    expect(a2).toMatchObject({ seq: 2, leaves: 0, root: ZERO32 });
+
+    const rows = raw.prepare(`SELECT * FROM receipt_anchors ORDER BY seq`).all() as Array<Record<string, never>>;
+    expect(rows[0]).toMatchObject({ prev_chain_head: ZERO32, leaf_count: 2, total_leaves: 2, total_cents: 1000, lazy_count: 1 });
+    expect(rows[1]).toMatchObject({ prev_chain_head: a1!.chainHead, leaf_count: 0, total_leaves: 2, total_cents: 1000, lazy_count: 1 });
+    for (const r of rows) {
+      expect(chainHead({
+        prevChainHead: r.prev_chain_head, seq: r.seq, root: r.root, leafCount: r.leaf_count,
+        totalLeaves: r.total_leaves, totalCents: r.total_cents, lazyCount: r.lazy_count,
+      })).toBe(r.chain_head);
+    }
+  });
+
+  it('without heartbeat nothing pending means no anchor', async () => {
+    const { env } = setup();
+    expect(await anchorPendingLeaves(env, { fetchImpl: quiet })).toBeNull();
+    expect(await anchorPendingLeaves(env, { fetchImpl: quiet, heartbeat: true })).toMatchObject({ seq: 1 });
+  });
+
+  it('leaves and anchors cannot be deleted or rewritten', async () => {
+    const { env, raw, pay, deps } = setup();
+    pay('anchor', '2026-10-04T10:00:00Z', { sid: ANCHOR_SID, prefix: 'mpt' });
+    await linkReceipts(env, deps);
+    expect(() => raw.prepare(`UPDATE receipt_leaves SET amount_cents = 1`).run()).toThrow(/append-only|only anchor_id/);
+    expect(() => raw.prepare(`DELETE FROM receipt_leaves`).run()).toThrow(/append-only/);
+    await anchorPendingLeaves(env, { fetchImpl: quiet });
+    expect(() => raw.prepare(`UPDATE receipt_leaves SET anchor_id = NULL`).run()).toThrow(/only anchor_id/);
+    expect(() => raw.prepare(`UPDATE receipt_anchors SET root = '0x01'`).run()).toThrow(/only ots/);
+    expect(() => raw.prepare(`DELETE FROM receipt_anchors`).run()).toThrow(/append-only/);
+    // An upgraded OTS proof may replace the pending one.
+    raw.prepare(`UPDATE receipt_anchors SET ots = '0xabcd' WHERE seq = 1`).run();
+  });
+
+  it('public anchor chain API', async () => {
+    const { env, pay, deps } = setup();
+    pay('anchor', '2026-10-04T10:00:00Z', { sid: ANCHOR_SID, prefix: 'mpt' });
+    await linkReceipts(env, deps);
+    await anchorPendingLeaves(env, { fetchImpl: quiet });
+    await anchorPendingLeaves(env, { fetchImpl: quiet, heartbeat: true });
+    const api = buildReceiptAnchorApi();
+    const latest = await (await api.request('/anchors/latest', undefined, env)).json() as { seq: number; ots_available: boolean };
+    expect(latest).toMatchObject({ seq: 2, ots_available: true });
+    const list = await (await api.request('/anchors?after=0', undefined, env)).json() as { anchors: Array<{ seq: number }> };
+    expect(list.anchors.map((a) => a.seq)).toEqual([1, 2]);
+    expect((await api.request('/anchors/1.ots', undefined, env)).status).toBe(200);
+    expect((await api.request('/anchors/9', undefined, env)).status).toBe(404);
   });
 });

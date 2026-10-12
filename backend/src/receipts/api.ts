@@ -5,7 +5,7 @@ import { gnosis } from 'viem/chains';
 import type { Env } from '../types';
 import { sendAlert } from '../alerts';
 import { getIntent } from '../intents/db';
-import { proofForLeaf, type LeafProof } from './anchor';
+import { getAnchor, latestAnchor, listAnchors, proofForLeaf, type AnchorRow, type LeafProof } from './anchor';
 import { linkReceipts } from './link';
 import { isReceiptSid, receiptSidMatches } from './sid';
 
@@ -13,7 +13,7 @@ import { isReceiptSid, receiptSidMatches } from './sid';
 ///
 ///   GET  /api/intents/:sid/receipt   public: the direct receipt only
 ///   POST /api/intents/:sid/receipt   owner-signed: + payments covered lazily
-///   GET  /api/receipts/anchors/:id.ots   the OpenTimestamps proof of a root
+///   GET  /api/receipts/anchors[?after=N] | /latest | /:seq | /:seq.ots   the anchor chain
 ///
 /// The lazy list is owner-only: anyone can learn a sid, and a public list
 /// would expose every earlier payment from one IBAN (ADR 0022 §3a).
@@ -174,27 +174,56 @@ export function registerReceiptRoutes(api: Hono<{ Bindings: Env }>): void {
   });
 }
 
+/// Public anchor chain, read by the checkpoint Action (ADR 0023 §3) and by
+/// anyone verifying a receipt. Everything here is already public by design.
+function anchorJson(a: AnchorRow) {
+  return {
+    seq: a.seq,
+    prev_chain_head: a.prev_chain_head,
+    chain_head: a.chain_head,
+    root: a.root,
+    leaf_count: a.leaf_count,
+    total_leaves: a.total_leaves,
+    total_cents: a.total_cents,
+    lazy_count: a.lazy_count,
+    ots_available: a.ots !== null,
+    ots_calendars: a.ots_calendars ? (JSON.parse(a.ots_calendars) as string[]) : [],
+    chain_tx_hash: a.chain_tx_hash,
+    created_at: a.created_at,
+  };
+}
+
 export function registerReceiptAnchorRoutes(api: Hono<{ Bindings: Env }>): void {
-  api.get('/anchors/:id{[0-9]+}', async (c) => {
-    const row = await c.env.DB.prepare(
-      `SELECT id, root, leaf_count, ots_calendars, chain_tx_hash, created_at FROM receipt_anchors WHERE id = ?`,
-    ).bind(Number(c.req.param('id'))).first();
-    if (!row) return c.json({ error: 'not_found' }, 404);
-    return c.json(row);
+  api.get('/anchors', async (c) => {
+    const after = Number(c.req.query('after') ?? '0');
+    if (!Number.isSafeInteger(after) || after < 0) return c.json({ error: 'invalid_after' }, 400);
+    const rows = await listAnchors(c.env, after, 100);
+    return c.json({ anchors: rows.map(anchorJson) });
   });
+
+  api.get('/anchors/latest', async (c) => {
+    const row = await latestAnchor(c.env);
+    if (!row) return c.json({ error: 'no_anchor_yet' }, 404);
+    return c.json(anchorJson(row));
+  });
+
+  api.get('/anchors/:seq{[0-9]+}', async (c) => {
+    const row = await getAnchor(c.env, Number(c.req.param('seq')));
+    if (!row) return c.json({ error: 'not_found' }, 404);
+    return c.json(anchorJson(row));
+  });
+
   api.get('/anchors/:file', async (c) => {
     const m = /^(\d+)\.ots$/.exec(c.req.param('file'));
     if (!m) return c.json({ error: 'not_found' }, 404);
-    const row = await c.env.DB.prepare(`SELECT ots FROM receipt_anchors WHERE id = ?`)
-      .bind(Number(m[1])).first<{ ots: string | null }>();
+    const row = await getAnchor(c.env, Number(m[1]));
     if (!row?.ots) return c.json({ error: 'ots_not_available' }, 404);
     return new Response(hexToBytes(row.ots as Hex), {
       headers: {
         'Content-Type': 'application/octet-stream',
         'Content-Disposition': `attachment; filename="mpt-receipt-anchor-${m[1]}.ots"`,
-        'Cache-Control': 'public, max-age=3600',
+        'Cache-Control': 'public, max-age=300',
       },
     });
   });
-
 }
