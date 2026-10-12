@@ -8,6 +8,7 @@ recomputed here from the receipt and the public anchor checkpoints.
   python3 scripts/mpt_receipt_verify.py potvrda.json --checkpoints <mpt-receipts-checkpoints>/anchors
   python3 scripts/mpt_receipt_verify.py --checkpoints anchors/            # the anchor chain alone
   python3 scripts/mpt_receipt_verify.py potvrda.json --rpc https://rpc.gnosischain.com --rpc https://gnosis.drpc.org
+  python3 scripts/mpt_receipt_verify.py --checkpoints anchors/ --btc-api https://mempool.space/api --btc-api https://blockstream.info/api
 
 Checks
   1. sid  = "r1" + base32(keccak256("MPT-RECEIPT-v1" | owner | salt))[:24]
@@ -15,20 +16,27 @@ Checks
   3. every Merkle proof up to its anchor root
   4. every anchor's chain_head, recomputed; with --checkpoints: the same
      chain_head in the public checkpoint and an unbroken chain from seq 1
-  5. with --checkpoints: each <seq>.ots stamps sha256(chain_head); reports
-     whether it already carries a Bitcoin attestation (verify that one with
-     `ots verify`)
-  6. with --rpc (two or more recommended): each direct payment's Gnosis tx
+  5. each OpenTimestamps proof (<seq>.ots with --checkpoints, or `ots`
+     embedded in a receipt's anchor) stamps sha256(chain_head); its proof
+     tree is replayed op by op and every Bitcoin attestation is collected
+  6. with --btc-api (two or more recommended): each attested block header is
+     fetched, hashed to its block hash, and must carry the proof's result as
+     its merkle root; the earliest such block time must lie within
+     [created_at - 2 h, created_at + 48 h]. A later time means the anchor
+     was stamped long after it claims to exist: rewritten history
+  7. with --rpc (two or more recommended): each direct payment's Gnosis tx
      succeeded, and all RPCs agree on its block
 
 Exit code 0 = every check passed, 1 = at least one failed, 2 = bad input.
 """
 
 import argparse
+import datetime
 import hashlib
 import json
 import os
 import sys
+import time
 import urllib.request
 
 # ---------------------------------------------------------------- keccak-256
@@ -138,20 +146,245 @@ def merkle_apply(leaf: str, proof) -> str:
 
 
 # ---------------------------------------------------------------- OTS
+# OpenTimestamps detached proof, parsed as python-opentimestamps does: header,
+# file digest, then a tree of ops (each applied to the message so far) whose
+# leaves are attestations. A Bitcoin attestation at height h says: the message
+# at this leaf is the merkle root of Bitcoin block h.
 
 OTS_MAGIC = b"\x00OpenTimestamps\x00\x00Proof\x00\xbf\x89\xe2\xe8\x84\xe8\x92\x94"
 BITCOIN_TAG = bytes.fromhex("0588960d73d71901")
 PENDING_TAG = bytes.fromhex("83dfe30d2ef90c8e")
+OTS_MAX_FILE = 1 << 20     # real proofs are a few kB
+OTS_MAX_DEPTH = 256        # ops along one path (a Bitcoin proof has ~60)
+OTS_MAX_VARBYTES = 8192
+
+_UNARY = {0x02: "sha1", 0x03: "ripemd160", 0x08: "sha256", 0x67: "keccak256", 0xF2: "reverse", 0xF3: "hexlify"}
 
 
-def check_ots(path: str, head: str):
-    data = open(path, "rb").read()
-    if not data.startswith(OTS_MAGIC) or data[len(OTS_MAGIC)] != 1 or data[len(OTS_MAGIC) + 1] != 0x08:
-        return "not a SHA256 OpenTimestamps proof", None
-    digest = data[len(OTS_MAGIC) + 2:len(OTS_MAGIC) + 34]
+class OtsError(ValueError):
+    pass
+
+
+class _Reader:
+    def __init__(self, data: bytes):
+        self.data, self.pos = data, 0
+
+    def bytes(self, n: int) -> bytes:
+        if self.pos + n > len(self.data):
+            raise OtsError("truncated")
+        out = self.data[self.pos:self.pos + n]
+        self.pos += n
+        return out
+
+    def byte(self) -> int:
+        return self.bytes(1)[0]
+
+    def varuint(self) -> int:
+        # LEB128: 7 bits per byte, least significant first, high bit = more
+        value, shift = 0, 0
+        while True:
+            b = self.byte()
+            value |= (b & 0x7F) << shift
+            if not b & 0x80:
+                return value
+            shift += 7
+            if shift > 63:
+                raise OtsError("varuint too long")
+
+    def varbytes(self) -> bytes:
+        n = self.varuint()
+        if n > OTS_MAX_VARBYTES:
+            raise OtsError(f"varbytes of {n} bytes")
+        return self.bytes(n)
+
+
+def _apply_unary(name: str, msg):
+    """None = this branch cannot be computed here (no ripemd160 in this Python)."""
+    if msg is None:
+        return None
+    if name == "reverse":
+        return msg[::-1]
+    if name == "hexlify":
+        return msg.hex().encode()
+    if name == "keccak256":
+        return keccak256(msg)
+    try:
+        return hashlib.new(name, msg).digest()
+    except ValueError:
+        return None
+
+
+def _ots_timestamp(r: _Reader, msg, depth: int, out: dict):
+    if depth > OTS_MAX_DEPTH:
+        raise OtsError("proof tree too deep")
+
+    def handle(tag: int):
+        if tag == 0x00:
+            att_tag, payload = r.bytes(8), r.varbytes()
+            if att_tag == BITCOIN_TAG:
+                height = _Reader(payload).varuint()
+                if msg is None:
+                    out["unverifiable"].append(height)
+                else:
+                    out["bitcoin"].append((height, msg))
+            elif att_tag == PENDING_TAG:
+                out["pending"].append(_Reader(payload).varbytes().decode("utf-8", "replace"))
+            else:
+                out["unknown"].append(att_tag.hex())
+            return
+        if tag in _UNARY:
+            nxt = _apply_unary(_UNARY[tag], msg)
+        elif tag in (0xF0, 0xF1):
+            arg = r.varbytes()
+            nxt = None if msg is None else (msg + arg if tag == 0xF0 else arg + msg)
+        else:
+            raise OtsError(f"unknown op 0x{tag:02x}")
+        _ots_timestamp(r, nxt, depth + 1, out)
+
+    tag = r.byte()
+    while tag == 0xFF:  # fork: every branch but the last is prefixed with 0xff
+        handle(r.byte())
+        tag = r.byte()
+    handle(tag)
+
+
+def parse_ots(data: bytes, head: str):
+    """(header_error, tree_error, proof) for a .ots file that should stamp
+    sha256(bytes(head)). proof = {bitcoin: [(height, merkle_root)], pending:
+    [calendar uri], unknown: [tag hex], unverifiable: [height]}."""
+    if len(data) > OTS_MAX_FILE:
+        return "proof file too large", None, None
+    if not data.startswith(OTS_MAGIC):
+        return "not an OpenTimestamps proof", None, None
+    r = _Reader(data)
+    r.pos = len(OTS_MAGIC)
+    try:
+        if r.varuint() != 1 or r.byte() != 0x08:
+            return "not a SHA256 OpenTimestamps proof (major version 1)", None, None
+        digest = r.bytes(32)
+    except OtsError:
+        return "not a SHA256 OpenTimestamps proof", None, None
     if digest != hashlib.sha256(hx(head)).digest():
-        return "stamps a different digest than sha256(chain_head)", None
-    return None, BITCOIN_TAG in data
+        return "stamps a different digest than sha256(chain_head)", None, None
+    proof = {"bitcoin": [], "pending": [], "unknown": [], "unverifiable": []}
+    try:
+        _ots_timestamp(r, digest, 0, proof)
+        if r.pos != len(data):
+            raise OtsError("trailing bytes after the proof tree")
+    except OtsError as e:
+        return None, str(e), None
+    return None, None, proof
+
+
+# ---------------------------------------------------------------- Bitcoin
+# An honest stamp reaches Bitcoin within hours (calendars commit every few
+# blocks). A proof attested much later than its anchor was created is what a
+# rewritten checkpoint history with freshly stamped .ots files looks like.
+
+MAX_STAMP_DELAY_S = 48 * 3600   # latest acceptable block time after created_at
+MAX_CLOCK_SKEW_S = 7200         # a block time may run 2 h ahead of real time
+# An honest anchor is Bitcoin-attested within hours and the checkpoint repo
+# upgrades its proof daily. With --btc-api, an anchor older than this without a
+# verified Bitcoin attestation is an error, not a note: a history forged later
+# cannot show an early attestation, so "no attestation" is what it would show.
+MUST_BE_ATTESTED_AFTER_S = 72 * 3600
+
+
+def overdue(created_at) -> bool:
+    return created_at is not None and time.time() - int(created_at) > MUST_BE_ATTESTED_AFTER_S
+
+
+def http_get_text(url: str) -> str:
+    req = urllib.request.Request(url, headers={"User-Agent": "mpt-receipt-verify"})
+    with urllib.request.urlopen(req, timeout=20) as r:
+        return r.read(4096).decode("ascii").strip()
+
+
+def block_header(api: str, height: int) -> bytes:
+    """80-byte header of block `height` from an Esplora API, checked against
+    the block hash the same API reports."""
+    api = api.rstrip("/")
+    block_hash = http_get_text(f"{api}/block-height/{height}").lower()
+    header = bytes.fromhex(http_get_text(f"{api}/block/{block_hash}/header"))
+    if len(header) != 80:
+        raise ValueError(f"header of block {height} is {len(header)} bytes, not 80")
+    if hashlib.sha256(hashlib.sha256(header).digest()).digest()[::-1].hex() != block_hash:
+        raise ValueError(f"header of block {height} does not hash to {block_hash}")
+    return header
+
+
+def utc(t: int) -> str:
+    return datetime.datetime.fromtimestamp(t, datetime.timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+
+
+def check_bitcoin_time(where: str, seq: int, data: bytes, head: str, created_at, apis, headers: dict,
+                       errors: list, notes: list):
+    """Parse a .ots proof of anchor #seq and, with Bitcoin APIs, check that
+    Bitcoin attested it no later than MAX_STAMP_DELAY_S after created_at."""
+    header_err, tree_err, proof = parse_ots(data, head)
+    if header_err:
+        errors.append(f"{where}: {header_err}")
+        return
+
+    def unattested(reason: str) -> None:
+        if apis and overdue(created_at):
+            errors.append(f"{where}: anchor #{seq} is older than {MUST_BE_ATTESTED_AFTER_S // 3600} h "
+                          f"and {reason}: an honest anchor is attested within hours")
+        else:
+            notes.append(f"{where}: {reason}")
+
+    if tree_err:
+        unattested(f".ots proof tree unreadable ({tree_err}): no Bitcoin time checked")
+        return
+    for tag in proof["unknown"]:
+        notes.append(f"{where}: .ots carries an unknown attestation {tag} (skipped)")
+    for h in proof["unverifiable"]:
+        notes.append(f"{where}: Bitcoin block {h} branch needs ripemd160, missing in this Python: not checked")
+    if not proof["bitcoin"]:
+        if not proof["unverifiable"]:
+            unattested(".ots still pending (no Bitcoin attestation yet)")
+        return
+    if not apis:
+        h = min(height for height, _ in proof["bitcoin"])
+        notes.append(f"{where}: Bitcoin block {h}: run with --btc-api to check its time")
+        return
+
+    verified = []
+    for height, root in sorted(set(proof["bitcoin"])):
+        if height not in headers:
+            got = set()
+            for api in apis:
+                try:
+                    got.add(block_header(api, height))
+                except Exception as e:  # noqa: BLE001 — report, do not crash
+                    errors.append(f"{where}: Bitcoin API {api} failed for block {height}: {e}")
+            if len(got) > 1:
+                errors.append(f"{where}: Bitcoin APIs disagree on block {height}")
+            headers[height] = got.pop() if len(got) == 1 else None
+        header = headers[height]
+        if header is None:
+            continue
+        if header[36:68] != root:
+            errors.append(f"{where}: Bitcoin block {height} does not commit to this proof (merkle root differs)")
+            continue
+        verified.append((int.from_bytes(header[68:72], "little"), height))
+    if not verified:
+        unattested("no Bitcoin attestation could be verified")
+        return
+
+    t, height = min(verified)
+    if created_at is None:
+        notes.append(f"{where}: Bitcoin block {height} at {utc(t)}; anchor has no creation time to compare")
+        return
+    delay = t - int(created_at)
+    if delay > MAX_STAMP_DELAY_S:
+        errors.append(f"{where}: Bitcoin attests anchor #{seq} only at {utc(t)}, "
+                      f"{delay / 3600:.0f} h after it was created: rewritten history?")
+    elif delay < -MAX_CLOCK_SKEW_S:
+        errors.append(f"{where}: Bitcoin attests anchor #{seq} at {utc(t)}, "
+                      f"{-delay / 3600:.0f} h BEFORE it was created: impossible for an honest stamp")
+    else:
+        notes.append(f"{where}: Bitcoin block {height} at {utc(t)} ({delay / 3600:+.1f} h after anchoring)")
 
 
 # ---------------------------------------------------------------- RPC
@@ -181,6 +414,8 @@ def main() -> int:
     ap.add_argument("receipt", nargs="?", help="receipt JSON (download from the receipt page or POST /receipt)")
     ap.add_argument("--checkpoints", help="directory with <seq>.json (+ <seq>.ots) anchor checkpoints")
     ap.add_argument("--rpc", action="append", default=[], help="Gnosis JSON-RPC URL (repeat for independent nodes)")
+    ap.add_argument("--btc-api", action="append", default=[],
+                    help="Esplora Bitcoin API, e.g. https://mempool.space/api (repeat for independent sources)")
     args = ap.parse_args()
     if not args.receipt and not args.checkpoints:
         ap.print_usage()
@@ -188,6 +423,9 @@ def main() -> int:
 
     errors, notes = [], []
     receipt_anchors = {}
+    headers = {}  # Bitcoin height -> verified 80-byte header (None = unavailable)
+    if len(args.btc_api) == 1:
+        notes.append("only one --btc-api given: a single Bitcoin API is trusted for block headers")
 
     if args.receipt:
         try:
@@ -219,6 +457,15 @@ def main() -> int:
                 errors.append(f"{where}: Merkle proof does not reach root of anchor #{a['seq']}")
             if chain_head(a) != a["chain_head"].lower():
                 errors.append(f"{where}: anchor #{a['seq']} chain_head does not match its fields")
+            if a.get("ots") and int(a["seq"]) not in receipt_anchors:
+                # an embedded proof makes the receipt verifiable without the checkpoint repo
+                try:
+                    ots = hx(a["ots"])
+                except ValueError:
+                    errors.append(f"{where}: anchor #{a['seq']} embedded ots is not hex")
+                else:
+                    check_bitcoin_time(f"{where}: anchor #{a['seq']}", int(a["seq"]), ots, a["chain_head"],
+                                       a.get("anchored_at"), args.btc_api, headers, errors, notes)
             receipt_anchors[int(a["seq"])] = a
 
         if args.rpc:
@@ -260,11 +507,11 @@ def main() -> int:
             prev = a["chain_head"].lower()
             ots = os.path.join(args.checkpoints, f"{seq}.ots")
             if os.path.exists(ots):
-                err, btc = check_ots(ots, a["chain_head"])
-                if err:
-                    errors.append(f"checkpoint #{seq}: {ots}: {err}")
-                elif not btc:
-                    notes.append(f"checkpoint #{seq}: .ots still pending (no Bitcoin attestation yet)")
+                check_bitcoin_time(f"checkpoint #{seq}", seq, open(ots, "rb").read(), a["chain_head"],
+                                   a.get("created_at"), args.btc_api, headers, errors, notes)
+            elif args.btc_api and overdue(a.get("created_at")):
+                errors.append(f"checkpoint #{seq}: no .ots file for an anchor older than "
+                              f"{MUST_BE_ATTESTED_AFTER_S // 3600} h")
             else:
                 notes.append(f"checkpoint #{seq}: no .ots file")
         for seq, a in receipt_anchors.items():

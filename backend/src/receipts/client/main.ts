@@ -22,7 +22,8 @@ interface StoredKey {
 
 interface Proof {
   anchor_id: number; seq: number; root: string; proof: string[]; prev_chain_head: string; chain_head: string;
-  leaf_count: number; total_leaves: number; total_cents: number; lazy_count: number; ots_available: boolean; anchored_at: number;
+  leaf_count: number; total_leaves: number; total_cents: number; lazy_count: number; ots_available: boolean;
+  ots: string | null; ots_bitcoin: boolean; anchored_at: number;
 }
 interface Payment {
   kind: 'direct' | 'lazy';
@@ -290,7 +291,8 @@ function renderReceipt(rc: Receipt, key: StoredKey | null): void {
   const anchors = [...new Map(rc.payments.filter((p) => p.anchor).map((p) => [p.anchor!.anchor_id, p.anchor!])).values()];
   const otsLinks = anchors.filter((a) => a.ots_available).map((a) =>
     el('li', {}, el('a', { href: `/api/receipts/anchors/${a.seq}.ots` }, `Sidro #${a.seq} (.ots)`),
-      ' chain_head ', el('code', {}, a.chain_head)));
+      a.ots_bitcoin ? ' · Bitcoin dokaz ugrađen u potvrdu' : ' · čeka Bitcoin blok (dokaz se ugrađuje nakon nadogradnje)',
+      ' · chain_head ', el('code', {}, a.chain_head)));
 
   const actions = el('div', { class: 'actions no-print' });
   const printBtn = el('button', { class: 'primary', type: 'button' }, 'Spremi kao PDF');
