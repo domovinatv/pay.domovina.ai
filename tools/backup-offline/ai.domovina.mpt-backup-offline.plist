@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Offline backup MPT produkcije (D1 pay_domovina) na DOMOVINA2TB + DOMOVINA1TB.
+  Svakih 6 h (00/06/12/18 lokalno). Ako je Mac spavao, launchd pokrene propušteni
+  termin jednom pri buđenju. Tiho kad uspije; neuspjeh ili samo jedan disk ide u
+  Telegram + macOS notifikaciju. Vidi README.md.
+
+  Instalacija:
+    cp tools/backup-offline/ai.domovina.mpt-backup-offline.plist ~/Library/LaunchAgents/
+    launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/ai.domovina.mpt-backup-offline.plist
+  Ručni okidač:  launchctl kickstart -k gui/$(id -u)/ai.domovina.mpt-backup-offline
+  Deinstalacija: launchctl bootout gui/$(id -u)/ai.domovina.mpt-backup-offline
+
+  LaunchAgent, ne Daemon: wrangler OAuth token je u korisnikovu homeu.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>ai.domovina.mpt-backup-offline</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>/Users/ms/git/domovinatv/pay.domovina.ai/tools/backup-offline/backup.sh</string>
+  </array>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key><string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    <key>HOME</key><string>/Users/ms</string>
+    <key>LANG</key><string>en_US.UTF-8</string>
+    <key>LC_ALL</key><string>en_US.UTF-8</string>
+  </dict>
+
+  <key>StartCalendarInterval</key>
+  <array>
+    <dict><key>Hour</key><integer>0</integer><key>Minute</key><integer>20</integer></dict>
+    <dict><key>Hour</key><integer>6</integer><key>Minute</key><integer>20</integer></dict>
+    <dict><key>Hour</key><integer>12</integer><key>Minute</key><integer>20</integer></dict>
+    <dict><key>Hour</key><integer>18</integer><key>Minute</key><integer>20</integer></dict>
+  </array>
+
+  <key>RunAtLoad</key>
+  <false/>
+
+  <key>ProcessType</key>
+  <string>Background</string>
+
+  <key>StandardOutPath</key>
+  <string>/Users/ms/Library/Logs/mpt-backup-offline.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/ms/Library/Logs/mpt-backup-offline.log</string>
+</dict>
+</plist>
