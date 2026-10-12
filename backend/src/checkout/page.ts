@@ -88,11 +88,14 @@ export function renderCheckoutPage(
   /// Tenant's rail style; null/absent = the `mpt:` reference (default tenant).
   style: ReferenceStyle | null = null,
   /// ADR 0024: `sandbox` = a self-serve sandbox tenant — no IBAN, no QR,
-  /// simulate buttons instead.
-  opts: { sandbox?: boolean } = {},
+  /// simulate buttons instead. `moneriumSandbox` = a rail tenant on Monerium's
+  /// sandbox: the real IBAN/QR plus a button that has Monerium simulate the
+  /// SEPA transfer (monerium/sandboxFund.ts).
+  opts: { sandbox?: boolean; moneriumSandbox?: boolean } = {},
 ): string {
   const sid = intent.sid;
   const sandbox = opts.sandbox === true;
+  const moneriumSandbox = !sandbox && opts.moneriumSandbox === true;
   // ADR 0024 D6: where "Natrag u aplikaciju" leads, per outcome.
   const ret = intent.return_url
     ? {
@@ -143,6 +146,7 @@ export function renderCheckoutPage(
     amount_received_cents: intent.amount_received_cents,
     status,
     sandbox,
+    moneriumSandbox,
     return: ret,
   };
 
@@ -381,6 +385,7 @@ footer a { color: var(--navy); text-decoration: none; font-weight: 600; }
 <body>
 <div class="tricolor"><span class="red"></span><span class="white"></span><span class="navy"></span></div>
 ${sandbox ? '<div class="sandbox-ribbon" role="note">SANDBOX · test, nema stvarne uplate</div>' : ''}
+${moneriumSandbox ? '<div class="sandbox-ribbon" role="note">MONERIUM SANDBOX · testni novac na Chiadu</div>' : ''}
 <header>
   <div class="word">MPT · <span class="accent">Mint Pay Transfer</span></div>
 </header>
@@ -401,6 +406,13 @@ ${sandbox ? '<div class="sandbox-ribbon" role="note">SANDBOX · test, nema stvar
         <button type="button" onclick="simulate('underpaid')">Premala uplata</button>
         <button type="button" onclick="simulate('late')">Zakašnjela uplata</button>
         <button type="button" onclick="simulate('rejected')">Odbijena uplata</button>
+      </div>
+      <div class="sim-msg" id="simMsg"></div>
+    </div>` : ''}
+    ${moneriumSandbox ? `<div class="sandbox-box" id="sandboxBox">
+      <p><b>MONERIUM SANDBOX.</b> Na ovaj IBAN ide samo testni novac. Gumb traži od Moneriuma simuliranu SEPA uplatu točnog iznosa s referencom ovog checkouta; dalje sve ide pravim putem (order, webhook, mint na Chiadu).</p>
+      <div class="sim-row">
+        <button type="button" class="primary" onclick="simulateSepa()">Simuliraj SEPA uplatu</button>
       </div>
       <div class="sim-msg" id="simMsg"></div>
     </div>` : ''}
@@ -687,7 +699,8 @@ function applyState(s) {
   if (stage && stage !== 'awaiting_payment' && stage !== 'expired') {
     $('qrWrap').style.display = 'none';
   }
-  if (INITIAL.sandbox && (stage === 'settled' || stage === 'rejected') && $('sandboxBox')) {
+  if ((INITIAL.sandbox && (stage === 'settled' || stage === 'rejected')
+       || INITIAL.moneriumSandbox && stage && stage !== 'awaiting_payment') && $('sandboxBox')) {
     $('sandboxBox').style.display = 'none';
   }
   applyReturn(s, stage);
@@ -727,6 +740,26 @@ async function simulate(outcome) {
     });
     const d = await r.json().catch(() => ({}));
     msg.textContent = r.ok ? 'Simulirano: ' + outcome + '. Webhookovi su poslani trgovcu.' : 'Greška: ' + (d.error || r.status);
+  } catch (e) {
+    msg.textContent = 'Greška: ' + e;
+  }
+  buttons.forEach((b) => { b.disabled = false; });
+  await poll();
+  startPolling();
+}
+
+async function simulateSepa() {
+  const box = $('sandboxBox');
+  const msg = $('simMsg');
+  const buttons = box ? box.querySelectorAll('button') : [];
+  buttons.forEach((b) => { b.disabled = true; });
+  msg.textContent = 'Šaljem simuliranu uplatu Moneriumu…';
+  try {
+    const r = await fetch('/api/intents/' + SID + '/monerium-sandbox-transfer', { method: 'POST' });
+    const d = await r.json().catch(() => ({}));
+    msg.textContent = r.ok
+      ? 'Monerium je primio uplatu od ' + d.amount_eur + ' EUR. Mint obično stigne za 15–20 s.'
+      : 'Greška: ' + (d.error || r.status);
   } catch (e) {
     msg.textContent = 'Greška: ' + e;
   }
