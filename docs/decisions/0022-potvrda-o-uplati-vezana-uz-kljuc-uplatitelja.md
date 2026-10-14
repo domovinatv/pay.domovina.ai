@@ -1,6 +1,6 @@
 # ADR 0022 — Potvrda o uplati vezana uz ključ uplatitelja: `sid` = otisak ključa, offline PDF, sidrenje na Gnosisu i OpenTimestamps
 
-- **Status:** Proposed (2026-10-12). Faze 1, 2 i 4 implementirane na grani `feat/receipts-0022` (vidi „Implementacija“ na dnu).
+- **Status:** Proposed (2026-10-12). Faze 1, 2 i 4 implementirane i deployane 2026-10-12 (vidi „Implementacija“ na dnu).
 - **Kontekst:** MPT rail (`backend/`), intent API (`backend/src/intents/api.ts`), generator `sid`-a
   (`backend/src/intents/sid.ts`), `PaymentRegistry` (`backend/contracts/PaymentRegistry.sol`),
   forward s `registry.record(...)` (`backend/src/router/safe.ts`), checkout stranica i Flutter

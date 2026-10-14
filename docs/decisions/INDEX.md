@@ -1,7 +1,9 @@
-# Architecture Decision Records — DOMOVINA Wallet
+# Architecture Decision Records — MPT rail & DOMOVINA Wallet
 
-This directory holds the architectural decisions that shape
-**wallet.domovina.ai** and its sibling white-label tenants. Every
+This directory holds the architectural decisions that shape the
+**MPT payment rail** (SEPA → EURe on Gnosis, `mpt.domovina.ai`) and
+**wallet.domovina.ai** with its sibling white-label tenants. ADRs
+0001–0015 are mostly about the wallet, 0016 onward about the rail. Every
 decision that materially shapes the product (security model, identity
 primitives, multi-tenancy, on-chain attestation, voting) is recorded
 here under a [standard ADR format](https://cognitect.com/blog/2011/11/15/documenting-architecture-decisions).
@@ -54,14 +56,14 @@ history.
 | [0014](0014-mobile-wallet-baseline-and-stack.md) | Native mobile wallet: baseline (fork safe-wallet-monorepo) & stack (RN/Expo) | 2026-06-08 | 🔬 Proposed (leaning) | ⏳ Local toolchain proven (web+iOS+Android build/run on M4 Pro); Safe-monorepo fork + passkey-owner port not started |
 | [0015](0015-runtime-brand-resolution-and-external-brand-repos.md) | Runtime brand resolution (hostname) + external repo for flagship brands | 2026-06-15 | ✅ Accepted (partial) | 🟢 Resolver shipped (`45b49d5`); `ship:multi` to prod paused; first external repo live (`edemokracija/novcanik-prototip`) |
 | [0016](0016-tenant-payout-whitelist.md) | Tenant payout whitelist: fail-closed forward rail (binding + whitelist, no more arbitrary SEPA-reference destinations) | 2026-08-01 | ✅ Accepted | 🟢 Backend shipped (migrations 0013/0014, `authorizeForward`, admin console, 62 new tests); on-chain Zodiac scoping (`safe-tx/006`) prepared but NOT executed |
-| [0017](0017-multi-tenant-rail.md) | Multi-tenant rail: Monerium account, webhook and signer per tenant (encrypted secrets in D1, per-tenant Roles + router EOA, SSE) | 2026-10-05 | ✅ Accepted | 🟢 Merged (#58) + deployed 2026-10-05: migrations 0016/0017, KEK set, `INTENT_SSE=1` live; `MULTI_TENANT_RAIL=0` until the first KYB'd tenant |
+| [0017](0017-multi-tenant-rail.md) | Multi-tenant rail: Monerium account, webhook and signer per tenant (encrypted secrets in D1, per-tenant Roles + router EOA, SSE) | 2026-10-05 | ✅ Accepted | ✅ Merged (#58) + deployed 2026-10-05: migrations 0016/0017, KEK set, `INTENT_SSE=1` live; `MULTI_TENANT_RAIL=1` (sandbox tenants and the first rail tenants run on it) |
 | [0018](0018-stray-payment-resolver.md) | Uplate bez reference: povezivanje s intentom po tenantu, iznosu i vremenu (+ ručno preusmjeravanje u adminu) | 2026-10-08 | ✅ Accepted | 🟢 Deployano 2026-10-08 (#59, #62): prvi auto stray ~12 s do `paid`, `resolved_offrail`; `client_ref` otvoren |
 | [0019](0019-off-cloud-forward-signer.md) | Forward potpisuje M-of-N kvorum Android uređaja (StrongBox P-256 → signer Safe kao član Roles), Cloudflare samo orkestrira i plaća gas; kapica na iznos odbijena | 2026-10-08 | 📝 Proposed | 🟢 Faza 0 (detektor krađe) deployana (#60); faza 1 spike sljedeća |
 | [0020](0020-hr-iban-listener-bez-minta.md) | MPT kao „payment listener“ za hrvatski IBAN: HUB3 + bank-push-gateway, bez minta (novac izravno na tenantov HR račun, MPT samo dojava i uparivanje) | 2026-10-11 | 📝 Proposed | ⏳ HUB3 za HR IBAN gotov (#77); čeka gateway fazu 1–2 |
 | [0021](0021-mpt-hr-javni-hostovi-i-api-v1.md) | Javni hostovi pod `*.mpt.hr` (`api.` `/v1`, `pay.`, `dashboard.`, `docs.`, `sandbox-api.`); `*.domovina.ai` trajni alias bez redirecta | 2026-10-11 | 📝 Proposed | ⏳ Plan i rubni slučajevi zapisani; faza 0 (priprema zone) sljedeća |
-| [0022](0022-potvrda-o-uplati-vezana-uz-kljuc-uplatitelja.md) | Potvrda o uplati vezana uz ključ uplatitelja: `sid` = otisak ključa (`r1…`), offline PDF, `kind=rcpt1` na Gnosisu + OpenTimestamps; matrica kad da/ne; naknadno (lazy) izdavanje za ranije uplate s istog IBAN-a | 2026-10-12 | 📝 Proposed | ⏳ Faza 0 (spike: `r1` sid + PDF u pregledniku) sljedeća |
-| [0023](0023-potvrde-nadogradnja-iz-maksimir-glasanja.md) | Nadogradnja potvrda iz glasanja Maksimir: 24 riječi + passkey PRF (ključ po potvrdi izveden iz jedne tajne, PDF bez ključa), append-only lanac sidara s brojevima, javni checkpoint repo + `ots upgrade`, stdlib verifikator, `MptReceiptAnchorV1` bez ovlasti nad novcem, Semaphore anonimni claim | 2026-10-12 | 📝 Proposed | ⏳ Faze 1–3 (lanac sidara, verifikator, javni repo) sljedeće |
-| [0024](0024-samoposluzni-sandbox-i-return-url.md) | Samoposlužni sandbox tenant bez Moneriuma (simulirane uplate kroz isti paid put, `sk_test_` ključevi, `POST /api/sandbox/tenants`) i `return_url` na intentu (samo uz `sk_`); za Open SaaS MPT provider | 2026-10-12 | ✅ Accepted | ✅ PR 1 (sandbox + `return_url`) deployan 2026-10-12; 🚧 PR 2 (lista + zbrojevi intenta) |
+| [0022](0022-potvrda-o-uplati-vezana-uz-kljuc-uplatitelja.md) | Potvrda o uplati vezana uz ključ uplatitelja: `sid` = otisak ključa (`r1…`), offline PDF, `kind=rcpt1` na Gnosisu + OpenTimestamps; matrica kad da/ne; naknadno (lazy) izdavanje za ranije uplate s istog IBAN-a | 2026-10-12 | 📝 Proposed | 🟢 Faze 1, 2 i 4 deployane 2026-10-12 (#91–#96, `RECEIPTS=1`): `r1` sid, PDF u pregledniku, naknadno izdavanje |
+| [0023](0023-potvrde-nadogradnja-iz-maksimir-glasanja.md) | Nadogradnja potvrda iz glasanja Maksimir: 24 riječi + passkey PRF (ključ po potvrdi izveden iz jedne tajne, PDF bez ključa), append-only lanac sidara s brojevima, javni checkpoint repo + `ots upgrade`, stdlib verifikator, `MptReceiptAnchorV1` bez ovlasti nad novcem, Semaphore anonimni claim | 2026-10-12 | 📝 Proposed | 🟢 Faze 1–3 deployane 2026-10-12: lanac sidara + OTS, stdlib verifikator, predložak javnog checkpoint repoa; `MptReceiptAnchorV1` i Semaphore claim nisu |
+| [0024](0024-samoposluzni-sandbox-i-return-url.md) | Samoposlužni sandbox tenant bez Moneriuma (simulirane uplate kroz isti paid put, `sk_test_` ključevi, `POST /api/sandbox/tenants`) i `return_url` na intentu (samo uz `sk_`); za Open SaaS MPT provider | 2026-10-12 | ✅ Accepted | ✅ PR 1 (sandbox + `return_url`) i PR 2 (lista + zbrojevi intenta, #98) deployani 2026-10-12 |
 
 ---
 
@@ -151,7 +153,21 @@ written to disk in plaintext.**
 
 ---
 
-## What's shipped today (2026-05-26)
+## What's shipped today
+
+### MPT rail (as of 2026-10-14)
+
+- ✅ Payment intents API with live SSE status and hosted checkout page
+- ✅ `paid` only on on-chain confirmation of the forward
+- ✅ Fail-closed payout whitelist per tenant (ADR 0016)
+- ✅ Per-tenant rail: own Monerium account, webhook and signer (ADR 0017)
+- ✅ Payments without reference matched by tenant, amount and time (ADR 0018)
+- ✅ Outflow / theft detector on rail Safes (ADR 0019 phase 0)
+- ✅ Payment receipts with a daily anchor chain timestamped in Bitcoin via OpenTimestamps (ADR 0022/0023; Gnosis anchor not yet)
+- ✅ Self-serve sandbox with simulated payments, `return_url`, intent list (ADR 0024)
+- ✅ Admin behind Cloudflare Access OTP + passkey
+
+### Wallet (as of 2026-05-26)
 
 The wallet at **wallet.domovina.ai** and its two white-label sample
 tenants at **wallet-sportklub.pages.dev** and
@@ -190,9 +206,6 @@ implementation; these ADRs are the why.
 
 For a high-level project overview: see the main repo README at
 `../../README.md` and the wallet README at `../../wallet/README.md`.
-
-For contribution guidelines: see `../../CONTRIBUTING.md` (if it
-exists in your checkout) or the project's GitHub repo.
 
 Contact: Matija Stepanic — stepanic.matija@gmail.com — ITalk d.o.o.,
 Croatia.

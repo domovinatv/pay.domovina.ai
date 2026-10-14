@@ -1,6 +1,6 @@
 # ADR 0024 — Samoposlužni sandbox tenant (simulirane uplate) i `return_url` na intentu
 
-- **Status:** Accepted (2026-10-12). PR 1 implementiran na grani `feat/open-saas-rail` (vidi „Implementacija“ na dnu).
+- **Status:** Accepted (2026-10-12). PR 1 (#97) i PR 2 (#98) implementirani i deployani 2026-10-12 (vidi „Implementacija“ na dnu).
 - **Kontekst:** MPT payment provider za Open SaaS (Wasp SaaS starter): upstream prijedlog
   [wasp-lang/open-saas#746](https://github.com/wasp-lang/open-saas/issues/746), kod na
   `stepanic/open-saas` grana `feat/mpt-payment-provider`. Provider koristi isti ugovor kao

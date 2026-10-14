@@ -8,8 +8,8 @@
 
 ADR 0001 establishes that `wallet.domovina.ai` is 100% self-custody and
 that the server holds no key with authority over user Safes. That
-ADR also kept the optional phone-binding feature (via
-[`reference-otp-domovina`](../../../.claude/projects/-Users-ms-git-domovinatv-pay-domovina-ai/memory/reference_otp_domovina.md))
+ADR also kept the optional phone-binding feature (via the
+[`otp.domovina.ai`](https://otp.domovina.ai) reverse-OTP service)
 for sybil resistance, SMS notifications, and customer support — not
 for recovery.
 
