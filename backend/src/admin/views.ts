@@ -13,28 +13,11 @@
  * single page lives long enough to poll without full reloads.
  */
 
-const HEADER_LOGO_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="36" height="36" aria-hidden="true">
-<defs>
-<linearGradient id="hdrFlag" x1="0" y1="0" x2="0" y2="1">
-<stop offset="0%" stop-color="#FF0000"/><stop offset="33.3%" stop-color="#FF0000"/>
-<stop offset="33.3%" stop-color="#FFFFFF"/><stop offset="66.6%" stop-color="#FFFFFF"/>
-<stop offset="66.6%" stop-color="#002F6C"/><stop offset="100%" stop-color="#002F6C"/>
-</linearGradient>
-</defs>
-<rect width="512" height="512" rx="32" fill="white"/>
-<path d="M72 64H248C354.071 64 440 149.929 440 256C440 362.071 354.071 448 248 448H72V64Z" fill="url(#hdrFlag)"/>
-<path d="M168 160H248C301.019 160 344 202.981 344 256C344 309.019 301.019 352 248 352H168V160Z" fill="white"/>
-<g stroke="#002F6C" stroke-width="5" stroke-linecap="round" stroke-linejoin="round">
-<line x1="205" y1="205" x2="295" y2="225"/><line x1="295" y1="225" x2="285" y2="285"/>
-<line x1="285" y1="285" x2="205" y2="307"/><line x1="205" y1="307" x2="205" y2="205"/>
-<line x1="205" y1="205" x2="245" y2="256"/><line x1="295" y1="225" x2="245" y2="256"/>
-<line x1="285" y1="285" x2="245" y2="256"/><line x1="205" y1="307" x2="245" y2="256"/>
-</g>
-<g fill="#002F6C">
-<circle cx="205" cy="205" r="10"/><circle cx="295" cy="225" r="10"/>
-<circle cx="205" cy="307" r="10"/><circle cx="285" cy="285" r="10"/>
-<circle cx="245" cy="256" r="14"/>
-</g>
+// MPT znak (mediakit mpt_logo_square.svg, isti kao favicon na mpt.hr).
+const HEADER_LOGO_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="36" height="36" aria-hidden="true">
+<rect width="32" height="32" rx="8" fill="#002F6C"/>
+<path d="M7 9h4v14H7zM21 9h4v14h-4z" fill="#FFFFFF"/>
+<path d="M11 9l5 6.5L21 9v5.5l-5 6.5-5-6.5z" fill="#E3AF35"/>
 </svg>`;
 
 const BASE_STYLE = `<style>
