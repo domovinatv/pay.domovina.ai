@@ -1,6 +1,6 @@
 # ADR 0017 — Rail za više tenanata: Monerium račun, webhook i potpisnik po tenantu
 
-- **Status:** Accepted, implementacija u tijeku (2026-10-05, grana `feat/multi-tenant-rail`)
+- **Status:** Accepted (2026-10-05). Implementirano: merge #58, deployano 2026-10-05.
 - **Kontekst:** `backend/` (Cloudflare Worker, MPT rail)
 - **Gradi na:** [0016](0016-tenant-payout-whitelist.md) (tenant = pravna osoba na
   čiji KYB-ani IBAN sleti SEPA; forward je fail-closed)

@@ -1,3 +1,3 @@
 [submodule "experiments/wallet-wasp"]
 	path = experiments/wallet-wasp
-	url = git@github.com:domovinatv/wallet-wasp.git
+	url = https://github.com/domovinatv/wallet-wasp.git
