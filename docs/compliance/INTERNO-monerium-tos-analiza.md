@@ -1,4 +1,12 @@
-# INTERNO — Monerium Business ToS vs. MPT rail (NE OBJAVLJIVATI)
+# Monerium Business ToS vs. MPT rail — povijesna analiza (2026-06-11)
+
+> **Zastarjelo.** Analiza opisuje topologiju iz lipnja 2026, kad su uplate trećih išle na
+> ITalk-ov Monerium IBAN. Današnja implementacija to ne radi: svaki tenant ima vlastiti
+> Monerium račun s vlastitim KYC/KYB-om, a MPT je samo softver koji prima webhook i
+> prosljeđuje na tenantove odobrene adrese
+> ([ADR 0016](../decisions/0016-tenant-payout-whitelist.md),
+> [ADR 0017](../decisions/0017-multi-tenant-rail.md)). Taj model zadovoljava Monerium ToS.
+> Dokument ostaje kao zapis o tome zašto je rail tako preoblikovan.
 
 > Forenzička analiza Monerium uvjeta (Personal/Business/API ToS, effective 2025-05-20 /
 > 2024-05-12; cache `~/.cache/monerium-docs/legal/`). Ovaj dokument postoji da prije

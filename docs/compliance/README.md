@@ -3,7 +3,7 @@
 > **Single point of truth** o regulatornom položaju ITalk d.o.o. kao proizvođača DOMOVINA
 > self-custody walleta i integratora reguliranih providera (Monerium, Gnosis Pay/Monavate).
 > Verzija 1.0 · 2026-06-11 · Izvori: EUR-Lex, Narodne novine, HANFA, HNB, te službeni uvjeti
-> korištenja providera (citati doslovni). Prateći interni dokument:
+> korištenja providera (citati doslovni). Prateći dokument (povijesni, zastarjeo):
 > [INTERNO-monerium-tos-analiza.md](INTERNO-monerium-tos-analiza.md).
 >
 > ⚠️ **Disclaimer**: ovaj dokument je tehničko-regulatorna analiza s citatima primarnih izvora,
