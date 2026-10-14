@@ -1,0 +1,6 @@
+<svg width="512" height="512" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
+<!-- pay.domovina.ai (otvoreni kod platnog sustava): geometrijski €, bijeli luk, zlatne crte. -->
+<rect width="32" height="32" rx="8" fill="#002F6C"/>
+<path d="M23.38 10.99A7.8 7.8 0 1 0 23.38 21.01L20.92 18.96A4.6 4.6 0 1 1 20.92 13.04Z" fill="#fff"/>
+<path d="M8.50 13.20H18.50L17.60 15.20H7.60ZM8.50 16.80H17.80L16.90 18.80H7.60Z" fill="#E3AF35"/>
+</svg>

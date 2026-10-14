@@ -5,7 +5,7 @@
 
 <p align="center">
   <a href="https://pay.domovina.ai">
-    <img src="web/favicon.svg" width="120" alt="Domovina Pay logotip">
+    <img src="docs/brand/pay_logo_square.svg" width="120" alt="pay.domovina.ai logotip">
   </a>
 </p>
 
@@ -198,11 +198,33 @@ flutter build web --wasm --release && \
 
 ## Brand
 
-Ikona slijedi Domovina vizualni okvir: slovo „D” ispunjeno prugama hrvatske zastave,
-unutarnji bijeli prostor i **znak eura (€)** u sredini. Izvor SVG-a je u zajedničkom
-[mediakitu](https://github.com/domovinatv/mediakit.domovina.tv)
-(`domovina_pay_logo_square.svg`). Paleta: tamnoplava `#002F6C`, crvena `#FF0000`,
-bijela `#FFFFFF`.
+<p align="center">
+  <img src="docs/brand/pay_logo_square.svg" width="96" alt="pay.domovina.ai">
+  &nbsp;&nbsp;
+  <img src="docs/brand/mpt_logo_square.svg" width="96" alt="MPT">
+  &nbsp;&nbsp;
+  <img src="docs/brand/airkuna_logo_square.svg" width="96" alt="airKUNA">
+  &nbsp;&nbsp;
+  <img src="docs/brand/airkuna_token.svg" width="96" alt="airKUNA token">
+</p>
+
+Platni sustav i srodni brendovi dijele jedan vizualni sustav: tamnoplava pločica
+(`#002F6C`), bijeli geometrijski znak s ravno odrezanim krajevima i zlatni detalj
+(`#E3AF35`) koji nosi značenje.
+
+| Znak | Brend | Značenje |
+|---|---|---|
+| € | **pay.domovina.ai** (ovaj repo) | Bijeli kružni luk, zlatne paralelne crte koso odrezanih krajeva |
+| M | **MPT** ([mpt.hr](https://mpt.hr)) | Srednji „V” je zlatni chevron prema dolje: uplata stiže trgovcu |
+| K | **airKUNA** | Krakovi slova K su zlatni chevron |
+| K u kovanici | **airKUNA token** | Isti K u kovanici sa zlatnim rubom |
+
+Unutar obitelji proizvoda Domovina isti proizvod nosi logotip **Domovina Pay**: slovo
+„D” s prugama hrvatske zastave i kovanicom s € u sredini
+(<img src="docs/brand/domovina_pay_logo_square.svg" width="20" alt="Domovina Pay">).
+
+Kopije SVG-ova su u [`docs/brand/`](docs/brand/); izvor istine (SVG + PNG 2048 px) je
+[mediakit](https://github.com/domovinatv/mediakit.domovina.tv).
 
 ## Licenca
 
