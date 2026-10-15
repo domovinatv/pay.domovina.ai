@@ -75,6 +75,11 @@ export interface TenantRail {
   /// (may be empty → null, as before).
   receivingSafe: string | null;
   signer: RailSigner;
+  /// ADR 0026: direct-mode rails only. Signs `EURe.transfer` from the main Safe
+  /// through the ProjectRouter role, which the Roles modifier restricts
+  /// on-chain to the project Safes the owners approved. Used for exactly one
+  /// thing: settling D4 owed transfers. Absent = D4 stays a manual 2/3 transfer.
+  projectRouter?: RailSigner;
   /// Software cap per forward (cents); null = none.
   maxForwardCents: number | null;
   /// Where this tenant's outbound merchant webhooks go. null = nowhere. A
@@ -107,10 +112,30 @@ export function legacyRailMode(env: Env): RailMode {
   return parseRailMode(env.LEGACY_RAIL_MODE?.trim()) ?? 'direct';
 }
 
+/// A ProjectRouter signer only when every piece is there; anything missing
+/// means "no router" (D4 stays manual), never a half-configured signer. No
+/// PaymentRegistry/MultiSend: the role allows neither (ADR 0026).
+function projectRouterSigner(s: Omit<RailSigner, 'paymentRegistry' | 'multiSend'>): RailSigner | null {
+  const v = (x: string) => x.trim();
+  if (!v(s.safe) || !v(s.rolesModifier) || !v(s.roleKey) || !v(s.privateKey) || !v(s.eureContract)) return null;
+  return { ...s, paymentRegistry: '', multiSend: '' };
+}
+
 /// The pre-ADR-0017 rail, read from env. Must stay byte-identical in effect
 /// while LEGACY_RAIL_MODE is unset.
 export function legacyRail(env: Env): TenantRail {
   const mode = legacyRailMode(env);
+  const projectRouter = mode === 'direct'
+    ? projectRouterSigner({
+        chain: 'gnosis',
+        rpcUrl: env.GNOSIS_RPC_URL || GNOSIS_RPC_DEFAULT,
+        eureContract: env.EURE_CONTRACT ?? '',
+        safe: env.SAFE_ADDRESS ?? '',
+        rolesModifier: env.ROLES_MODIFIER_ADDRESS ?? '',
+        roleKey: env.PROJECT_ROUTER_ROLE_KEY ?? '',
+        privateKey: env.PROJECT_ROUTER_PRIVATE_KEY ?? '',
+      })
+    : null;
   return {
     tenantId: defaultTenantId(env),
     legacy: true,
@@ -136,6 +161,7 @@ export function legacyRail(env: Env): TenantRail {
       paymentRegistry: mode === 'direct' ? '' : env.PAYMENT_REGISTRY_ADDRESS ?? '',
       multiSend: mode === 'direct' ? '' : env.MULTISEND_ADDRESS ?? '',
     },
+    ...(projectRouter ? { projectRouter } : {}),
     maxForwardCents: null,
     outboundWebhook:
       env.INTENT_WEBHOOK_URL?.trim() && env.INTENT_WEBHOOK_SECRET?.trim()
@@ -204,6 +230,20 @@ export async function railFromRow(
   }
   const eure = row.eure_contract ?? (chain === 'gnosis' ? env.EURE_CONTRACT : '');
   if (!eure) return null; // chiado has no default EURe address
+  const rpcUrl = row.rpc_url || (chain === 'gnosis' ? env.GNOSIS_RPC_URL || GNOSIS_RPC_DEFAULT : CHIADO_RPC_DEFAULT);
+  // ADR 0026: in direct mode the row's role is ProjectRouter, and its router
+  // key is loaded only when the role is configured too.
+  const projectRouter = mode === 'direct' && row.roles_modifier && row.role_key && row.router_key_enc
+    ? projectRouterSigner({
+        chain,
+        rpcUrl,
+        eureContract: eure,
+        safe: row.receiving_safe,
+        rolesModifier: row.roles_modifier,
+        roleKey: row.role_key,
+        privateKey: await decrypt('router_key', row.router_key_enc),
+      })
+    : null;
   return {
     tenantId: row.tenant_id,
     legacy: false,
@@ -219,7 +259,7 @@ export async function railFromRow(
     receivingSafe: lc(row.receiving_safe),
     signer: {
       chain,
-      rpcUrl: row.rpc_url || (chain === 'gnosis' ? env.GNOSIS_RPC_URL || GNOSIS_RPC_DEFAULT : CHIADO_RPC_DEFAULT),
+      rpcUrl,
       eureContract: eure,
       safe: row.receiving_safe,
       rolesModifier: row.roles_modifier ?? '',
@@ -229,6 +269,7 @@ export async function railFromRow(
       paymentRegistry: '',
       multiSend: '',
     },
+    ...(projectRouter ? { projectRouter } : {}),
     maxForwardCents: row.max_forward_cents,
     outboundWebhook:
       row.outbound_webhook_url && row.outbound_webhook_secret_enc

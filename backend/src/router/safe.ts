@@ -221,6 +221,43 @@ export async function forwardViaSafe(
   }
 }
 
+/// ADR 0026: dry-run the exact ProjectRouter call (`eth_call` from the router
+/// EOA) before anything is latched or broadcast. A revert here means the Roles
+/// modifier would refuse it — typically the project Safe is not in the role's
+/// recipient set yet (the owners have not confirmed the proposal), or the main
+/// Safe lacks the balance. The caller then leaves the debt as it is.
+export async function simulateForwardViaSafe(
+  signer: RailSigner,
+  args: Pick<ForwardArgs, 'target' | 'amountWei'>,
+): Promise<ForwardResult> {
+  if (!signer.privateKey) return { ok: false, error: 'router_disabled: no router key' };
+  if (!signer.rolesModifier) return { ok: false, error: 'router_disabled: no ROLES_MODIFIER_ADDRESS' };
+  if (!signer.roleKey) return { ok: false, error: 'router_disabled: no role key' };
+  if (!isAddress(args.target)) return { ok: false, error: `invalid target: ${args.target}` };
+  if (args.amountWei <= 0n) return { ok: false, error: `invalid amount: ${args.amountWei}` };
+  try {
+    const account = privateKeyToAccount(normalizeHex(signer.privateKey.trim()) as Hex);
+    const client = createPublicClient({ chain: viemChain(signer.chain), transport: http(signer.rpcUrl) });
+    await client.simulateContract({
+      account: account.address,
+      address: signer.rolesModifier as Address,
+      abi: ROLES_ABI,
+      functionName: 'execTransactionWithRole',
+      args: [
+        signer.eureContract as Address,
+        0n,
+        encodeFunctionData({ abi: EURE_ABI, functionName: 'transfer', args: [args.target, args.amountWei] }),
+        OP_CALL,
+        normalizeHex(signer.roleKey) as Hex,
+        true,
+      ],
+    });
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: (e as { shortMessage?: string }).shortMessage ?? (e as Error).message };
+  }
+}
+
 /// Best-effort confirmation poll. Called from a separate cron / admin replay
 /// path rather than the webhook hot path so we never block Monerium's
 /// retry timer.

@@ -404,6 +404,23 @@ export async function confirmForwardOnce(
   return transitionForward(env, id, 'receipt_confirmed');
 }
 
+/// ADR 0026: a rail's D4 debts still waiting for their transfer, oldest
+/// first — what the ProjectRouter cron tries to settle.
+export async function listOwedForwards(
+  env: Env,
+  tenantId: string,
+  limit = 20,
+): Promise<MoneriumForwardRow[]> {
+  const res = await env.DB.prepare(
+    `SELECT * FROM monerium_forwards
+      WHERE tenant_id = ? AND ${stateSql('owed')} AND tx_hash IS NULL
+      ORDER BY created_at ASC, id ASC LIMIT ?`,
+  )
+    .bind(tenantId, limit)
+    .all<MoneriumForwardRow>();
+  return res.results;
+}
+
 /// Broadcast-but-unconfirmed forwards older than the cutoff — the cron
 /// reconcile set. `tx_hash IS NOT NULL` is belt-and-braces: a `submitted`
 /// row always gets its hash in the same update.

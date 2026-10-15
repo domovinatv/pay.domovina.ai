@@ -41,6 +41,7 @@ import { fetchOgPreview } from './og/preview';
 import { publishIntentChange } from './intents/stream';
 import { checkRouterGas } from './tenants/onboarding';
 import { watchAllRailOutflows } from './monerium/outflowWatch';
+import { routeAllOwedForwards } from './monerium/forward';
 import { renderCheckoutPage } from './checkout/page';
 import { isMoneriumSandboxTenant } from './monerium/sandboxFund';
 import { buildSandboxApi } from './sandbox/api';
@@ -412,6 +413,16 @@ export default {
       watchAllRailOutflows(env).then(
         (n) => { if (n > 0) console.warn(`cron: outflow watch flagged ${n} transfer(s)`); },
         (e) => console.error(`cron: outflow watch failed: ${e}`),
+      ),
+    );
+
+    // ADR 0026: D4 debts on rails with a ProjectRouter role. A debt whose
+    // project Safe was not in the role yet goes out on the first tick after the
+    // owners confirm the proposal. No router configured → no-op.
+    ctx.waitUntil(
+      routeAllOwedForwards(env).then(
+        (r) => { if (r.tried > 0) console.log(`cron: owed router tried=${r.tried} submitted=${r.submitted}`); },
+        (e) => console.error(`cron: owed router failed: ${e}`),
       ),
     );
 
