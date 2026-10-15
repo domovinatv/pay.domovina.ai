@@ -64,10 +64,12 @@ export function mountAdminAuth(app: Hono<{ Bindings: Env }>): void {
   // 0. Putanja kako je vidi ROUTER (c.req.path, percent-dekodirana), ne sirovi
   //    URL. `new URL(c.req.url).pathname` ostavlja `/%61dmin/...` enkodirano pa
   //    ga provjere ispod nisu smatrale adminom, a Hono ga dekodira i izvrši
-  //    admin rutu — zaobilazak prijave (incident 15.10.2026.). Enkodirani
-  //    oblik admin putanje se uopće ne prihvaća.
+  //    admin rutu — zaobilazak prijave (incident 15.10.2026.). Odbija se
+  //    enkodirani sam prefiks /admin; enkodirani kasniji segmenti (npr. „…”
+  //    u skraćenom id-u ključa) prolaze, jer sve provjere ispod gledaju
+  //    dekodiranu putanju.
   a.use('*', async (c, next) => {
-    if (isAdminPath(c.req.path) && new URL(c.req.url).pathname !== c.req.path) {
+    if (isAdminPath(c.req.path) && !isAdminPath(new URL(c.req.url).pathname)) {
       console.warn(JSON.stringify({ msg: 'admin_encoded_path_rejected', path: new URL(c.req.url).pathname.slice(0, 200) }));
       return c.json({ error: 'bad_path' }, 400);
     }
