@@ -153,5 +153,5 @@ check: `/%61dmin/api/forwards` → 400, `/admin/api/forwards` → 401.
 - [ ] pipeline.domovina.ai has its own copy of `mount.ts` (`96fef04`): check whether it has
       the same over-broad guard and port #106 if so.
 - [ ] Optional: alert on `admin:unknown` in `tenant_audit_log` and on `admin_encoded_path_rejected`.
-- [ ] ADR 0025: `italk` on direct (this PR), then `safe-tx/008` signed 2/3, then
-      `ROUTER_PRIVATE_KEY` and tenant router keys deleted.
+- [x] ADR 0025: `italk` on direct (#108), `safe-tx/008` executed 2/3 (tx `0x4c32…64b0`,
+      MPT Safe has no module left), `ROUTER_PRIVATE_KEY` and tenant router keys deleted (2026-10-15).

@@ -95,6 +95,6 @@ potpisali. Ključ koji može pomaknuti EURe ne postoji ni u Workeru ni na Safe-u
 |---|---|
 | 1. `LEGACY_RAIL_MODE`, testovi `test/legacyDirectMode.test.ts` | ✅ ovaj PR |
 | 2. Stare `mpt:` reference kao D4 | ✅ postojeći direct gate, bez promjene |
-| 3. `safe-tx/008-retire-router` batch | 🟡 generiran, čeka 2/3 potpis |
-| 4. Brisanje `ROUTER_PRIVATE_KEY` i router ključeva tenanata | ⏳ nakon koraka 3 |
+| 3. `safe-tx/008-retire-router` batch | ✅ izvršen 2026-10-15, tx `0x4c32…64b0` ([EXECUTED](../../backend/safe-tx/008-retire-router.EXECUTED.md)); Safe bez modula |
+| 4. Brisanje `ROUTER_PRIVATE_KEY` i router ključeva tenanata | ✅ 2026-10-15: secret obrisan, `crosulja-staging` na direct, `router_key_enc` očišćen |
 | 5. ADR 0019 *Superseded*, INDEX | ✅ ovaj PR |
