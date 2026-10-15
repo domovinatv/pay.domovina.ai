@@ -7,7 +7,8 @@ import { isReceiptSid } from './sid';
 /// the receipt API; idempotent (receipt_leaves.order_id is UNIQUE).
 ///
 /// Anchor = a forward of a receipt sid that came in the payer's OWN remittance
-/// (memo_prefix 'mpt'/'cmp', never the stray resolver's 'auto'/'manual').
+/// (memo_prefix 'mpt'/'cmp', or 'gnosis'/'chiado' in direct mode, ADR 0025;
+/// never the stray resolver's 'auto'/'manual').
 /// Each confirmed anchor gets a direct leaf, then covers every earlier,
 /// delivered, not-yet-covered payment from the same payer IBAN since the
 /// previous anchor from that IBAN (lazy leaves).
@@ -15,7 +16,7 @@ import { isReceiptSid } from './sid';
 const NORM_IBAN = `REPLACE(UPPER(o.counterpart_iban), ' ', '')`;
 /// SQL prefilter for receipt sids; isReceiptSid() is the exact check.
 const RECEIPT_SID_SQL = `f.sid LIKE 'r1%' AND length(f.sid) = 26`;
-const MEMO_CARRIED = `f.memo_prefix IN ('mpt', 'cmp')`;
+const MEMO_CARRIED = `f.memo_prefix IN ('mpt', 'cmp', 'gnosis', 'chiado')`;
 
 interface AnchorRow {
   order_id: string;

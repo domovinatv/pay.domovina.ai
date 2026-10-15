@@ -71,6 +71,35 @@ potpisali. Ključ koji može pomaknuti EURe ne postoji ni u Workeru ni na Safe-u
   uplate postaju D4 `direct_owed` (korak 2) dok se ne prebaci na `gnosis:`.
 - **PaymentRegistry MultiSend put** (samo legacy forward) se više ne koristi.
 
+## Revolut bez reference: što ADR 0025 otvara (2026-10-16)
+
+Prva produkcijska uplata nakon deploya (15.10. 21:38 UTC, 1 € iz Revoluta na intent
+Lukavec) stigla je s **praznim opisom** (`memo: ""`), pa je Monerium mintao na MPT Safe.
+Rail ju je ispravno vezao (stray resolver, `memo_prefix='auto'`) i zapisao kao D4
+`direct_owed`. Isto vrijedi za svih pet zadnjih uplata s tog Revolut računa: Revolut nakon
+skeniranja QR-a ostavlja *Reference* prazno (`docs/monerium-private.md`, Zamke). Dok je
+postojao, router je to tiho popravljao. Bez njega svaka takva uplata čeka ručni 2/3
+prijenos.
+
+**Napravljeno:** checkout (`mpt.domovina.ai/checkout`) i energy `/beta/` traže kopiranje
+reference kao obavezan korak, ne kao savjet.
+
+**Odbijeno (Matija, 2026-10-16), ne predlagati ponovno:**
+
+- **IBAN na Safe projekta** („Move IBAN" na projektni Safe da uplate bez opisa mintaju
+  ravno tamo). Monerium daje jedan IBAN po računu, pa to radi samo dok tenant ima jedan
+  projekt. Nije rješenje za platformu s N projekata po vlasniku.
+- **D4 ručni prijenos kao trajno stanje** (novac čeka na glavnom Safe-u, vlasnici
+  povremeno jednim 2/3 batchom prebace dugove). Sigurno, ali ručno i sporo. Uplata bez
+  reference je normalan slučaj (Revolut), a ne iznimka.
+
+**Otvoreno:** pametno rutiranje uplata bez reference koje ne vraća ključ sposoban za
+krađu. Smjer: rola na MPT Safe-u ograničena **on-chain** na `EURe.transfer` prema skupu
+projektnih Safe-ova koji su 2/3 vlasnici unaprijed odobrili (bez kapice na iznos).
+Uvjet iz `safe-tx/006` („mali stabilan skup odredišta, samo kampanjski Safeovi") je od
+ovog ADR-a ispunjen, jer `italk` intent smije ciljati samo Safe kampanje. Odluka se
+donosi u zasebnom ADR-u.
+
 ## Provjera nakon deploya
 
 - `/api/intents/<sid>` za novi `italk` intent vraća referencu `gnosis:0x… sid:…`.
