@@ -98,11 +98,23 @@ function lc(addr: string | null | undefined): string | null {
   return v ? v : null;
 }
 
-/// The pre-ADR-0017 rail, read from env. Must stay byte-identical in effect.
+/// How the default tenant settles (ADR 0025). Unset/'forward' = the
+/// pre-ADR-0017 router path, byte-identical. 'direct' = the payer's reference
+/// makes Monerium mint straight into the project Safe and the env router key is
+/// never loaded. Any other value is a typo we never validated → 'direct', the
+/// mode that cannot sign (fail-closed).
+export function legacyRailMode(env: Env): RailMode {
+  return parseRailMode(env.LEGACY_RAIL_MODE?.trim()) ?? 'direct';
+}
+
+/// The pre-ADR-0017 rail, read from env. Must stay byte-identical in effect
+/// while LEGACY_RAIL_MODE is unset.
 export function legacyRail(env: Env): TenantRail {
+  const mode = legacyRailMode(env);
   return {
     tenantId: defaultTenantId(env),
     legacy: true,
+    ...(mode === 'direct' ? { mode } : {}),
     monerium: {
       baseUrl: env.MONERIUM_BASE_URL,
       clientId: env.MONERIUM_CLIENT_ID ?? '',
@@ -119,9 +131,10 @@ export function legacyRail(env: Env): TenantRail {
       safe: env.SAFE_ADDRESS ?? '',
       rolesModifier: env.ROLES_MODIFIER_ADDRESS ?? '',
       roleKey: env.ROLE_KEY ?? '',
-      privateKey: env.ROUTER_PRIVATE_KEY ?? '',
-      paymentRegistry: env.PAYMENT_REGISTRY_ADDRESS ?? '',
-      multiSend: env.MULTISEND_ADDRESS ?? '',
+      // Direct mode never signs, so the router key is never even read.
+      privateKey: mode === 'direct' ? '' : env.ROUTER_PRIVATE_KEY ?? '',
+      paymentRegistry: mode === 'direct' ? '' : env.PAYMENT_REGISTRY_ADDRESS ?? '',
+      multiSend: mode === 'direct' ? '' : env.MULTISEND_ADDRESS ?? '',
     },
     maxForwardCents: null,
     outboundWebhook:
@@ -282,15 +295,17 @@ export function directReference(chain: RailChain, target: string, sid: string): 
 }
 
 /// What an intent's payment reference looks like, without decrypting any
-/// secret (read on every status poll). Default tenant and tenants without a
-/// rail row: the `mpt:` reference, as before.
+/// secret (read on every status poll). Default tenant in forward mode and
+/// tenants without a rail row: the `mpt:` reference, as before.
 export interface ReferenceStyle {
   mode: RailMode;
   chain: RailChain;
 }
 
 export async function getReferenceStyle(env: Env, tenantId: string | null): Promise<ReferenceStyle | null> {
-  if (!tenantId || isLegacyTenant(env, tenantId)) return null;
+  if (!tenantId || isLegacyTenant(env, tenantId)) {
+    return legacyRailMode(env) === 'direct' ? { mode: 'direct', chain: 'gnosis' } : null;
+  }
   const row = await env.DB.prepare(`SELECT mode, chain FROM tenant_rail WHERE tenant_id = ?`)
     .bind(tenantId)
     .first<{ mode: string | null; chain: string }>();
