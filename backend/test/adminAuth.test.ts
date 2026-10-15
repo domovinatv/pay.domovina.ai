@@ -43,6 +43,14 @@ describe('/admin — no session', () => {
     expect(res.headers.get('location')).toBe('/admin/login?next=%2Fadmin%2Fforwards%3Fstatus%3Dfailed');
   });
 
+  it('an encoded /admin prefix is refused, not routed past the login (postmortem 0002)', async () => {
+    for (const path of ['/%61dmin/api/forwards', '/%61dmin/forwards', '/%2561dmin/api/forwards', '/a%64min/api/forwards']) {
+      const res = await worker.fetch(req(path), env(), ctx);
+      expect([400, 404]).toContain(res.status);
+    }
+    expect((await worker.fetch(req('/%61dmin/api/forwards'), env(), ctx)).status).toBe(400);
+  });
+
   it('the JSON API answers 401, not a redirect', async () => {
     const res = await worker.fetch(req('/admin/api/forwards'), env(), ctx);
     expect(res.status).toBe(401);
