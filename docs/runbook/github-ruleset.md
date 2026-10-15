@@ -1,76 +1,101 @@
-# Zaštita `main` grane (GitHub Ruleset)
+# Zaštita `main` grane (GitHub Rulesets)
 
-Ovaj dokument opisuje preporučeni GitHub Ruleset za zaštitu produkcijske grane `main` u repozitoriju `domovinatv/pay.domovina.ai` te sadrži upute za primjenu bez potrebe za ručnim klikanjem po GitHub web sučelju.
+`main` u `domovinatv/pay.domovina.ai` štite dva ruleseta. Definicije su u repou:
 
-Konfiguracijska datoteka nalazi se u [`.github/rulesets/main-branch.json`](file:///.github/rulesets/main-branch.json).
+- [`.github/rulesets/main-hard.json`](../../.github/rulesets/main-hard.json): **tvrdo**, nitko ga ne zaobilazi
+- [`.github/rulesets/main-pr-ci.json`](../../.github/rulesets/main-pr-ci.json): **PR + CI**, admin ga zaobilazi
 
----
-
-## 1. Analiza i trenutno stanje
-
-Pregledom repozitorija putem `gh` CLI-ja (`gh api repos/domovinatv/pay.domovina.ai/rulesets` i `gh api repos/domovinatv/pay.domovina.ai/branches/main/protection`):
-- `main` grana nema definiranu branch protection zaštitu niti aktivan ruleset.
-- Svi commitovi održavatelja (`stepanic`) potpisuju se GPG ključem (`RSA F9968089DBE3338732A53F663420E392053523AF`).
-- Postoji CI cjevovod ([`.github/workflows/ci.yml`](file:///.github/workflows/ci.yml)) s 5 paralelnih poslova koji provjeravaju tipove, testove, dry-run bundle i kompatibilnost starih testova prema novom kodu.
-- Organizacija i repozitorij imaju jednog primarnog održavatelja/admina (`stepanic`).
+Aktivirano 2026-10-15: `main — tvrdo` id `25142672`, `main — PR + CI` id `25142673`.
 
 ---
 
-## 2. Dizajn pravila
+## 1. Zašto dva ruleseta
 
-Ruleset kombinira maksimalnu sigurnost produkcijskog koda uz nesmetan rad solo maintainera:
+Bypass se na GitHubu odnosi na **cijeli** ruleset, ne na pojedino pravilo. Repo ima
+jednog suradnika (`stepanic`, admin), a pod njegovim credentialsima rade i agenti
+(Claude Code, Antigravity). Jedan ruleset s admin bypassom `always` zato ne bi
+spriječio ništa: ni force-push ni brisanje `main`-a.
 
-### 2.1. Zabrana destruktivnih radnji
-- **`deletion`**: Onemogućava slučajno ili zlonamjerno brisanje `main` grane.
-- **`non_fast_forward`**: Blokira `git push --force` i prepisivanje povijesti na `main`.
+Zato je podjela:
 
-### 2.2. Kriptografski integritet (`required_signatures`)
-- Zahtijeva da svaki commit na `main` bude kriptografski potpisan (GPG / SSH / S/MIME). Budući da se u repou već koristi verificirani GPG potpis, ovo trajno štiti od ubacivanja nepodržanih commitova pod tuđim identitetom.
+| Ruleset | Pravila | Bypass |
+|---|---|---|
+| `main — tvrdo` | `deletion`, `non_fast_forward`, `required_signatures` | nitko, ni admin |
+| `main — PR + CI` | `pull_request`, `required_status_checks` | admin, `always` |
 
-### 2.3. Obvezan Pull Request tok (`pull_request`)
-- **`required_approving_review_count: 0`**:
-  - *Važno za solo održavatelja*: GitHub po dizajnu brani autoru PR-a da sam sebi odobri vlastiti PR. Postavljanje broja recenzenata na `1` onemogućilo bi samostalno spajanje PR-ova.
-  - Vrijednost `0` osigurava da sav kod mora proći kroz Pull Request mehanizam (nema slučajnog direktnog pusha na `main`), omogućuje pokretanje CI-ja i compat-checka, a održavatelj može samostalno dovršiti spajanje.
-- **`dismiss_stale_reviews_on_push: true`**: Novi push poništava eventualna prethodna odobrenja.
-- **`required_review_thread_resolution: true`**: Svi komentari i rasprave na PR-u moraju biti označeni kao riješeni prije spajanja.
+Posljedica: izravni push na `main` i dalje radi (radni tok „slobodno uvijek
+pushaj“). GitHub pritom javlja da je PR + CI ruleset zaobiđen. Force-push,
+brisanje grane i nepotpisani commit ne prolaze nikome.
 
-### 2.4. Obvezne CI provjere (`required_status_checks`)
-- **`strict_required_status_checks_policy: true`**: Zahtijeva da je grana ažurirana sa zadnjim commitom na `main` prije merganja (sprečava race conditione).
-- Obvezni status checkovi (iz `.github/workflows/ci.yml`):
+---
+
+## 2. Pravila
+
+### 2.1. `main — tvrdo`
+- **`deletion`**: `main` se ne može obrisati.
+- **`non_fast_forward`**: nema `git push --force` ni prepisivanja povijesti.
+  Ako treba popraviti nešto što je već na `main`-u, napravi novi commit (revert).
+- **`required_signatures`**: svaki commit na `main` mora biti potpisan
+  (GPG/SSH/S/MIME). Lokalno je `commit.gpgsign=true`. Merge i squash commitove iz
+  GitHubova sučelja potpisuje GitHub (`web-flow`), pa i oni prolaze.
+  **Rebase merge** u sučelju je onemogućen, jer GitHub prepisane commitove ne
+  može potpisati. Koristi merge ili squash.
+
+  Ako `git push` padne s `Commits must have verified signatures`, commit je
+  nastao bez potpisa (npr. alat koji ne čita `commit.gpgsign` ili GPG agent nije
+  bio otključan): `git commit --amend -S --no-edit` (ili `git rebase --exec 'git
+  commit --amend -S --no-edit' origin/main` za više njih) prije pusha.
+
+### 2.2. `main — PR + CI`
+- **`pull_request`** s `required_approving_review_count: 0`. GitHub autoru ne
+  dopušta da sam odobri svoj PR, pa bi `1` blokirao solo maintainera. PR se i
+  dalje traži za sve što nije admin bypass.
+- **`required_review_thread_resolution: true`**: otvoreni komentari na PR-u
+  blokiraju merge.
+- **`required_status_checks`**: svih pet jobova iz
+  [`ci.yml`](../../.github/workflows/ci.yml), vezanih na GitHub Actions
+  (`integration_id: 15368`), da ih druga aplikacija ne može lažno zazeleniti:
   1. `backend (tsc, vitest, bundle)`
   2. `shopify worker (tsc, vitest)`
   3. `wallet (tsc, relayer tests)`
   4. `flutter (analyze, test)`
-  5. `backward compatibility (old tests vs new code)`
+  5. `backward compatibility (old tests vs new code)` (vidi `docs/testing.md`;
+     oznaka `behavior-change` propušta namjernu promjenu ponašanja)
+- **`strict_required_status_checks_policy: false`**: PR ne mora biti ažuran s
+  `main`-om prije merga. Uz paralelne sesije i PR-ove `true` bi tjerao novi CI krug
+  nakon svakog merga.
 
-### 2.5. Bypass ovlasti (`bypass_actors`)
-- Uloga `RepositoryRole: 5` (Admin) ima pravo zaobilaženja (`bypass_mode: "always"`), što omogućuje hitne intervencije ili hotfixeve u izvanrednim situacijama.
+**Preimenovanje joba u `ci.yml`** mora ići zajedno s izmjenom
+`main-pr-ci.json` i ponovnom primjenom (korak 3). Inače PR zauvijek čeka check
+koji više ne postoji.
 
 ---
 
-## 3. Postupak primjene (kada se odluči aktivirati)
+## 3. Primjena i izmjene
 
-Datoteka pravila pripremljena je u `.github/rulesets/main-branch.json`. Za primjenu na GitHub pokrenuti:
+JSON u repou je izvor istine. Prva primjena:
 
 ```bash
-gh api repos/domovinatv/pay.domovina.ai/rulesets \
-  --method POST \
-  --header "Accept: application/vnd.github+json" \
-  --input .github/rulesets/main-branch.json
+for f in main-hard main-pr-ci; do
+  gh api repos/domovinatv/pay.domovina.ai/rulesets --method POST \
+    --input .github/rulesets/$f.json --jq '.id, .name'
+done
 ```
 
-### Provjera nakon primjene:
-```bash
-# Popis aktivnih ruleseta
-gh ruleset list
+Izmjena postojećeg (id iz `gh ruleset list`):
 
-# Provjera pravila koja se primjenjuju na main granu
+```bash
+gh api repos/domovinatv/pay.domovina.ai/rulesets/<id> --method PUT \
+  --input .github/rulesets/main-pr-ci.json
+```
+
+Provjera:
+
+```bash
+gh ruleset list
 gh ruleset check main
 ```
 
-### Testni mod (Evaluate mode)
-Ako se pravila prije pune primjene žele promatrati u pasivnom načinu (bilježi prekršaje bez blokiranja operacija), u `.github/rulesets/main-branch.json` promijeniti:
-```json
-"enforcement": "evaluate"
-```
-te ponovno poslati ili ažurirati ruleset putem `gh api --method PUT repos/domovinatv/pay.domovina.ai/rulesets/<id>`.
+Za probu bez blokiranja postavi `"enforcement": "evaluate"`. Na Free planu
+organizacije evaluate mode možda nije dostupan, a tada GitHub vraća grešku na
+PUT/POST.
