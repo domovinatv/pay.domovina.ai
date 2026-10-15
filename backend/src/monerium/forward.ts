@@ -2,7 +2,7 @@ import type { Address } from 'viem';
 
 import type { Env } from '../types';
 import type { MoneriumOrder } from './types';
-import { getForwardByOrder, insertForward, updateForward } from './db';
+import { getForwardByOrder, insertForward, listOwedForwards, transitionForward, updateForward, type MoneriumForwardRow } from './db';
 import {
   extractRoutingFromOrder,
   extractSenderFromOrder,
@@ -17,7 +17,7 @@ import {
   type StrayCandidate,
 } from './strayResolver';
 import { findStrayCandidates } from '../intents/db';
-import { forwardViaSafe, type ForwardArgs, type ForwardResult } from '../router/safe';
+import { forwardViaSafe, simulateForwardViaSafe, type ForwardArgs, type ForwardResult } from '../router/safe';
 import {
   makeConfirmDeps,
   pollForwardConfirmation,
@@ -33,7 +33,7 @@ import {
 } from '../tenants/whitelist';
 import { writeAudit } from '../tenants/db';
 import { defaultTenantId } from '../tenants/whitelist';
-import type { TenantRail } from '../tenants/rail';
+import { getTenantRail, legacyRail, listRailTenantIds, type TenantRail } from '../tenants/rail';
 import { sendAlert } from '../alerts';
 import { receiptKind } from '../receipts/sid';
 import { publishIntentChange } from '../intents/stream';
@@ -51,6 +51,17 @@ export interface ForwardDeps {
   insertForward(args: Parameters<typeof insertForward>[1]): Promise<number>;
   updateForward(id: number, patch: Parameters<typeof updateForward>[2]): Promise<void>;
   forward(args: ForwardArgs): Promise<ForwardResult>;
+  /// ADR 0026: settles D4 owed rows through the ProjectRouter role, which the
+  /// Roles modifier restricts on-chain to the approved project Safes. Absent =
+  /// the rail has no such role and D4 stays a manual 2/3 transfer.
+  projectRouter?: {
+    /// eth_call of the exact role call. Not ok = the modifier would refuse.
+    simulate(args: Pick<ForwardArgs, 'target' | 'amountWei'>): Promise<ForwardResult>;
+    forward(args: ForwardArgs): Promise<ForwardResult>;
+    /// owed → broadcasting, atomically. False = another caller took the row
+    /// (webhook vs cron) or it was settled meanwhile.
+    claimOwed(forwardId: number): Promise<boolean>;
+  };
   /// Wait before the one nonce-collision retry. Defaults to setTimeout.
   sleep?(ms: number): Promise<void>;
   settleNonRoutedPaid(args: {
@@ -121,6 +132,13 @@ export function makeForwardDeps(env: Env, rail: TenantRail): ForwardDeps {
     forward: rail.mode === 'direct'
       ? async () => ({ ok: false, error: 'router_disabled: direct mode never signs' })
       : (args) => forwardViaSafe(rail.signer, args),
+    projectRouter: rail.mode === 'direct' && rail.projectRouter
+      ? {
+          simulate: (args) => simulateForwardViaSafe(rail.projectRouter!, args),
+          forward: (args) => forwardViaSafe(rail.projectRouter!, args),
+          claimOwed: (id) => transitionForward(env, id, 'router_claim', { error: null }),
+        }
+      : undefined,
     settleNonRoutedPaid: (args) => settleNonRoutedPaid(makeConfirmDeps(env), args),
     pollConfirmation: (fwd) => pollForwardConfirmation(makeConfirmDeps(env), fwd),
     alert: (text) => sendAlert(env, text),
@@ -355,6 +373,28 @@ export async function handleForward(
     }
     await safely(deps.publish?.(claimed.sid) ?? Promise.resolve());
     console.log(`forward ${order.id} direct_owed → ${decision.target} sid=${claimed.sid}${via ? ` (${via})` : ''}`);
+    if (deps.projectRouter) {
+      const routed = await routeOwed(deps, {
+        id: claimed.forwardId,
+        orderId: order.id,
+        sid: claimed.sid,
+        target: decision.target,
+        amountWei: eurToWei(order.amount ?? '0'),
+        amountCents,
+        memoPrefix: via ?? routing.prefix,
+      }, { ambiguousIntent });
+      if (routed.outcome !== 'not_routable') return;
+      await safely(deps.alert(
+        `🧾 <b>Uplata povezana s projektom — čeka ProjectRouter</b>\n` +
+          `order: <code>${order.id}</code> · iznos: <b>${order.amount} EUR</b>\n` +
+          `intent: <code>${claimed.sid}</code>${via ? ` (${via === 'auto' ? 'automatski po iznosu i vremenu' : 'ručno'})` : ''}\n` +
+          `novac je na glavnom Safeu <code>${deps.authorize.safeAddress ?? '-'}</code> → <code>${decision.target}</code>\n` +
+          `simulacija: <code>${(routed.error ?? '-').slice(0, 200)}</code>\n` +
+          `Rail ga prosljeđuje sam čim simulacija prođe (Safe projekta u roli, prijedlog potvrđen 2/3). ` +
+          `Ne prenositi ručno: ručni prijenos i rail platili bi isti dug dvaput.`,
+      ));
+      return;
+    }
     await safely(deps.alert(
       `🧾 <b>Uplata povezana s projektom — treba ručni prijenos</b>\n` +
         `order: <code>${order.id}</code> · iznos: <b>${order.amount} EUR</b>\n` +
@@ -483,6 +523,145 @@ export async function handleForward(
         `tx: <code>${result.txHash}</code> · sid: <code>${routing.sid ?? '-'}</code>`,
     ));
   }
+}
+
+/// One D4 debt, as the ProjectRouter needs it.
+export interface OwedForward {
+  id: number;
+  orderId: string;
+  sid: string | null;
+  target: string;
+  amountWei: bigint;
+  amountCents: number | null;
+  memoPrefix: string | null;
+}
+
+export type OwedOutcome = 'submitted' | 'not_routable' | 'lost_race' | 'failed';
+
+/// ADR 0026: move one owed debt from the main Safe to its project Safe through
+/// the ProjectRouter role. Order matters:
+///   1. simulate — a revert (project not in the role yet, balance short) leaves
+///      the row `owed`; the cron tries again, so the payment goes through on
+///      its own once the owners confirm the proposal;
+///   2. claim — owed → broadcasting is the latch: the webhook and the cron
+///      can never both pay the same debt;
+///   3. broadcast — an error after the claim is `failed` + alert, NOT back to
+///      `owed`: an ambiguous RPC error may mean the tx went out after all.
+/// From `submitted` on it is the ordinary forward: paid + webhooks on
+/// on-chain confirmation, cron reconcile as the backstop.
+export async function routeOwed(
+  deps: ForwardDeps,
+  row: OwedForward,
+  /// poll: false (cron) leaves confirmation to the cron reconcile, so a
+  /// sweep over many debts is not ~75 s of polling per row.
+  opts: { ambiguousIntent?: boolean; poll?: boolean } = {},
+): Promise<{ outcome: OwedOutcome; error?: string }> {
+  const pr = deps.projectRouter;
+  if (!pr) return { outcome: 'not_routable', error: 'no ProjectRouter' };
+  const args: ForwardArgs = { target: row.target as Address, amountWei: row.amountWei };
+  const sim = await pr.simulate(args);
+  if (!sim.ok) {
+    console.log(`owed ${row.id} not routable yet: ${sim.error}`);
+    return { outcome: 'not_routable', error: sim.error };
+  }
+  if (!(await pr.claimOwed(row.id))) {
+    console.log(`owed ${row.id} already taken by another caller`);
+    return { outcome: 'lost_race' };
+  }
+  const amount = row.amountCents !== null ? (row.amountCents / 100).toFixed(2) : '?';
+  let result = await pr.forward(args);
+  if (!result.ok && NONCE_COLLISION_RE.test(result.error ?? '')) {
+    console.warn(`owed ${row.id} nonce collision (${result.error}) — one retry`);
+    await (deps.sleep ?? defaultSleep)(NONCE_RETRY_DELAY_MS);
+    result = await pr.forward(args);
+  }
+  if (!result.ok) {
+    await deps.updateForward(row.id, { status: 'failed', error: result.error ?? 'unknown', attempts: 1 });
+    console.error(`owed ${row.id} ProjectRouter broadcast FAILED: ${result.error}`);
+    await safely(deps.publish?.(row.sid) ?? Promise.resolve());
+    await safely(deps.alert(
+      `❌ <b>ProjectRouter prijenos nije uspio (broadcast)</b>\n` +
+        `order: <code>${row.orderId}</code> · iznos: <b>${amount} EUR</b> (ostaje na glavnom Safeu)\n` +
+        `cilj: <code>${row.target}</code> · sid: <code>${row.sid ?? '-'}</code>\n` +
+        `greška: <code>${(result.error ?? 'unknown').slice(0, 300)}</code>\n` +
+        `Prije ručnog prijenosa provjeriti na lancu da tx nije ipak prošao.`,
+    ));
+    return { outcome: 'failed', error: result.error };
+  }
+  await deps.updateForward(row.id, { status: 'submitted', tx_hash: result.txHash!, attempts: 1 });
+  console.log(`owed ${row.id} → ${row.target} via ProjectRouter tx=${result.txHash}`);
+  await safely(deps.alert(
+    `🔀 <b>Uplata bez reference proslijeđena kroz ProjectRouter</b>\n` +
+      `order: <code>${row.orderId}</code> · iznos: <b>${amount} EUR</b>\n` +
+      `intent: <code>${row.sid ?? '-'}</code> → <code>${row.target}</code>\n` +
+      `tx: <code>${result.txHash}</code>` +
+      (opts.ambiguousIntent
+        ? `\n⚠️ više intenata s istim iznosom i istom adresom — novac je na pravom mjestu, pripisivanje intentu je procjena`
+        : ''),
+  ));
+  await safely(deps.publish?.(row.sid) ?? Promise.resolve());
+  if (opts.poll === false) return { outcome: 'submitted' };
+  const outcome = await deps.pollConfirmation({
+    id: row.id,
+    tenant_id: deps.authorize.railTenantId,
+    order_id: row.orderId,
+    sid: row.sid,
+    tx_hash: result.txHash!,
+    amount_cents: row.amountCents,
+    memo_prefix: row.memoPrefix,
+    target_address: row.target,
+  });
+  await safely(deps.publish?.(row.sid) ?? Promise.resolve());
+  if (outcome === 'failed') {
+    console.error(`owed ${row.id} ProjectRouter tx REVERTED ${result.txHash}`);
+    await safely(deps.alert(
+      `❌ <b>ProjectRouter prijenos revertan on-chain</b>\n` +
+        `order: <code>${row.orderId}</code> · iznos: <b>${amount} EUR</b> (ostaje na glavnom Safeu)\n` +
+        `tx: <code>${result.txHash}</code> · sid: <code>${row.sid ?? '-'}</code>`,
+    ));
+  }
+  return { outcome: 'submitted' };
+}
+
+export function owedFromRow(row: MoneriumForwardRow): OwedForward {
+  return {
+    id: row.id,
+    orderId: row.order_id,
+    sid: row.sid,
+    target: row.target_address,
+    amountWei: BigInt(row.amount_wei || '0'),
+    amountCents: row.amount_cents,
+    memoPrefix: row.memo_prefix,
+  };
+}
+
+/// Cron (ADR 0026): every rail with a ProjectRouter retries its owed debts.
+/// A debt whose project was not in the role yet goes through on the first
+/// tick after the owners confirm the proposal. Cheap when nothing is owed:
+/// one SELECT per rail, an eth_call per owed row.
+export async function routeAllOwedForwards(env: Env): Promise<{ tried: number; submitted: number }> {
+  const rails: TenantRail[] = [legacyRail(env)];
+  for (const id of await listRailTenantIds(env)) {
+    const r = await getTenantRail(env, id);
+    if (r) rails.push(r);
+  }
+  let tried = 0;
+  let submitted = 0;
+  for (const rail of rails) {
+    if (rail.mode !== 'direct' || !rail.projectRouter) continue;
+    const owed = await listOwedForwards(env, rail.tenantId);
+    if (owed.length === 0) continue;
+    const deps = makeForwardDeps(env, rail);
+    for (const row of owed) {
+      tried++;
+      try {
+        if ((await routeOwed(deps, owedFromRow(row), { poll: false })).outcome === 'submitted') submitted++;
+      } catch (e) {
+        console.error(`owed ${row.id} (${rail.tenantId}) route failed: ${(e as Error).message}`);
+      }
+    }
+  }
+  return { tried, submitted };
 }
 
 /// Fail-closed landing: record WHY we refused, alert, tell the merchant, and

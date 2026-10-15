@@ -89,6 +89,7 @@ export type ForwardEvent =
   | 'broadcast_ok'
   | 'broadcast_failed'
   | 'owners_transfer'   // outflow watcher saw the owed transfer (D4)
+  | 'router_claim'      // ADR 0026: ProjectRouter simulated OK and takes the owed row before broadcasting
   | 'receipt_confirmed'
   | 'receipt_failed';   // revert, or dropped from every mempool
 
@@ -103,6 +104,7 @@ export const FORWARD_TRANSITIONS: Transition[] = [
   { from: 'broadcasting', event: 'broadcast_ok', to: 'submitted' },
   { from: 'broadcasting', event: 'broadcast_failed', to: 'failed' },
   { from: 'owed', event: 'owners_transfer', to: 'submitted' },
+  { from: 'owed', event: 'router_claim', to: 'broadcasting' },
   { from: 'submitted', event: 'receipt_confirmed', to: 'forwarded' },
   { from: 'submitted', event: 'receipt_failed', to: 'failed' },
 ];

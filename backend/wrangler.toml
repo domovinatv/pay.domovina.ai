@@ -163,6 +163,13 @@ ROLES_MODIFIER_ADDRESS = "0x330347d656b1a5DF972f758DE1E25E99ec36762c"
 # Set via safe-tx/001-eure-forwarder-role-setup.{mjs,json}; assigned to backend
 # EOA 0xd61289c5035c6e5eaD6F100b6A8F90ac4ee054CB once that batch executes on Safe.
 ROLE_KEY = "0x45555265466f7277617264657200000000000000000000000000000000000000"
+# ADR 0026: rola ProjectRouter na istom modifieru smije samo EURe.transfer prema
+# projektnim Safe-ovima koje su 2/3 vlasnika odobrili (safe-tx/009). Rail njome
+# zatvara D4 dugove (uplata bez reference, mint na MPT Safe). Uključuje se tek kad
+# su postavljeni OBOJE: ova vrijednost i secret PROJECT_ROUTER_PRIVATE_KEY.
+# Prazno = D4 ostaje ručni 2/3 prijenos. Vrijednost nakon izvršenja 009:
+#   0x50726f6a656374526f7574657200000000000000000000000000000000000000
+PROJECT_ROUTER_ROLE_KEY = ""
 
 # PaymentRegistry onchain memo (optional). When BOTH set, the rail forwards
 # via Safe MultiSend so each forward emits an onchain `Payment` event in the

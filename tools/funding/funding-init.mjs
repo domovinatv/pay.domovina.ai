@@ -12,12 +12,15 @@
 //   4. upis u projects.<env>.json (registar projekata, javne adrese)
 //   5. ispis dviju naredbi za konzolu preglednika, jer oba API-ja traže
 //      web sesiju: ime adrese u Moneriumu i kampanja + whitelista na MPT railu
+//   6. ProjectRouter (ADR 0026): prijedlog u redu glavnog Safe-a da se Safe projekta
+//      doda u skup primatelja role (router-scope.mjs, potpis delegatea)
 import { parseArgs } from 'node:util';
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { DEFAULT_OWNERS, DEFAULT_THRESHOLD, clients, ensureSafe, isLinkSigned, loadEnv, verifySafe } from './lib.mjs';
 import { MONERIUM_CHAIN, moneriumClient } from './monerium.mjs';
+import { addProjectToRouter, describeRouterResult } from './router-scope.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const TENANT = { sandbox: 'italk-sandbox', prod: 'italk' };
@@ -101,3 +104,17 @@ console.log(`\n[5a] Ime u Moneriumu — konzola na ${MONERIUM_UI[env]} (prijavlj
 console.log(`console.log((await fetch('/api/addresses/${safe.address}/config', { method: 'PATCH', headers: { Accept: 'application/json', 'Content-Type': 'application/json' }, body: JSON.stringify({ name: ${JSON.stringify(name)} }) })).status)`);
 console.log(`\n[5b] Kampanja + whitelista na MPT railu — konzola na https://mpt.domovina.ai/admin (prijavljen):`);
 console.log(`console.log(await (await fetch('/admin/api/tenants/${tenant}/campaigns', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ campaign_id: ${JSON.stringify(a.project)}, safe_address: '${safe.address}', label: ${JSON.stringify(title)} }) })).json())`);
+
+// 6. ProjectRouter: samo za glavni Safe tenanta za koji je rola postavljena
+// (italk / italk-sandbox, ili MAIN_SAFE iz --vars).
+console.log('');
+if (tenant !== TENANT[env] && !vars.MAIN_SAFE) {
+  step(6, `ProjectRouter: tenant ${tenant} nema postavljen glavni Safe (MAIN_SAFE) — preskačem`);
+} else {
+  try {
+    const r = await addProjectToRouter({ env, recipient: safe.address, vars, dry: a.dry, log: (m) => console.log(m) });
+    step(6, `ProjectRouter: ${describeRouterResult(r, { env })}`);
+  } catch (e) {
+    step(6, `ProjectRouter: GREŠKA ${e.message} — projekt radi i bez toga (uplate bez reference čekaju ručni prijenos); ponoviti s router-scope.mjs`);
+  }
+}

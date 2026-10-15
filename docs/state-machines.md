@@ -44,6 +44,7 @@ stateDiagram-v2
   broadcasting --> submitted: broadcast_ok
   broadcasting --> failed: broadcast_failed
   owed --> submitted: owners_transfer
+  owed --> broadcasting: router_claim
   submitted --> forwarded: receipt_confirmed
   submitted --> failed: receipt_failed
   forwarded --> [*]

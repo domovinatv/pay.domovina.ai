@@ -306,10 +306,12 @@ export function makeOutflowWatchDeps(env: Env, rail: TenantRail): OutflowWatchDe
       ).bind(txHash.toLowerCase()).first<{ hit: number }>();
       return row !== null;
     },
+    // updated_at, not created_at: a D4 row claimed by the ProjectRouter (ADR
+    // 0026) can be days old when it enters `broadcasting`.
     hasUnhashedForward: async (to, amountWei) => {
       const row = await env.DB.prepare(
         `SELECT 1 AS hit FROM monerium_forwards
-          WHERE tx_hash IS NULL AND ${stateSql('broadcasting')} AND created_at > ?
+          WHERE tx_hash IS NULL AND ${stateSql('broadcasting')} AND updated_at > ?
             AND lower(target_address) = ? AND amount_wei = ? LIMIT 1`,
       ).bind(
         Math.floor(Date.now() / 1000) - UNHASHED_FORWARD_MAX_AGE_SECONDS,

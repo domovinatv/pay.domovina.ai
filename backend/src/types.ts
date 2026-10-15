@@ -88,6 +88,8 @@ export interface Env {
   WATCH_HEARTBEAT_URL?: string;        // secret: dead-man ping after every healthy theft-detector tick (TD-02), e.g. healthchecks.io
   RECONCILE_FORWARDS?: string;         // "1" → the reconcile cron runs the forward path on a processed order with no forward row (SR-05)
   LEGACY_RAIL_MODE?: string;           // ADR 0025: "direct" → ITalk mints straight into project Safes, router key never loaded; unset = forward
+  PROJECT_ROUTER_PRIVATE_KEY?: string; // ADR 0026 secret: member of the ProjectRouter role (EURe.transfer only to approved project Safes); ITalk direct rail only
+  PROJECT_ROUTER_ROLE_KEY?: string;    // ADR 0026: bytes32 of "ProjectRouter" on ROLES_MODIFIER_ADDRESS; empty = D4 stays a manual 2/3 transfer
   LEGACY_REQUIRE_MINT_AT?: string;     // "1" → ITalk forwards only orders minted at SAFE_ADDRESS (MT-03), like every tenant rail
   MAX_OPEN_INTENTS_PER_TARGET?: string; // SR-01 cap on open intents per non-trusted destination (default 20); sk_ callers exempt
   /// Durable Object namespace holding one SSE hub per sid (src/intents/stream.ts).
