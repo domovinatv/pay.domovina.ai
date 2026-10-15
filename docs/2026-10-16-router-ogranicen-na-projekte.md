@@ -1,7 +1,7 @@
 # Router ograničen na projektne Safe-ove (dogovoreni smjer za ADR 0026)
 
-Dogovoreno s Matijom 16. 10. 2026. Ovo je ulaz za ADR 0026 i implementaciju. Ništa od
-ovoga još nije napravljeno.
+Dogovoreno s Matijom 16. 10. 2026. Ovo je ulaz za ADR 0026 i implementaciju. Odluka je
+zapisana u [ADR 0026](decisions/0026-project-router-ogranicen-na-projektne-safeove.md).
 
 Vezani dokumenti: [ADR 0025](decisions/0025-mpt-router-umirovljen-svi-tenanti-direct.md)
 (§Revolut bez reference) · [postmortem 0002](postmortems/0002-admin-auth-bypass-percent-encoded-path.md)
