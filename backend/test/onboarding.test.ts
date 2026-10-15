@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import worker from '../src/index';
 import {
   MIN_ROUTER_GAS_WEI,
+  MIN_ROUTER_GAS_WEI_CHIADO,
   nextStatus,
   redactRail,
   runVerify,
@@ -120,6 +121,16 @@ describe('runVerify', () => {
   ])('fails only %s', async (_n, over, failing) => {
     const checks = await runVerify(deps(over as Partial<VerifyDeps>), tenant, row(), true);
     expect(checks.filter((c) => !c.ok).map((c) => c.key)).toEqual([failing]);
+  });
+
+  it('holds a Chiado router to the lower sandbox threshold', async () => {
+    const chiado = row({ monerium_env: 'sandbox', chain: 'chiado' });
+    const gas = (bal: bigint) =>
+      runVerify(deps({ balanceWei: async () => bal }), tenant, chiado, true)
+        .then((checks) => checks.find((c) => c.key === 'router_gas')!.ok);
+    expect(await gas(MIN_ROUTER_GAS_WEI_CHIADO)).toBe(true);
+    expect(await gas(MIN_ROUTER_GAS_WEI_CHIADO - 1n)).toBe(false);
+    expect(MIN_ROUTER_GAS_WEI_CHIADO < MIN_ROUTER_GAS_WEI).toBe(true);
   });
 
   it('fails missing config without calling the chain', async () => {

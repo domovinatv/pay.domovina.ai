@@ -35,6 +35,14 @@ const MAX_CAP_CENTS = 1_000_000;
 /// Below this the router may not afford its next forwards: verify fails and
 /// the 6-hourly cron alerts. Gnosis forwards cost ~0.0001 xDAI each.
 export const MIN_ROUTER_GAS_WEI = 50_000_000_000_000_000n; // 0.05 xDAI
+/// Chiado is only reachable with Monerium sandbox, and its xDAI comes from
+/// faucets that pay out 0.001 a week. A forward there costs ~2e-7 xDAI, so
+/// 0.0005 still covers thousands of them.
+export const MIN_ROUTER_GAS_WEI_CHIADO = 500_000_000_000_000n; // 0.0005 xDAI
+
+export function minRouterGasWei(chain: RailChain | string): bigint {
+  return chain === 'chiado' ? MIN_ROUTER_GAS_WEI_CHIADO : MIN_ROUTER_GAS_WEI;
+}
 
 export type Validation<T> = { ok: true; value: T } | { ok: false; error: string };
 
@@ -536,9 +544,10 @@ export async function runVerify(
   if (!direct) await check('router_gas', async () => {
     if (!row.router_address || !hasRouterKey) return [false, 'router EOA nije generiran'];
     const bal = await deps.balanceWei(row.router_address);
-    return bal >= MIN_ROUTER_GAS_WEI
+    const min = minRouterGasWei(row.chain);
+    return bal >= min
       ? [true, `${row.router_address}: ${bal} wei`]
-      : [false, `${row.router_address} ima ${bal} wei, treba ≥ ${MIN_ROUTER_GAS_WEI}`];
+      : [false, `${row.router_address} ima ${bal} wei, treba ≥ ${min}`];
   });
   await check('webhook', async () =>
     row.webhook_secret_enc && row.webhook_subscription_id
@@ -630,13 +639,14 @@ export async function checkRouterGas(env: Env): Promise<number> {
         transport: http(rail.signer.rpcUrl),
       });
       const bal = await chain.getBalance({ address });
-      if (bal < MIN_ROUTER_GAS_WEI) {
+      const min = minRouterGasWei(rail.signer.chain);
+      if (bal < min) {
         low++;
         await sendAlert(
           env,
           `⛽ <b>Router tenanta ostaje bez gasa</b>\n` +
             `tenant: <code>${rail.tenantId}</code> · router: <code>${getAddress(address)}</code>\n` +
-            `saldo: <code>${bal}</code> wei (prag ${MIN_ROUTER_GAS_WEI}). Dopuniti xDAI.`,
+            `saldo: <code>${bal}</code> wei (prag ${min}). Dopuniti xDAI.`,
         );
       }
     } catch (e) {
