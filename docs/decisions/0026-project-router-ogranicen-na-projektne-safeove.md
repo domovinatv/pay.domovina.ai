@@ -172,7 +172,7 @@ Stari `ROUTER_PRIVATE_KEY` / `ROLE_KEY` (`EUReForwarder`) se ne vraćaju. Ključ
 | 2. `safe-tx/009` | ✅ generator + `009-simulate-fork.mjs`; Gnosis fork 13/13, Chiado fork 11/11 |
 | 3. `funding-init` + delegate | ✅ `router-scope.mjs` (korak 6), `--setup` predlaže cijeli 009 kao MultiSend; `deploy-roles.mjs` |
 | 4. Rail | ✅ `router_claim`, `routeOwed`, cron `routeAllOwedForwards`, 16 testova, compat-check prolazi |
-| 5. Chiado E2E | 🟡 Roles proxy `0x8E92…1532` i biblioteke Packer/Integrity deployani (vidi dolje); čeka delegate, router ključ tenanta i 2/3 potvrdu |
+| 5. Chiado E2E | 🟡 Kod mergan (#112) i deployan 16. 10. (`246b390b`). Roles proxy, biblioteke, router `0xD922…6759` (0,01 xDAI) i rail `italk-sandbox` (`roles_modifier`, `role_key`, router ključ, verify OK) gotovi. Čeka registraciju delegatea (vlasnički potpis), prijedlog `router-scope --setup` i 2/3 potvrdu |
 | 6. Produkcija | ⏳ |
 
 ### Chiado: Roles v2 bez biblioteka (16. 10. 2026.)
@@ -184,3 +184,17 @@ kroz singleton factory `0xce00…cf9f` (CREATE2). `tools/funding/deploy-roles.mj
 točan calldata iz Gnosis tx-a i provjeri da je hash koda isti kao na Gnosisu:
 Packer tx `0xd6ca…b508`, Integrity tx `0xeb7e…d5a`. Roles proxy za glavni Safe
 `italk-sandbox`: `0x8E926f20eAe8bDCED7Bb7c14F006aEC4975E1532` (blok 23538972).
+
+### Delegate: Safe sučelje traži Safe Pro (16. 10. 2026.)
+
+app.safe.global → Settings → Setup → Proposers za dodavanje novog proposera traži plaćeni
+**Safe Pro** („Adding proposers requires Safe Pro"; postojeći ostaju aktivni). Isti učinak
+daje API Safe Transaction Servicea bez Pro: `POST https://api.safe.global/tx-service/<chi|gno>/api/v2/delegates/`
+s poljima `safe`, `delegate`, `delegator`, `signature`, `label`. Potpis je EIP-712 vlasnika:
+domena `{name: "Safe Transaction Service", version: "1.0", chainId}`, tip
+`Delegate(address delegateAddress, uint256 totp)`, `totp = floor(unix / 3600)` (vrijedi
+sat vremena). Stari hostovi `safe-transaction-*.safe.global` vraćaju 308 na
+`api.safe.global/tx-service/<kratica>`. Delegate za `italk-sandbox`:
+`0xC32230939b690DDFA98100F04d20467E9D48d34E` (ključ u `tools/funding/.env.sandbox`).
+Bez registracije servis odbija prijedlog s 422 „Sender … is not an owner or delegate".
+
