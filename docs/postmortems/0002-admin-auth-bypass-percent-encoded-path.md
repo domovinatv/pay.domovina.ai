@@ -95,6 +95,21 @@ Treat the contents of those endpoints as disclosed.
 Also created by the same IP via the public self-serve sandbox (by design, left as-is):
 `sbx-2d0ee09273`, `sbx-c52b4844cf`, `sbx-245fb0f0b8`.
 
+## Follow-up: the guard was too broad (#106, 2026-10-15)
+
+`0e7ceeb` refused **any** admin path whose raw form differed from the decoded one. That
+also refused legitimate encoding in later segments — revoking an API key by its shortened
+id (`…/keys/abcd…` → `%E2%80%A6`) returned 400, and `main` CI stayed red
+(`adminKeyRevoke.test.ts`) from the fix until #106. Branch protection then blocked every
+other PR.
+
+#106 refuses only when the decoded path is admin but the raw one is not — i.e. the `/admin`
+prefix itself is encoded. Every check after it already uses the decoded `c.req.path`, so
+encoded later segments cannot change the auth decision. A regression test now covers
+`/%61dmin/`, `/%2561dmin/` and `/a%64min/` and was confirmed to fail with the guard removed
+(the original fix shipped without one). Deployed 2026-10-15 as `781734bb`; production
+check: `/%61dmin/api/forwards` → 400, `/admin/api/forwards` → 401.
+
 ## Lessons
 
 1. **One parser for authorization and routing.** Never authorize on `new URL(req.url).pathname`
@@ -111,4 +126,6 @@ Also created by the same IP via the public self-serve sandbox (by design, left a
 - [x] bank-push-gateway hardened the same way (defence in depth, it was not exploitable).
 - [ ] Decide whether the read data (orders, wallets, HPB authorizations) requires notifying
       ITalk / affected users.
+- [ ] pipeline.domovina.ai has its own copy of `mount.ts` (`96fef04`): check whether it has
+      the same over-broad guard and port #106 if so.
 - [ ] Optional: alert on `admin:unknown` in `tenant_audit_log` and on `admin_encoded_path_rejected`.
