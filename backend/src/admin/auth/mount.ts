@@ -61,13 +61,26 @@ export function actorOf(c: Context): string {
 export function mountAdminAuth(app: Hono<{ Bindings: Env }>): void {
   const a = app as unknown as Hono<AppEnv>;
 
+  // 0. Putanja kako je vidi ROUTER (c.req.path, percent-dekodirana), ne sirovi
+  //    URL. `new URL(c.req.url).pathname` ostavlja `/%61dmin/...` enkodirano pa
+  //    ga provjere ispod nisu smatrale adminom, a Hono ga dekodira i izvrši
+  //    admin rutu — zaobilazak prijave (incident 15.10.2026.). Enkodirani
+  //    oblik admin putanje se uopće ne prihvaća.
+  a.use('*', async (c, next) => {
+    if (isAdminPath(c.req.path) && new URL(c.req.url).pathname !== c.req.path) {
+      console.warn(JSON.stringify({ msg: 'admin_encoded_path_rejected', path: new URL(c.req.url).pathname.slice(0, 200) }));
+      return c.json({ error: 'bad_path' }, 400);
+    }
+    return next();
+  });
+
   // 1. Jedan host za admin. rpID passkeya = hostname, pa bi passkey upisan na
   //    jednom hostu bio beskoristan na drugom; Access aplikacija štiti samo
   //    ADMIN_HOST/admin/sso.
   a.use('*', async (c, next) => {
     const url = new URL(c.req.url);
     const host = (c.env.ADMIN_HOST ?? '').trim();
-    if (!isAdminPath(url.pathname) || !host || url.hostname === host || isLocal(url.hostname)) return next();
+    if (!isAdminPath(c.req.path) || !host || url.hostname === host || isLocal(url.hostname)) return next();
     if (c.req.method !== 'GET') return c.json({ error: 'wrong_admin_host', admin_host: host }, 421);
     return c.redirect(`https://${host}${url.pathname}${url.search}`, 301);
   });
@@ -76,7 +89,7 @@ export function mountAdminAuth(app: Hono<{ Bindings: Env }>): void {
   //    dobivaju nonce, pa CSP i dalje ne pušta ubačene skripte ni inline
   //    handlere (onclick=…).
   a.use('*', async (c, next) => {
-    if (!isAdminPath(new URL(c.req.url).pathname)) return next();
+    if (!isAdminPath(c.req.path)) return next();
     await next();
     const nonce = randomNonce();
     const h = c.res.headers;
@@ -100,7 +113,7 @@ export function mountAdminAuth(app: Hono<{ Bindings: Env }>): void {
 
   // 3. CSRF: svaka promjena mora doći s istog origina (kolačić je SameSite=Lax).
   a.use('*', async (c, next) => {
-    if (!isAdminPath(new URL(c.req.url).pathname)) return next();
+    if (!isAdminPath(c.req.path)) return next();
     if (!['GET', 'HEAD', 'OPTIONS'].includes(c.req.method)) {
       const origin = c.req.header('origin');
       if (!origin || origin !== new URL(c.req.url).origin) return c.json({ error: 'bad_origin' }, 403);
@@ -111,10 +124,10 @@ export function mountAdminAuth(app: Hono<{ Bindings: Env }>): void {
   // 4. Sesija: sve pod /admin osim javnih putanja.
   a.use('*', async (c, next) => {
     const url = new URL(c.req.url);
-    if (!isAdminPath(url.pathname) || PUBLIC_PATHS.has(url.pathname)) return next();
+    if (!isAdminPath(c.req.path) || PUBLIC_PATHS.has(c.req.path)) return next();
     const session = await getSession(c.env, c.req.header('cookie') ?? null);
     if (!session) {
-      if (c.req.method !== 'GET' || url.pathname.startsWith('/admin/api/')) {
+      if (c.req.method !== 'GET' || c.req.path.startsWith('/admin/api/')) {
         return c.json({ error: 'unauthorized' }, 401);
       }
       return c.redirect(`/admin/login?next=${encodeURIComponent(url.pathname + url.search)}`, 302);
