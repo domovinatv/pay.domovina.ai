@@ -61,6 +61,10 @@ Zamke:
   samo pod web sesijom, token appa dobiva 401).
 - Sandbox „Simulate bank transfer" šalje nasumičan memo; vlastiti memo ide preko
   `POST /api/treasury/fund` iz konzole na sandbox.monerium.dev.
+- Ime walleta: `PATCH /api/addresses/<safe>/config {name}` iz konzole radi (potvrđeno 12. 10. 2026.
+  na `opensaas-sandbox`); sučelje ga pokaže tek nakon osvježavanja stranice.
+- Presretanje `window.fetch` da se gumbu „Simulate bank transfer" podmetne memo **ne radi** (sučelje
+  ne ide kroz zakrpani fetch). Memo se upisuje ručno u formu.
 - Faucet za Chiado (gnosisfaucet.com) traži captchu, e-mail i potpis; klik na
   karticu CHIADO jednom je preusmjerio na lažnu captchu na `*.s3.filebase.io`.
   Otvarati izravno `https://faucet.gnosischain.com/?chain=chiado`.

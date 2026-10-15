@@ -2,6 +2,7 @@
 // funding-init: sve što projekt treba za primanje uplata, jednom naredbom.
 //
 //   node funding-init.mjs --env sandbox --project domovinatv-karta-hrvatske --title "Karta Hrvatske"
+//   node funding-init.mjs --env sandbox --tenant opensaas-sandbox --vars opensaas-sandbox --project opensaas-sandbox-demo
 //
 // Koraci (svaki je idempotentan, ponovno pokretanje samo provjeri stanje):
 //   1. Safe projekta (salt "project:<id>", vlasnici i prag iz lib.mjs), rođen s
@@ -29,6 +30,7 @@ const { values: a } = parseArgs({
     project: { type: 'string' },
     title: { type: 'string' },
     tenant: { type: 'string' },
+    vars: { type: 'string' },
     dry: { type: 'boolean', default: false },
   },
 });
@@ -41,7 +43,9 @@ const env = a.env;
 const tenant = a.tenant ?? TENANT[env];
 const title = a.title ?? a.project;
 const saltLabel = `project:${a.project}`;
-const vars = loadEnv(env);
+// --vars: Monerium vjerodajnice drugog profila (.env.<vars> ili putanja); deployer
+// ključ i dalje dolazi iz .env.<env>. Jedan profil = jedan tenant, pa uz --vars ide i --tenant.
+const vars = { ...loadEnv(env), ...(a.vars ? loadEnv(a.vars) : {}) };
 const c = clients(env, vars.DEPLOYER_PRIVATE_KEY);
 const step = (n, msg) => console.log(`[${n}] ${msg}`);
 
