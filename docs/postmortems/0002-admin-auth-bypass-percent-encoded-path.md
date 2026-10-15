@@ -7,10 +7,10 @@
 No funds moved.
 **Author:** Matija Stepanic + Claude.
 
-> **This branch (`chore/opensaas-sandbox-tenant`) does NOT contain the fix.**
-> `backend/src/admin/auth/mount.ts` here is still vulnerable. Merge/rebase onto `main`
-> (≥ `0e7ceeb`) **before any `wrangler deploy` from this checkout** — deploying this
-> branch as-is re-opens the hole on production `mpt.domovina.ai`.
+> **Any branch cut from `main` before `0e7ceeb` is still vulnerable.** Merge/rebase onto
+> `main` before any `wrangler deploy` from it — deploying an old branch re-opens the hole
+> on production `mpt.domovina.ai`. (`chore/opensaas-sandbox-tenant` got `main` merged on
+> 2026-10-15.)
 
 ## What happened
 
@@ -107,7 +107,8 @@ Also created by the same IP via the public self-serve sandbox (by design, left a
 
 ## Open
 
-- [ ] Merge `main` into `chore/opensaas-sandbox-tenant` (brings `0e7ceeb`).
+- [x] Merge `main` into `chore/opensaas-sandbox-tenant` (brings `0e7ceeb`).
+- [x] bank-push-gateway hardened the same way (defence in depth, it was not exploitable).
 - [ ] Decide whether the read data (orders, wallets, HPB authorizations) requires notifying
       ITalk / affected users.
 - [ ] Optional: alert on `admin:unknown` in `tenant_audit_log` and on `admin_encoded_path_rejected`.
