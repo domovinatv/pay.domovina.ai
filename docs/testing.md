@@ -29,3 +29,17 @@ checkout, operater). Pravila:
 
 Za provjeru prema onome što je na produkciji:
 `scripts/compat-check.sh <commit iz kojeg je deployano>`.
+
+Zamke:
+
+- Skripta u privremeni worktree prenosi samo `git diff HEAD`, pa **nove
+  (untracked) datoteke ne vidi**. Simptom je `Cannot find module ../novi/modul`
+  u starim testovima. Commitaj prije pokretanja.
+- `node_modules` se u worktree linka simlinkom. Ako i radiš u worktreeu sa
+  simlinkom `backend/node_modules`, pazi da ga ne commitaš.
+- Ako je skripta prekinuta, worktree `compat-check.*` ostaje u `$TMPDIR`.
+- Skripta u worktree prenosi samo `git diff HEAD`. Nova, još nepraćena datoteka zato
+  nedostaje, pa stari testovi koji je importaju padaju cijeli (14 datoteka, 12. 10. 2026.).
+  Prvo commit, pa provjera.
+  Počisti ga s `git worktree prune`, ali tek kad nijedna druga sesija ne vrti
+  skriptu.

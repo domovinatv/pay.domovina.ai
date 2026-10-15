@@ -1,6 +1,6 @@
 # ADR 0023 — Nadogradnja potvrda o uplati iskustvima iz glasanja Maksimir: ključ iz 24 riječi i passkeyja, ulančani append-only zapis, javni checkpointi, neovisni verifikator, sidro bez novca, anonimni claim
 
-- **Status:** Proposed (2026-10-12). Faze 1–3 implementirane na grani `feat/receipts-0023-faze-1-3` (vidi „Implementacija“ na dnu).
+- **Status:** Proposed (2026-10-12). Faze 1–3 implementirane i deployane 2026-10-12 (vidi „Implementacija“ na dnu).
 - **Gradi na:** [0022](0022-potvrda-o-uplati-vezana-uz-kljuc-uplatitelja.md) (potvrde, deployano
   2026-10-12) · [0001](0001-no-server-side-recovery.md) (self-custody) ·
   [0005](0005-phase-5d-croatian-eid-attestation.md) (Certilia) ·

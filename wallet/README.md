@@ -1,8 +1,9 @@
 # wallet.domovina.ai
 
-Self-custody EURe wallet na Gnosis Chainu. Passkey potpisivanje, bez seed
-phrase-a. Top-up SEPA prijenosom kroz postojeći `pay.domovina.ai` rail; send
-P2P kroz vlastiti gas-sponzorirani relayer.
+Self-custody EURe wallet na Gnosis Chainu. Passkey potpisivanje za svakodnevni
+rad; opcionalna seed fraza od 12 riječi kao drugi vlasnik Safea za oporavak i
+korištenje u Safe aplikacijama (ADR 0012). Top-up SEPA prijenosom kroz MPT rail;
+send P2P kroz vlastiti gas-sponzorirani relayer.
 
 > **Status:** Live na [wallet.domovina.ai](https://wallet.domovina.ai). Send
 > pipeline validiran na pravoj Gnosis transakciji 2026-05-22 (vidi
@@ -23,8 +24,13 @@ P2P kroz vlastiti gas-sponzorirani relayer.
   - AddressInput s paste + **scan QR** (kamera ili upload iz galerije) + nedavni primatelji chips
   - Live validacija adrese, comma/dot decimal input, EIP-681 dekoder
   - Face ID → Safe execTransaction → CF Worker relay → tx na Gnosis Chainu, gas plaća app (5 free tx/dan)
-- **Aktivnost** — onchain EURe Transfer feed na home-u (in/out, counterparty, iznos, vremenska oznaka, link na Gnosisscan)
-- **Recovery telefon** — reverse OTP verifikacija preko [`otp.domovina.ai`](https://otp.domovina.ai); čuvamo samo hash + sybil-resistant istraživanje
+- **Aktivnost** — onchain EURe Transfer feed na home-u i na `/activity` (in/out, counterparty, iznos, vremenska oznaka, link na Gnosisscan)
+- **Više računa i passkeyeva** — više Safe računa pod jednim passkeyem, dodatni passkey na isti Safe i povezivanje uređaja između domena (ADR 0008, 0013)
+- **Seed za oporavak** — opcionalni 1-od-2 drugi vlasnik; isti Safe radi i u app.safe.global / Safe Mobile (ADR 0012); `/recover` za izvlačenje sredstava
+- **Imenik** — spremljeni primatelji s oznakama
+- **SDK za druge stranice** — `sdk.js` + `/embed` iframe: `Domovina.connect()` i `Domovina.send()` (ADR 0009, demo u `public/sdk-demo.html`)
+- **Gnosis Pay kartica** — `/kartica`, samo uz `VITE_GP_ENABLED=1`
+- **Verifikacija telefona** (nije oporavak) — reverse OTP verifikacija preko [`otp.domovina.ai`](https://otp.domovina.ai); čuvamo samo hash + sybil-resistant istraživanje
 - **Settings** — Račun (Safe + Signer adresa, Gnosisscan), Sigurnost, Tema (sustav/svjetlo/tama), O aplikaciji, Odjava
 - **Premium UI sloj** — dark mode, page transitions, haptics, iOS PWA safe-area padding, in-app **UpdateBanner** snackbar kad novi build stigne, deep linkovi (`/send?to=…&amount=…`)
 
@@ -61,8 +67,8 @@ Vidi [`docs/screenshots/README.md`](docs/screenshots/README.md) za listu screens
 | State | Zustand (identity); local component state za UI flows |
 | PWA | `vite-plugin-pwa` s `registerType: 'prompt'` + in-app UpdateBanner |
 | QR | `qr-code-styling` (generate) + `qr-scanner` (decode camera + image) |
-| Hosting | Cloudflare Pages (`wallet-domovina` projekt) + CF Pages Functions za `/api/relay` |
-| Relay | viem na Gnosis RPC; KV za rate-limit; RELAYER_PRIVATE_KEY secret |
+| Hosting | Cloudflare Pages (projekt po brendu, npr. `wallet-domovina`) + Pages Functions: `/api/relay`, `/api/relay/status`, `/api/bootstrap-deploy` |
+| Relay | viem na Gnosis RPC; KV brojači po signeru, po IP-u i globalni dnevni limit; opcionalni Turnstile; `RELAYER_PRIVATE_KEY` secret |
 
 ## Routing
 
@@ -72,8 +78,13 @@ Vidi [`docs/screenshots/README.md`](docs/screenshots/README.md) za listu screens
 | `/receive` | Receive — Tab "Iz banke" (SEPA) ili "Drugi wallet" (P2P EURe) |
 | `/send` | Send — paste/scan/recent, validacija, Face ID |
 | `/send?to=ADDR&amount=DEC` | Send sa prefilled deep-linkom (strip-a query nakon prefill-a) |
+| `/activity` | Puna povijest transakcija |
+| `/kartica` | Gnosis Pay kartica (samo uz `VITE_GP_ENABLED=1`) |
 | `/settings` | Settings hub |
 | `/settings/phone` | Phone-binding wizard (OTP) |
+| `/settings/expand-access` | Dodaj passkey / poveži drugi uređaj |
+| `/embed` | Iframe za SDK (`sdk.js`), bez login gatea |
+| `/recover` | Alat za oporavak sredstava, bez login gatea |
 | `/ui-preview` | Design system gallery (uvijek dostupan; ne zahtijeva login) |
 | anything else | fallback na home |
 
@@ -89,7 +100,7 @@ Auth gate: ako `safeAddress` u zustand store-u je null, svaka non-preview ruta r
 [wallet.domovina.ai PWA]
    │
    ├─ Primanje SEPA:
-   │    POST mpt.domovina.ai/api/payment-intent { destination, amount }
+   │    POST mpt.domovina.ai/api/intents { destination, amount }
    │    EPC QR  → Revolut/banka → Monerium → MPT Safe + Zodiac Roles
    │    Routing šalje EURe na korisnikov Safe (NO backend changes here).
    │
@@ -106,13 +117,14 @@ Auth gate: ako `safeAddress` u zustand store-u je null, svaka non-preview ruta r
                                     → POST /api/relay
                                     → CF Worker submitta on-chain
                                     → relayer wallet plaća xDAI gas
-                                    → 5 free tx/dan/passkey (KV brojač)
+                                    → 5 free tx/dan po signeru + IP i globalni limit
 
 [Backend registry @ mpt.domovina.ai]
    POST /api/wallets        — register on passkey create (fire-and-forget)
    GET  /api/wallets/:credId — cross-device login fallback
-   POST /api/wallets/:credId/bind-phone — phone recovery binding
-   GET  /admin/wallets      — Basic Auth admin lista
+   POST /api/wallets/:credId/bind-phone — phone verification binding
+   GET/POST /api/wallets/:credId/accounts — računi istog passkeya (sync među uređajima)
+   GET  /admin/wallets      — admin lista (Cloudflare Access + passkey)
 ```
 
 Registry drži samo public info (credentialId, P-256 pubkey, Safe adresa, phone hash). Nikakvih private ključeva, nikakvih Safe-authoritative podataka. Vidi
@@ -159,11 +171,14 @@ Za scan QR testiranje na desktopu — kamera radi samo s HTTPS-om; koristi `npx 
 ## Build + deploy
 
 ```bash
-npm run build                          # tsc --noEmit && vite build
-npm run deploy                          # wrangler pages deploy dist --project-name=wallet-domovina
+npm run build:default                  # VITE_BRAND=default (wallet.domovina.ai); isto radi CI
+npm run ship:default                   # build + deploy na Pages projekt wallet-domovina
+npm run ship:staging                   # wallet-staging.domovina.ai (vidi docs/STAGING.md)
 ```
 
-Production deploy zahtijeva `CLOUDFLARE_ACCOUNT_ID` env var:
+Brendovi (`src/brands/`) imaju svoje skripte: `build:<brand>`, `deploy:<brand>`,
+`ship:<brand>` za `default`, `sportklub`, `zupa`, `edemokracija`; `ship:all` radi sve.
+Ručni deploy zahtijeva `CLOUDFLARE_ACCOUNT_ID` env var:
 
 ```bash
 CLOUDFLARE_ACCOUNT_ID=7dc7167b7e2e00923bfa7cd697df14e4 \
@@ -198,7 +213,7 @@ Iz `safe-global/safe-modules-deployments` v0.2.1:
 - `SafeWebAuthnSharedSigner` — `0x94a4F6affBd8975951142c3999aEAB7ecee555c2`
 - `DaimoP256Verifier` (fallback) — `0xc2b78104907F722DABAc4C69f826a522B2754De4`
 - `P256 precompile` — `0x0000000000000000000000000000000000000100` (status na Gnosisu još nepotvrđen; verifier param u factoryju kodira (precompile || fallback))
-- `EURe` — `0xcB444e90D8198415266c6a2724b7900fb12FC56E`
+- `EURe` (Monerium V2) — `0x420CA0f9B9b604cE0fd9C18EF134C705e5Fa3430` (V1 `0xcB444e90…` je legacy, app ga ne koristi)
 
 ## ADRs (architecture decision records)
 
@@ -206,17 +221,22 @@ Iz `safe-global/safe-modules-deployments` v0.2.1:
 - [0002 — Phase 5 onchain phone attestation](../docs/decisions/0002-phase-5-onchain-phone-attestation.md)
 - [0003 — Phase 5 PhoneSBT contract design](../docs/decisions/0003-phase-5-sbt-design.md)
 - [0004 — Phase 5c Android verifier custody](../docs/decisions/0004-phase-5c-android-verifier.md)
+- [0007 — Brand-as-data white-label](../docs/decisions/0007-brand-as-data-white-label.md)
+- [0008 — Multi-passkey, multi-domain Safe ownership](../docs/decisions/0008-multi-passkey-same-safe.md)
+- [0009 — Iframe SDK](../docs/decisions/0009-iframe-sdk-third-party-embedding.md)
+- [0012 — Recovery seed kao drugi vlasnik](../docs/decisions/0012-recovery-seed-second-owner-interop.md)
+- [0013 — Passkey = identitet, Safe = račun](../docs/decisions/0013-passkey-as-identity-safe-as-account.md)
+- [0015 — Brend po hostnameu](../docs/decisions/0015-runtime-brand-resolution-and-external-brand-repos.md)
+- Sve: [INDEX](../docs/decisions/INDEX.md); wallet dokumentacija u [`docs/`](docs/README.md)
 
 ## Roadmap
 
-**Phase 5 — Onchain phone attestation** (planirano, vidi ADR 0002 + 0003)
+**Phase 5 — Onchain phone attestation** (planirano, vidi ADR 0003; 0002 je zamijenjen)
 - PhoneSBT contract na Gnosisu; passkey-signed claims; sybil-resistant reputation
 - Verifier potpisuje attestation poruke; otvoreno pitanje custody (CF Worker secret vs Pi-in-office signing service)
 
 **Phase 6+ — Polishing kandidati**
 - ENS resolution u activity feed (rendering 0x adrese kao .eth imena gdje su dostupna)
-- Address book — manualne oznake za recipient chip-ove
-- Multi-passkey (1/N → 2/N s "Add another device" flow-om)
 - WalletConnect support za korištenje sa drugim dApp-ovima
 
 ## Otvorena pitanja

@@ -137,6 +137,41 @@ s alarmom. Takvu uplatu operater ručno prebacuje u Safe projekta.
 
 Sve kombinacije opisa i mjesta minta, s pripadnim prijelazima: [state-machines.md](state-machines.md).
 
+## Simulacija uplate na Safe projekta i povratak u app (Open SaaS, 12. 10. 2026.)
+
+Test: lokalni Open SaaS (`opensaas-sandbox`, cilj Safe projekta `opensaas-sandbox-demo`
+`0xAbC3…ef8e`), kupnja 1 € → checkout → Monerium „Simulate bank transfer".
+
+- Forma za simulaciju prima **samo iznos**; memo je Moneriumov tekst. „Receive to" samo
+  prikazuje podatke walleta, a mint ide walletu **kojem je IBAN povezan**. S IBAN-om na
+  glavnom Safeu uplata postaje D4 `direct_owed` (stray resolver nađe intent po iznosu) i
+  checkout stoji na „prosljeđuje se". Iz sučelja je jedini put „Move IBAN" na Safe
+  projekta i natrag; presretanje `fetch` za gumb ne radi.
+- **Iz terminala, bez Move IBAN:** `tools/funding/simulate-payment.mjs` zove isti
+  `POST https://sandbox.monerium.dev/api/treasury/fund` (endpoint web sučelja; javni API ga
+  nema), koji prima Bearer token Private appa i polje `memo`. Memo intenta
+  (`chiado:<Safe> sid:<sid>`) Moneriumu je i ruta: s IBAN-om na glavnom Safeu mint je
+  otišao na Safe projekta i intent `simtest-route-mv5ilqkd` (1.41 €) postao je
+  `paid`/`settled`. IBAN zato stoji na glavnom Safeu.
+  `node simulate-payment.mjs --env opensaas-sandbox --amount 1.00 --memo "<memo intenta>"`
+- E2E s lokalnim Open SaaS-om (isti dan): kupnja 10 Credits → checkout → memo intenta s
+  `GET /api/intents/<sid>` → skripta → intent `paid` za ~19 s, povratak u app s
+  `mpt_status=paid`, krediti 93 → 103 (točno +10). Intenti `DXpwzcN4wvqMdj9Z`,
+  `PEEiYxQReet7HXwn`.
+- **S checkouta, bez terminala (PR #103, deploy `fc9c389e` 12. 10. 2026.):** tenant s
+  `monerium_env = 'sandbox'` na checkoutu ima gumb „Simuliraj SEPA uplatu”, koji zove
+  `POST /api/intents/:sid/monerium-sandbox-transfer`. Rail šalje isti `treasury/fund`
+  poziv s iznosom intenta, IBAN-om tenanta i referencom checkouta. Uživo: intent
+  `x5vb938h5pkv` (1.23 €) bio je `paid`/`settled` već kod prvog polla, nakon 5 s.
+  Zaštite: produkcijski rail 404, intent koji nije `pending` 409, drugi klik unutar 60 s
+  429 (KV lock), greška Moneriuma 502 (lock se oslobodi).
+- Stray resolver daje uplatu **najnovijem** otvorenom intentu istog iznosa i cilja, pa
+  svaki test treba novi intent.
+- PR #100: `http://localhost` `return_url` dopušten i tenantu s `monerium_env = 'sandbox'`
+  (prije samo sbx tenantu), `returnUrlAllowsLoopback` u `intents/api.ts`.
+- PR #101: checkout je nakon SSE `settled` jednom pollao, vidio `state = pending` i ugasio
+  polling, pa povratka u app nije bilo. `isFinal` sada čeka `paid` (ili underpaid/rejected).
+
 ## Otvorene stavke
 
 1. ~~Rail u načinu „direct"~~ i ~~gumb „kopiraj referencu"~~: gotovo, PR #85 (vidi niže).
@@ -148,3 +183,7 @@ Sve kombinacije opisa i mjesta minta, s pripadnim prijelazima: [state-machines.m
 4. Katalog: polje `funding` na kartici (`realtime-presentation`), gumb „Podrži".
 5. ~~Admin: opoziv API ključa~~: gotovo (PR #90). `DELETE /admin/api/tenants/:id/keys/:ref` prima `id` iz
    `GET …/keys` (12 hex) ili puni hash; nejednoznačan id → 409.
+6. Intent-potvrda (`POST /api/intents/:sid/receipt-intent`, ADR 0022) ne prenosi
+   `return_url`, a trgovac koji polla izvorni sid ne vidi uplatu na novi `r1…` sid. Prenijeti
+   `return_url` (checkout doda `mpt_sid` = novi sid) ili sakriti potvrdu za intente stvorene
+   sa `sk_` + `return_url`.

@@ -6,6 +6,7 @@ import { generateSid } from './sid';
 import { isReceiptSid } from '../receipts/sid';
 import { registerReceiptRoutes } from '../receipts/api';
 import { registerSimulateRoute } from '../sandbox/api';
+import { registerMoneriumSandboxFundRoute } from '../monerium/sandboxFund';
 import { isSandboxTenant, touchSandboxTenant } from '../sandbox/db';
 import {
   LIST_DEFAULT_LIMIT,
@@ -25,6 +26,7 @@ import { defaultTenantId } from '../tenants/whitelist';
 import {
   getReferenceStyle,
   getTenantRail,
+  getTenantRailRow,
   intentReference,
   isLegacyTenant,
   multiTenantEnabled,
@@ -91,7 +93,7 @@ export function buildIntentApi(): Hono<{ Bindings: Env }> {
     let returnUrl: string | null = null;
     if (body.return_url !== undefined && body.return_url !== null && body.return_url !== '') {
       if (tenant.keyKind !== 'secret') return c.json({ error: 'return_url_requires_secret_key' }, 400);
-      returnUrl = validateReturnUrl(body.return_url, tenant.sandbox === true);
+      returnUrl = validateReturnUrl(body.return_url, await returnUrlAllowsLoopback(c.env, tenant));
       if (!returnUrl) return c.json({ error: 'invalid_return_url' }, 400);
     }
     // ADR 0024: a sandbox tenant has no rail, no IBAN and no money. Nothing
@@ -383,6 +385,7 @@ export function buildIntentApi(): Hono<{ Bindings: Env }> {
 
   registerReceiptRoutes(api);
   registerSimulateRoute(api);
+  registerMoneriumSandboxFundRoute(api);
 
   return api;
 }
@@ -471,9 +474,22 @@ function parseRange(
 
 const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]']);
 
+/// Whether a tenant may use an http loopback `return_url` (local development).
+/// A self-serve sandbox tenant may, and so may a rail tenant on Monerium's
+/// sandbox: neither moves real money. A production tenant never may.
+export async function returnUrlAllowsLoopback(
+  env: Env,
+  tenant: { tenantId: string; sandbox?: boolean },
+): Promise<boolean> {
+  if (tenant.sandbox === true) return true;
+  const rail = await getTenantRailRow(env, tenant.tenantId);
+  return rail?.monerium_env === 'sandbox';
+}
+
 /// ADR 0024 D6. Absolute, ≤ 2048 chars, no credentials, no fragment; https,
-/// or http on a loopback host for sandbox tenants (local development).
-export function validateReturnUrl(raw: unknown, sandbox: boolean): string | null {
+/// or http on a loopback host when `allowLoopback` (see
+/// `returnUrlAllowsLoopback`).
+export function validateReturnUrl(raw: unknown, allowLoopback: boolean): string | null {
   if (typeof raw !== 'string') return null;
   const s = raw.trim();
   if (!s || s.length > 2048) return null;
@@ -485,7 +501,7 @@ export function validateReturnUrl(raw: unknown, sandbox: boolean): string | null
   }
   if (u.username || u.password || u.hash) return null;
   if (u.protocol === 'https:') return u.toString();
-  if (u.protocol === 'http:' && sandbox && LOOPBACK_HOSTS.has(u.hostname)) return u.toString();
+  if (u.protocol === 'http:' && allowLoopback && LOOPBACK_HOSTS.has(u.hostname)) return u.toString();
   return null;
 }
 

@@ -1,0 +1,9 @@
+<svg width="512" height="512" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
+<!-- airKUNA token: kovanica sa zlatnim rubom i istim K kao logotip. Prozirna pozadina. -->
+<circle cx="16" cy="16" r="15.5" fill="#002F6C"/>
+<circle cx="16" cy="16" r="14" stroke="#C8912A" stroke-width="1.6"/>
+<g transform="translate(16 16) scale(0.8) translate(-15.4 -16)">
+<path d="M8.5 9h4v14h-4z" fill="#FFFFFF"/>
+<path d="M18.5 9h5.5l-7 7 7 7h-5.5l-6-7z" fill="#E3AF35"/>
+</g>
+</svg>
