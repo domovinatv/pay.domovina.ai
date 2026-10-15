@@ -98,7 +98,8 @@ krađu. Smjer: rola na MPT Safe-u ograničena **on-chain** na `EURe.transfer` pr
 projektnih Safe-ova koji su 2/3 vlasnici unaprijed odobrili (bez kapice na iznos).
 Uvjet iz `safe-tx/006` („mali stabilan skup odredišta, samo kampanjski Safeovi") je od
 ovog ADR-a ispunjen, jer `italk` intent smije ciljati samo Safe kampanje. Odluka se
-donosi u zasebnom ADR-u.
+donosi u zasebnom ADR-u. Dogovoreni smjer (16.10.), uključujući zašto Android router sam po
+sebi nije rješenje: [`docs/2026-10-16-router-ogranicen-na-projekte.md`](../2026-10-16-router-ogranicen-na-projekte.md).
 
 ## Provjera nakon deploya
 
