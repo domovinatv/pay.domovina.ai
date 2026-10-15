@@ -27,6 +27,12 @@ safe-tx/
 └── 001-eure-forwarder-role-setup.EXECUTED.json         ← post-execution audit copy (with real EOA + Safe TX hash in companion .md)
 ```
 
+**Retired (ADR 0025, 2026-10-15).** Every tenant now runs in direct mode, so nothing
+forwards from the MPT Safe. `008-retire-router.mjs` revokes `EUReForwarder` from the router
+EOA and disables the Roles module (one 2/3 batch, `008-retire-router.template.json`). After
+it is executed, delete the Workers secret `ROUTER_PRIVATE_KEY`. Batches 001–007 stay as
+history.
+
 ## Standing context (production values)
 
 | Thing | Value |

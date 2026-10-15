@@ -1,6 +1,6 @@
 # ADR 0019 — Forward potpisuje M-of-N kvorum Android uređaja; Cloudflare samo orkestrira i plaća gas
 
-- **Status:** Proposed (2026-10-08)
+- **Status:** Superseded by [0025](0025-mpt-router-umirovljen-svi-tenanti-direct.md) (2026-10-15). Forward se više ne radi (svi tenanti u načinu `direct`), pa nema što potpisivati. Proposed 2026-10-08.
 - **Kontekst:** MPT rail (`backend/`, `backend/safe-tx/`), nova Android aplikacija
 - **Gradi na:** [0004](0004-phase-5c-android-verifier.md) (Android StrongBox P-256
   kvorum, key attestation) · [0016](0016-tenant-payout-whitelist.md) (whitelist) ·

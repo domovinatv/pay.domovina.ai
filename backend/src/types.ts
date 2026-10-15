@@ -87,6 +87,7 @@ export interface Env {
   STRAY_RESOLVER?: string;            // "1" → reference-less payments are matched to an intent by amount + time (src/monerium/strayResolver.ts)
   WATCH_HEARTBEAT_URL?: string;        // secret: dead-man ping after every healthy theft-detector tick (TD-02), e.g. healthchecks.io
   RECONCILE_FORWARDS?: string;         // "1" → the reconcile cron runs the forward path on a processed order with no forward row (SR-05)
+  LEGACY_RAIL_MODE?: string;           // ADR 0025: "direct" → ITalk mints straight into project Safes, router key never loaded; unset = forward
   LEGACY_REQUIRE_MINT_AT?: string;     // "1" → ITalk forwards only orders minted at SAFE_ADDRESS (MT-03), like every tenant rail
   MAX_OPEN_INTENTS_PER_TARGET?: string; // SR-01 cap on open intents per non-trusted destination (default 20); sk_ callers exempt
   /// Durable Object namespace holding one SSE hub per sid (src/intents/stream.ts).

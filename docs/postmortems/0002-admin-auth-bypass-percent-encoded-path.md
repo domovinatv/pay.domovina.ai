@@ -95,6 +95,30 @@ Treat the contents of those endpoints as disclosed.
 Also created by the same IP via the public self-serve sandbox (by design, left as-is):
 `sbx-2d0ee09273`, `sbx-c52b4844cf`, `sbx-245fb0f0b8`.
 
+## How close this came to money
+
+The admin API redacts every rail secret (`redactRail` returns only `has_router_key`,
+`has_client_secret`, …), key lists carry sha256 hashes, and HPB authorizations carry no
+tokens, so no secret left through the reads. But the two writes the attacker *did* make
+were the two halves of a payout redirect:
+
+1. `0x2222…` added to `italk`'s payout whitelist (310);
+2. a **secret** API key issued for `italk` (312).
+
+One more call — an intent on `italk` with target `0x2222…` — and the next payment to that
+sid (or, through the stray resolver, a reference-less payment of the same amount) would
+have passed binding and whitelist, and the router would have forwarded it there. He did
+not make that call: no intent was created with the key (`created_with_key = 0` for every
+`italk` intent in the window), and `monerium_forwards` has no row for either address.
+
+The root problem is not the auth bug but that the Worker held a key able to move EURe:
+`ROUTER_PRIVATE_KEY`, member of an `EUReForwarder` role with no on-chain conditions.
+Whitelist and resolver decide inside the Worker, so they protect against a wrong payer,
+not against whoever controls the Worker. **[ADR 0025](../decisions/0025-mpt-router-umirovljen-svi-tenanti-direct.md)
+retires the router**: every tenant in direct mode, role and Roles module removed from the
+MPT Safe by a 2/3 transaction (`safe-tx/008`), router key deleted. After that a full
+Cloudflare compromise can lie in notifications and read payment data, but cannot move EURe.
+
 ## Follow-up: the guard was too broad (#106, 2026-10-15)
 
 `0e7ceeb` refused **any** admin path whose raw form differed from the decoded one. That
@@ -129,3 +153,5 @@ check: `/%61dmin/api/forwards` → 400, `/admin/api/forwards` → 401.
 - [ ] pipeline.domovina.ai has its own copy of `mount.ts` (`96fef04`): check whether it has
       the same over-broad guard and port #106 if so.
 - [ ] Optional: alert on `admin:unknown` in `tenant_audit_log` and on `admin_encoded_path_rejected`.
+- [ ] ADR 0025: `italk` on direct (this PR), then `safe-tx/008` signed 2/3, then
+      `ROUTER_PRIVATE_KEY` and tenant router keys deleted.

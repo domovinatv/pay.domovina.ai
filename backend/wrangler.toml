@@ -126,6 +126,12 @@ STRAY_RESOLVER = "1"
 # on OpenTimestamps. "0" → no receipt rows are written and nothing is stamped.
 RECEIPTS = "1"
 
+# ADR 0025: ITalk u izravnom načinu. Referenca `gnosis:<Safe projekta> sid:<sid>`,
+# Monerium minta ravno u Safe projekta, router ključ se ne učitava ni ne potpisuje.
+# Uplata sa starom `mpt:` referencom koja sleti u MPT Safe = „dugovano“ (D4),
+# prebacuju je 2/3 vlasnika. "forward" = stari router put (rollback).
+LEGACY_RAIL_MODE = "direct"
+
 # MT-03 (Fable 5.1 r2): ITalk forwards only issue orders minted at SAFE_ADDRESS,
 # as tenant rails always did. Pre-check 2026-10-10: every ITalk issue order
 # since 2026-05-21 minted at the Safe. "0" = old behaviour (rollback switch).
