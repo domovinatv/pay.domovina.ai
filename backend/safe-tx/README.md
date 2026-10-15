@@ -33,6 +33,12 @@ EOA and disables the Roles module (one 2/3 batch, `008-retire-router.template.js
 it is executed, delete the Workers secret `ROUTER_PRIVATE_KEY`. Batches 001–007 stay as
 history.
 
+**ProjectRouter (ADR 0026, prepared 2026-10-16).** `009-project-router-role.mjs` re-enables
+the module with a role that may only `EURe.transfer` to approved project Safes (no cap, no
+value, no delegatecall), and revokes what is left of `EUReForwarder`. Fork-simulate with
+`009-simulate-fork.mjs` before signing. Details: `009-project-router-role.md`. Shared Roles v2
+builder: `lib/roles-v2.mjs` (enums verified against the deployed mastercopy).
+
 ## Standing context (production values)
 
 | Thing | Value |

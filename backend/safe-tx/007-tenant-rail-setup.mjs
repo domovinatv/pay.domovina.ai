@@ -117,7 +117,9 @@ const conditions = [
 if (recipients.length === 1) {
   conditions.push({ parent: 0, paramType: ParameterType.Static, operator: Operator.EqualTo, compValue: pad(recipients[0].toLowerCase(), { size: 32 }) });
 } else {
-  conditions.push({ parent: 0, paramType: ParameterType.Static, operator: Operator.Or, compValue: '0x' });
+  // A logical node's paramType MUST be None (Roles v2 Integrity.sol). Static
+  // here made scopeFunction revert with UnsuitableParameterType(1) — ADR 0026.
+  conditions.push({ parent: 0, paramType: ParameterType.None, operator: Operator.Or, compValue: '0x' });
 }
 conditions.push({
   parent: 0,
