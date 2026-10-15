@@ -297,6 +297,8 @@ praćenje intenta, s opisom `gnosis:0x<safe> sid:<sid>`.
 Zamke:
 - **Revolut** nakon skeniranja QR-a ostavlja Reference prazno. Bez opisa uplata ide
   na zadanu adresu, pa checkout mora nuditi kopiranje reference.
+  Potvrđeno ponovno 15.10. 2026. (svih 5 zadnjih uplata s istog Revolut računa
+  stiglo je s `memo: ""`). Posljedice za izravni način: ADR 0025, §Revolut bez reference.
 - **PBZ** je instant uplatu na EE IBAN (opis netaknut) odbio (11. 10. 2026., ref.
   `20261011001286300522`). Razlog nije naveden. Do sada su sve dolazne uplate na ITalk
   IBAN stigle iz Revoluta (LT), nijedna iz HR banke.
