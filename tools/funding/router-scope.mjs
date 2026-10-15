@@ -32,8 +32,8 @@ import { ROLES_ABI } from '../../backend/safe-tx/lib/roles-v2.mjs';
 /// funding env → 009 env + Safe Transaction Service
 export const ROUTER_ENV = {
   // MultiSendCallOnly: 1.3.0 on Chiado (the only version there), 1.4.1 on Gnosis.
-  sandbox: { chain: 'chiado', txService: 'https://safe-transaction-chiado.safe.global', multiSend: '0x40A2aCCbd92BCA938b02010E17A5b8929b49130D' },
-  prod: { chain: 'gnosis', txService: 'https://safe-transaction-gnosis-chain.safe.global', multiSend: '0x9641d764fc13c8B624c04430C7356C1C7C8102e2' },
+  sandbox: { chain: 'chiado', txService: 'https://api.safe.global/tx-service/chi', multiSend: '0x40A2aCCbd92BCA938b02010E17A5b8929b49130D' },
+  prod: { chain: 'gnosis', txService: 'https://api.safe.global/tx-service/gno', multiSend: '0x9641d764fc13c8B624c04430C7356C1C7C8102e2' },
 };
 
 const MULTISEND_ABI = [{ type: 'function', name: 'multiSend', stateMutability: 'payable', outputs: [],
