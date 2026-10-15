@@ -172,6 +172,23 @@ Test: lokalni Open SaaS (`opensaas-sandbox`, cilj Safe projekta `opensaas-sandbo
 - PR #101: checkout je nakon SSE `settled` jednom pollao, vidio `state = pending` i ugasio
   polling, pa povratka u app nije bilo. `isFinal` sada čeka `paid` (ili underpaid/rejected).
 
+## ProjectRouter (ADR 0026), 16. 10. 2026.
+
+D4 dug (uplata bez reference na glavnom Safeu) rail prosljeđuje sam kroz rolu
+`ProjectRouter`, koja smije samo `EURe.transfer` prema projektnim Safe-ovima koje su 2/3
+vlasnika odobrili. Novi projekt ulazi u rolu kao prijedlog u redu glavnog Safe-a:
+
+```bash
+node funding-init.mjs --env sandbox --project <id>      # korak 6 to radi sam
+node router-scope.mjs --env sandbox --recipient 0x<Safe projekta>   # ili zasebno
+```
+
+`.env.<env>` treba `PROJECT_ROUTER_ROLES`, `PROJECT_ROUTER_FROM_BLOCK` i
+`SAFE_DELEGATE_PRIVATE_KEY` (delegate `0xC322…d34E` za sandbox; vlasnik ga doda u
+app.safe.global → Settings → Setup → Proposers). Prvo postavljanje role:
+`deploy-roles.mjs` (proxy + biblioteke na Chiadu), pa
+`router-scope.mjs --setup --router 0x… --recipient …` i 2/3 potvrda.
+
 ## Otvorene stavke
 
 1. ~~Rail u načinu „direct"~~ i ~~gumb „kopiraj referencu"~~: gotovo, PR #85 (vidi niže).

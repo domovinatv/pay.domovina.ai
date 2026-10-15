@@ -168,9 +168,19 @@ Stari `ROUTER_PRIVATE_KEY` / `ROLE_KEY` (`EUReForwarder`) se ne vraćaju. Ključ
 
 | Korak | Stanje |
 |---|---|
-| 1. ADR | 📝 ovaj PR |
-| 2. `safe-tx/009` | ⏳ |
-| 3. `funding-init` + delegate | ⏳ |
-| 4. Rail | ⏳ |
-| 5. Chiado E2E | ⏳ |
+| 1. ADR | 📝 PR `feat/adr0026-project-router` |
+| 2. `safe-tx/009` | ✅ generator + `009-simulate-fork.mjs`; Gnosis fork 13/13, Chiado fork 11/11 |
+| 3. `funding-init` + delegate | ✅ `router-scope.mjs` (korak 6), `--setup` predlaže cijeli 009 kao MultiSend; `deploy-roles.mjs` |
+| 4. Rail | ✅ `router_claim`, `routeOwed`, cron `routeAllOwedForwards`, 16 testova, compat-check prolazi |
+| 5. Chiado E2E | 🟡 Roles proxy `0x8E92…1532` i biblioteke Packer/Integrity deployani (vidi dolje); čeka delegate, router ključ tenanta i 2/3 potvrdu |
 | 6. Produkcija | ⏳ |
+
+### Chiado: Roles v2 bez biblioteka (16. 10. 2026.)
+
+Mastercopy `0x9646…D337` na Chiadu postoji, ali njegove vanjske biblioteke **Packer**
+(`0x61C5…8a8C`) i **Integrity** (`0x6a6A…1049`) nisu bile deployane, pa je svaki
+`scopeFunction` revertao („call to non-contract address"). Na Gnosisu su obje deployane
+kroz singleton factory `0xce00…cf9f` (CREATE2). `tools/funding/deploy-roles.mjs` ponovi
+točan calldata iz Gnosis tx-a i provjeri da je hash koda isti kao na Gnosisu:
+Packer tx `0xd6ca…b508`, Integrity tx `0xeb7e…d5a`. Roles proxy za glavni Safe
+`italk-sandbox`: `0x8E926f20eAe8bDCED7Bb7c14F006aEC4975E1532` (blok 23538972).

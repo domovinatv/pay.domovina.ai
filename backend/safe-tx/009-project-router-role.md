@@ -58,7 +58,11 @@ xDAI vrijednost, DelegateCall, `approve`, drugi ugovor, ne-član i stari router 
 `EUReForwarder` revertaju. Bez prolaznog transfera nema potpisa.
 
 Prvi probni rad 16. 10. 2026. (blok 48776503, dva primatelja, router `0x…dEaD`): svih 13
-provjera prolazi.
+provjera prolazi. Chiado (Karta + Stranke): 11/11, nakon što su na Chiado deployane
+biblioteke Packer i Integrity (`tools/funding/deploy-roles.mjs`, ADR 0026 §Chiado). Bez
+njih `scopeFunction` na Chiadu revertira za svakoga.
+
+Simulator forka izvor zadan s `--rpc` (npr. drugi anvil s pripremljenim stanjem).
 
 ## Zašto je `Or` čvor `None`
 
