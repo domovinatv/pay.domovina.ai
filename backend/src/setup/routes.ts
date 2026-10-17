@@ -105,6 +105,13 @@ export function setupConnectSrc(ctx: Pick<SetupContext, 'rpcUrl' | 'chain'>): st
   return [...hosts].join(' ');
 }
 
+/// Content hash in the script URL: every deploy busts the 5-minute cache.
+const CLIENT_VERSION = (() => {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < SETUP_CLIENT_JS.length; i++) h = Math.imul(h ^ SETUP_CLIENT_JS.charCodeAt(i), 0x01000193);
+  return (h >>> 0).toString(36);
+})();
+
 const esc = (s: string) =>
   s.replace(/[&<>"']/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[ch]!);
 
@@ -145,7 +152,7 @@ svojim novčanikom (ADR 0027); server ovdje ništa ne potpisuje.</p>
 <noscript><p class="bad">Stranica treba JavaScript.</p></noscript>
 </main>
 <script type="application/json" id="setup-config">${jsonForScript(ctx)}</script>
-<script src="/admin/setup/client.js" defer></script>
+<script src="/admin/setup/client.js?v=${CLIENT_VERSION}" defer></script>
 </body>
 </html>`;
 }
