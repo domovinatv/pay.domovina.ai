@@ -62,6 +62,48 @@ lancu (bez kampanje) uklanja se „Ukloni s lanca" (samo u memoriji stranice). B
 bez primatelja; tada se opoziva router). D1 je samo željeno stanje: bez 2/3 potpisa router
 ne smije ništa novo.
 
+### Prvi novi projekt kroz stranicu: domovina.ai (17. 10. 2026.)
+
+1. `node tools/funding/funding-init.mjs --env sandbox --project domovinatv-domovina-ai --title "domovina.ai"`:
+   Safe `0xFbAf41F513cDbF0438b2E339C25A8Fdc949f9722` (2/3, deploy platio deployer `0x9915…4c65`
+   iz `.env.sandbox`), Monerium `POST /addresses` → 201 linked. Korak 6 (delegate) pada s 422, što je
+   očekivano i ne zaustavlja skriptu.
+2. Setup stranica → „Dodaj projekt" → plan `scopeFunction(… to ∈ 3 projekata)`, simulacija ~157.837 gas.
+3. 2/3 u MetaMasku, izvršio `0x788b…d1E2`: [`0x8faa…fe18`](https://gnosis-chiado.blockscout.com/tx/0x8faa6e8251dc9ddf5040e8f3824c160d93be9bc31ccb4c60e98c8469e175fe18)
+   (blok 23568613, 242.198 gas). Provjera role ✓ za sva tri projekta, `0x…dEaD` pada.
+
+Ključevi koji plaćaju gas na Chiadu (lako ih je pomiješati):
+
+| Adresa | Uloga |
+|---|---|
+| `0x9915…4c65` | `DEPLOYER_PRIVATE_KEY` iz `tools/funding/.env.sandbox`: deploy Safe-ova projekata |
+| `0xD922…6759` | ProjectRouter EOA `italk-sandbox`: `execTransactionWithRole` prema projektima |
+| `0x788b…d1E2` | relayer walleta (`RELAYER_PRIVATE_KEY`, CF Pages); ovdje samo kao MetaMask račun koji izvršava |
+| `0xd612…54CB` | umirovljeni MPT router (ADR 0025), na Gnosisu ~0,599 xDAI za počistiti |
+
+Zamke iz istog dana:
+
+- `run()` iscrta stranicu prije akcije, pa forma koja čita polja unutar akcije šalje prazno (#118).
+- Nakon reloada dApp nije znao za već odobreni MetaMask račun i gumb je bio disabled bez razloga.
+  Sada `eth_accounts` pri učitavanju i tekst razloga uz gumb (#119).
+- Blockscout javni API vraća `429 Too many requests`. Blok deploya modifiera sada se traži
+  binarnom pretragom `eth_getCode` po povijesti (24 RPC poziva) i pamti u localStorageu (#120).
+- `client.js` ima `max-age=300`, pa je preglednik nakon deploya izvršavao stari kod. URL sada nosi
+  hash sadržaja (#121).
+
+### Dizajn sljedećeg koraka: „Dodaj projekt" s izradom Safe-a i Monerium linkom
+
+`funding-init.mjs` danas jedini izrađuje Safe projekta i veže ga u Monerium. Podjela kad ide u dApp:
+
+- **Deploy Safe-a (preglednik):** permissionless, adresa je CREATE2 iz vlasnika, praga i salta
+  `project:<id>`, a Safe se rađa s potpisanom Monerium porukom (`--pre-sign-link`). Plaća MetaMask
+  ili kasnije MPT gas ključ. Vlasnici i prag biraju se na stranici (default današnja trojka 2/3).
+- **Monerium link (backend):** treba client secret, pa ide kroz admin endpoint (npr.
+  `POST /admin/api/tenants/:id/projects`). Provjeri kod i ERC-1271 na lancu, pozove `POST /addresses`
+  i `PATCH …/config` (ime), upiše kampanju i whitelistu. Prije toga provjeriti ima li worker
+  Monerium vjerodajnice po tenantu (sandbox i prod).
+- `funding-init.mjs` ostaje CLI nad istom bibliotekom (kao `009` nad `project-router-batch.mjs`).
+
 ## Sljedeće
 
 - Ostali koraci kao isti plan/potpis tok: deploy Roles modifiera (`deploy-roles.mjs`), gas za router,
