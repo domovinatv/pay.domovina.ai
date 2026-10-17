@@ -105,9 +105,11 @@ const S: {
   error: string | null;
   /// On-chain-only projects (no campaign in D1) marked for removal on this page.
   removeLocal: Set<string>;
+  /// The add-project form survives re-renders (run() redraws before it acts).
+  np: { id: string; label: string; addr: string } | null;
 } = {
   signer: null, balance: null, owners: [], threshold: 0n, nonce: 0n, version: '', fromBlock: null,
-  router: ctx.router ?? '', plan: null, tx: null, sim: null, pending: null, checks: [], log: [], busy: false, error: null, removeLocal: new Set(),
+  router: ctx.router ?? '', plan: null, tx: null, sim: null, pending: null, checks: [], log: [], busy: false, error: null, removeLocal: new Set(), np: null,
 };
 
 const e = (s: unknown) => String(s ?? '').replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
@@ -333,6 +335,7 @@ async function addProject(campaignId: string, label: string, address: string): P
   if (!isAddress(address)) throw new Error('adresa projekta nije EVM adresa');
   if (getAddress(address) === getAddress(ctx.safe)) throw new Error('glavni Safe ne može biti projekt');
   await campaignsApi('POST', '', { campaign_id: campaignId, safe_address: address, label });
+  S.np = null;
   S.removeLocal.delete(getAddress(address));
   await reloadContext();
   say(`projekt ${campaignId} upisan; plan ga dodaje u rolu`);
@@ -483,11 +486,11 @@ ${ctx.chain === 'chiado' ? `<details><summary class="muted">Lokalni ključ (samo
 
 <h2>Projekti (primatelji role ${ROLE})</h2>
 <table><tbody>${recRows || '<tr><td class="muted">Tenant nema kampanja.</td></tr>'}</tbody></table>
-<details class="box"><summary>Dodaj projekt</summary>
+<details class="box" ${S.np ? 'open' : ''}><summary>Dodaj projekt</summary>
 <p class="muted">Upis u D1 (kampanja + payout whitelista). Router ga smije plaćati tek kad 2/3 vlasnika potpiše novi plan ispod.</p>
-<input id="npId" class="mono" placeholder="campaign_id (npr. domovinatv-novi-projekt)"/>
-<input id="npLabel" placeholder="naziv projekta"/>
-<input id="npAddr" class="mono" placeholder="0x… adresa (Safe) projekta"/>
+<input id="npId" class="mono" placeholder="campaign_id (npr. domovinatv-novi-projekt)" value="${e(S.np?.id)}"/>
+<input id="npLabel" placeholder="naziv projekta" value="${e(S.np?.label)}"/>
+<input id="npAddr" class="mono" placeholder="0x… adresa (Safe) projekta" value="${e(S.np?.addr)}"/>
 <p><button id="npBtn" ${dis}>Dodaj projekt</button></p></details>
 
 <h2>Plan</h2>
@@ -517,10 +520,12 @@ ${S.log.length ? `<div class="log">${e(S.log.join('\n'))}</div>` : ''}`;
   on('confirm', () => run('Potvrda', confirm));
   on('exec', () => run('Izvršenje', execute));
   on('reload', () => run('Osvježavanje', async () => {}));
-  on('npBtn', () => run('Novi projekt', () => {
+  on('npBtn', () => {
     const v = (id: string) => (document.getElementById(id) as HTMLInputElement).value.trim();
-    return addProject(v('npId'), v('npLabel'), v('npAddr'));
-  }));
+    const np = { id: v('npId'), label: v('npLabel'), addr: v('npAddr') };
+    S.np = np;
+    void run('Novi projekt', () => addProject(np.id, np.label, np.addr));
+  });
   document.querySelectorAll<HTMLButtonElement>('button.rmCamp').forEach((b) => b.addEventListener('click', () => {
     const cid = b.dataset.cid!;
     if (window.confirm(`Opozvati kampanju ${cid}? Plan će je ukloniti iz role; na lancu vrijedi tek nakon 2/3 potpisa.`)) void run('Uklanjanje', () => removeCampaign(cid));
