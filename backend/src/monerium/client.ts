@@ -34,6 +34,14 @@ export interface MoneriumIban {
   [k: string]: unknown;
 }
 
+export interface MoneriumAddress {
+  address: string;
+  profile?: string;
+  chains?: string[];
+  state?: string;
+  [k: string]: unknown;
+}
+
 export interface MoneriumWebhookSubscription {
   id: string;
   url?: string;
@@ -162,6 +170,20 @@ export class MoneriumClient {
     );
     if (Array.isArray(res)) return res;
     return res.ibans ?? [];
+  }
+
+  /// Addresses linked to this app's profiles (`GET /addresses` → `{ addresses: [...] }`).
+  async listAddresses(): Promise<MoneriumAddress[]> {
+    const res = await this.call<{ addresses?: MoneriumAddress[] } | MoneriumAddress[]>('/addresses');
+    if (Array.isArray(res)) return res;
+    return res.addresses ?? [];
+  }
+
+  /// Links an address to a profile. A Safe that signed the message on chain
+  /// (SignMessageLib, ADR 0027) sends signature "0x": Monerium checks it with
+  /// ERC-1271 isValidSignature.
+  async linkAddress(args: { profile: string; address: string; chain: string; message: string; signature: string }): Promise<MoneriumAddress> {
+    return this.call<MoneriumAddress>('/addresses', { method: 'POST', body: JSON.stringify(args) });
   }
 
   /// Sandbox only: a simulated SEPA transfer into one of this profile's

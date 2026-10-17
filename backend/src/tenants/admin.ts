@@ -3,8 +3,6 @@ import type { Hono } from 'hono';
 import type { Env } from '../types';
 import { actorOf } from '../admin/auth/mount';
 import {
-  addCampaign,
-  getCampaign,
   addPayoutAddress,
   getTenant,
   hashApiKey,
@@ -27,6 +25,7 @@ import { trySendAlert } from '../alerts';
 import { renderWhitelistPage } from '../admin/views';
 import { mountRailAdmin } from './railAdmin';
 import { mountSetupPages } from '../setup/routes';
+import { registerCampaign } from './campaigns';
 
 /// Admin surface for the tenant payout whitelist. Mounted under `/admin/*`,
 /// which the admin session middleware (../admin/auth/mount.ts) already gates —
@@ -36,7 +35,6 @@ import { mountSetupPages } from '../setup/routes';
 /// with the actor taken from the admin session e-mail (actorOf).
 
 const ADDR_RE = /^0x[0-9a-fA-F]{40}$/;
-const ID_RE = /^[A-Za-z0-9_-]{2,64}$/;
 
 export function mountTenantAdmin(app: Hono<{ Bindings: Env }>): void {
   mountRailAdmin(app);
@@ -133,34 +131,15 @@ export function mountTenantAdmin(app: Hono<{ Bindings: Env }>): void {
     } catch {
       return c.json({ error: 'invalid_json' }, 400);
     }
-    const campaignId = (body.campaign_id ?? '').trim();
-    const safeAddress = (body.safe_address ?? '').trim();
-    if (!ID_RE.test(campaignId)) return c.json({ error: 'invalid_campaign_id' }, 400);
-    if (!ADDR_RE.test(safeAddress)) return c.json({ error: 'invalid_safe_address' }, 400);
-    // BW-24: a campaign id belongs to one tenant for good.
-    const existing = await getCampaign(c.env, campaignId);
-    if (existing && existing.tenant_id !== tenantId) {
-      return c.json({ error: 'campaign_owned_by_other_tenant' }, 409);
-    }
-    const actor = actorOf(c);
-    const label = (body.label ?? '').trim() || null;
-    await addCampaign(c.env, { tenantId, campaignId, safeAddress, label, actor });
-    // A campaign Safe is a payout destination — register it on the whitelist
-    // too, so the `cmp:` binding and the whitelist can never disagree.
-    await addPayoutAddress(c.env, {
+    const r = await registerCampaign(c.env, {
       tenantId,
-      address: safeAddress,
-      label: `campaign ${campaignId}${label ? ` — ${label}` : ''}`,
-      actor,
+      campaignId: (body.campaign_id ?? '').trim(),
+      safeAddress: (body.safe_address ?? '').trim(),
+      label: (body.label ?? '').trim() || null,
+      actor: actorOf(c),
     });
-    await writeAudit(c.env, {
-      tenantId,
-      action: 'campaign.add',
-      address: safeAddress.toLowerCase(),
-      actor,
-      detail: JSON.stringify({ campaign_id: campaignId, label }),
-    });
-    return c.json({ ok: true, campaign_id: campaignId, safe_address: safeAddress.toLowerCase() });
+    if (!r.ok) return c.json({ error: r.error }, r.error === 'campaign_owned_by_other_tenant' ? 409 : 400);
+    return c.json({ ok: true, campaign_id: r.campaignId, safe_address: r.safeAddress });
   });
 
   app.delete('/admin/api/tenants/:id/campaigns/:campaignId', async (c) => {

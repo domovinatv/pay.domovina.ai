@@ -10,6 +10,10 @@ import {
   parseChain,
 } from '../tenants/rail';
 import { SETUP_CLIENT_JS } from './client.generated';
+import { actorOf } from '../admin/auth/mount';
+import { addProjectForTenant, deployerAddress, type AddProjectInput } from './projects';
+// @ts-expect-error — plain .mjs shared with the setup dApp and tools/funding
+import * as ps from '../../safe-tx/lib/project-safe.mjs';
 
 /// Tenant on-chain setup dApp (ADR 0027). The page plans the ProjectRouter
 /// role (ADR 0026) from the chain, and the owners propose, sign and execute it
@@ -34,6 +38,13 @@ export interface SetupContext {
   /// Revoked campaigns whose Safe no active campaign uses: the plan takes
   /// them out of the role, so D1 stays the desired state in both directions.
   revoked?: { address: string; label: string | null; campaignId: string }[];
+  /// "Dodaj projekt" (ADR 0027): the Worker's gas key for project Safe
+  /// deploys on this chain (null = the page deploys from MetaMask), the Safe
+  /// version projects get, and the default owners/threshold.
+  deployer?: string | null;
+  safeVersion?: string;
+  defaultOwners?: string[];
+  defaultThreshold?: number;
 }
 
 const CHAIN_ID = { gnosis: 100, chiado: 10200 } as const;
@@ -70,6 +81,7 @@ export async function loadSetupContext(env: Env, tenantId: string): Promise<Setu
       fromBlock: LEGACY_FROM_BLOCK,
       recipients,
       revoked,
+      ...projectDefaults(env, 'gnosis'),
     };
   }
   const row = await getTenantRailRow(env, tenantId);
@@ -90,6 +102,16 @@ export async function loadSetupContext(env: Env, tenantId: string): Promise<Setu
     fromBlock: null,
     recipients,
     revoked,
+    ...projectDefaults(env, chain),
+  };
+}
+
+function projectDefaults(env: Env, chain: 'gnosis' | 'chiado') {
+  return {
+    deployer: deployerAddress(env, chain),
+    safeVersion: ps.SAFE_VERSION[chain] as string,
+    defaultOwners: ps.DEFAULT_OWNERS as string[],
+    defaultThreshold: ps.DEFAULT_THRESHOLD as number,
   };
 }
 
@@ -128,7 +150,7 @@ a{color:var(--navy)}.mono{font-family:ui-monospace,Menlo,monospace;font-size:.85
 table{border-collapse:collapse;width:100%}td,th{border-bottom:1px solid var(--line);padding:.35rem .4rem;text-align:left;vertical-align:top}
 th{font-weight:600;width:30%}button{font:inherit;padding:.45rem .9rem;border-radius:6px;border:1px solid var(--navy);background:var(--navy);color:#fff;cursor:pointer;margin:.2rem .3rem .2rem 0}
 button.sec{background:transparent;color:var(--navy)}button:disabled{opacity:.45;cursor:default}
-input{font:inherit;padding:.4rem;border:1px solid var(--line);border-radius:6px;background:var(--bg);color:var(--fg);width:100%;max-width:560px}
+input,textarea{font:inherit;padding:.4rem;border:1px solid var(--line);border-radius:6px;background:var(--bg);color:var(--fg);width:100%;max-width:560px}
 .ok{color:var(--ok)}.bad{color:var(--red)}.box{border:1px solid var(--line);border-radius:8px;padding:.8rem 1rem;margin:.6rem 0}
 ol.steps li{margin:.3rem 0}.log{white-space:pre-wrap;font-family:ui-monospace,Menlo,monospace;font-size:.8rem;color:var(--muted);max-height:240px;overflow:auto}
 `;
@@ -176,5 +198,18 @@ export function mountSetupPages(app: Hono<{ Bindings: Env }>): void {
     const ctx = await loadSetupContext(c.env, c.req.param('id'));
     if ('error' in ctx) return c.json(ctx, 404);
     return c.json(ctx);
+  });
+
+  app.post('/admin/api/tenants/:id/projects', async (c) => {
+    const tenantId = c.req.param('id');
+    if (!(await getTenant(c.env, tenantId))) return c.json({ error: 'tenant_not_found' }, 404);
+    let input: AddProjectInput;
+    try {
+      input = await c.req.json();
+    } catch {
+      return c.json({ error: 'invalid_json' }, 400);
+    }
+    const r = await addProjectForTenant(c.env, tenantId, input, actorOf(c));
+    return c.json(r.body, r.status);
   });
 }

@@ -45,6 +45,7 @@ import {
   safeTxTypedData,
   simulateSafeTx,
 } from '../../../safe-tx/lib/safe-tx.mjs';
+import * as ps from '../../../safe-tx/lib/project-safe.mjs';
 
 interface Ctx {
   tenantId: string;
@@ -61,6 +62,29 @@ interface Ctx {
   fromBlock: string | null;
   recipients: { address: string; label: string | null; campaignId: string }[];
   revoked?: { address: string; label: string | null; campaignId: string }[];
+  deployer?: string | null;
+  safeVersion?: string;
+  defaultOwners?: string[];
+  defaultThreshold?: number;
+}
+
+/// "Dodaj projekt" form. mode 'new' = a project Safe made here (CREATE2,
+/// born linked to Monerium); 'existing' = a Safe that already exists.
+interface NewProject {
+  mode: 'new' | 'existing';
+  id: string;
+  label: string;
+  addr: string;
+  owners: string;
+  threshold: string;
+}
+interface ProjectDone {
+  campaignId: string;
+  safe: string;
+  deployTx: string | null;
+  deployer: string | null;
+  monerium: { state: string; already: boolean };
+  name: { ui: string; snippet: string };
 }
 
 interface SafeTx { to: Address; value: bigint; data: Hex; operation: number }
@@ -106,10 +130,13 @@ const S: {
   /// On-chain-only projects (no campaign in D1) marked for removal on this page.
   removeLocal: Set<string>;
   /// The add-project form survives re-renders (run() redraws before it acts).
-  np: { id: string; label: string; addr: string } | null;
+  np: NewProject | null;
+  /// Planned address of the form's new Safe, and whether it has code yet.
+  npPlan: { address: Address; deployed: boolean } | null;
+  npDone: ProjectDone | null;
 } = {
   signer: null, balance: null, owners: [], threshold: 0n, nonce: 0n, version: '', fromBlock: null,
-  router: ctx.router ?? '', plan: null, tx: null, sim: null, pending: null, checks: [], log: [], busy: false, error: null, removeLocal: new Set(), np: null,
+  router: ctx.router ?? '', plan: null, tx: null, sim: null, pending: null, checks: [], log: [], busy: false, error: null, removeLocal: new Set(), np: null, npPlan: null, npDone: null,
 };
 
 const e = (s: unknown) => String(s ?? '').replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
@@ -358,7 +385,7 @@ async function campaignsApi(method: 'POST' | 'DELETE', path: string, body?: unkn
   if (!r.ok) throw new Error(j.error ?? `HTTP ${r.status}`);
 }
 
-async function addProject(campaignId: string, label: string, address: string): Promise<void> {
+async function addExisting(campaignId: string, label: string, address: string): Promise<void> {
   if (!isAddress(address)) throw new Error('adresa projekta nije EVM adresa');
   if (getAddress(address) === getAddress(ctx.safe)) throw new Error('glavni Safe ne može biti projekt');
   await campaignsApi('POST', '', { campaign_id: campaignId, safe_address: address, label });
@@ -366,6 +393,66 @@ async function addProject(campaignId: string, label: string, address: string): P
   S.removeLocal.delete(getAddress(address));
   await reloadContext();
   say(`projekt ${campaignId} upisan; plan ga dodaje u rolu`);
+}
+
+const npOwners = (np: NewProject) => np.owners.split(/[\s,;]+/).filter(Boolean);
+
+/// Same CREATE2 plan as the Worker (safe-tx/lib/project-safe.mjs).
+async function planNewSafe(np: NewProject) {
+  if (!/^[A-Za-z0-9_-]{2,64}$/.test(np.id)) throw new Error('campaign_id: slova, brojke, - i _, 2–64 znaka');
+  const version = ctx.safeVersion ?? (ctx.chain === 'chiado' ? '1.3.0' : '1.5.0');
+  const plan = ps.projectSafePlan({
+    version, owners: npOwners(np), threshold: Number(np.threshold), saltLabel: ps.projectSaltLabel(np.id),
+    creationCode: await ps.readProxyCreationCode(pub, version),
+  });
+  S.npPlan = { address: plan.address, deployed: await ps.hasCode(pub, plan.address) };
+  return plan;
+}
+
+async function projectsApi(body: unknown): Promise<{ ok: boolean; status: number; j: Record<string, unknown> }> {
+  const r = await fetch(`/admin/api/tenants/${encodeURIComponent(ctx.tenantId)}/projects`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+  });
+  return { ok: r.ok, status: r.status, j: (await r.json().catch(() => ({}))) as Record<string, unknown> };
+}
+
+/// One flow: plan → deploy (Worker key, or the connected wallet when the
+/// Worker has none) → the Worker checks code, owners and ERC-1271, links the
+/// Safe in the tenant's Monerium account and writes campaign + whitelist.
+async function addNewProject(np: NewProject): Promise<void> {
+  const plan = await planNewSafe(np);
+  const body = { campaign_id: np.id, label: np.label, owners: npOwners(np), threshold: Number(np.threshold) };
+  if (!S.npPlan!.deployed && !ctx.deployer) {
+    const s = S.signer;
+    if (!s) throw new Error('Worker nema deployer ključ za ovaj lanac: spoji MetaMask (plaća gas deploya)');
+    if (s.kind === 'metamask') await ensureChain(s.wallet);
+    say(`deployam Safe ${plan.address} iz ${short(s.address)}…`);
+    const account = s.kind === 'local' ? s.wallet.account! : s.address;
+    const { request } = await pub.simulateContract({ account, address: plan.factory, abi: ps.FACTORY_ABI, functionName: 'createProxyWithNonce', args: plan.args });
+    const hash = await s.wallet.writeContract({ ...request, account, chain } as never);
+    const rc = await pub.waitForTransactionReceipt({ hash });
+    if (rc.status !== 'success') throw new Error(`deploy nije uspio: ${hash}`);
+    say(`Safe deployan: ${hash}`);
+  } else if (!S.npPlan!.deployed) {
+    say(`Worker deploya Safe ${plan.address} (gas: ${short(ctx.deployer!)})…`);
+  }
+  const r = await projectsApi({ ...body, deploy: !!ctx.deployer });
+  if (!r.ok) {
+    const detail = r.j.detail ? `: ${String(r.j.detail)}` : '';
+    throw new Error(`${String(r.j.error ?? `HTTP ${r.status}`)}${detail}`);
+  }
+  if (String(r.j.safe_address).toLowerCase() !== plan.address.toLowerCase()) throw new Error('Worker je izračunao drugu adresu Safe-a — prekid');
+  S.npDone = {
+    campaignId: np.id,
+    safe: getAddress(String(r.j.safe_address)),
+    deployTx: (r.j.deploy_tx as string | null) ?? null,
+    deployer: (r.j.deployer as string | null) ?? null,
+    monerium: r.j.monerium as ProjectDone['monerium'],
+    name: r.j.monerium_name as ProjectDone['name'],
+  };
+  S.np = null; S.npPlan = null;
+  await reloadContext();
+  say(`projekt ${np.id}: Safe ${S.npDone.safe}, Monerium ${S.npDone.monerium.already ? 'već povezan' : S.npDone.monerium.state}; plan ga dodaje u rolu`);
 }
 
 async function removeCampaign(campaignId: string): Promise<void> {
@@ -463,6 +550,47 @@ function describeCall(t: { to: string; data: Hex; _label: string }): string {
   return t._label;
 }
 
+function npDefaults(): NewProject {
+  return { mode: 'new', id: '', label: '', addr: '', owners: (ctx.defaultOwners ?? []).join('\n'), threshold: String(ctx.defaultThreshold ?? 2) };
+}
+
+function renderNewProject(dis: string): string {
+  const np = S.np ?? npDefaults();
+  const d = S.npDone;
+  const done = d ? `<div class="box"><p class="ok">Projekt ${e(d.campaignId)} dodan: ${addrLink(d.safe)}</p>
+<p class="muted">${d.deployTx ? `Deploy ${e(short(d.deployTx))} (gas: ${e(d.deployer ? short(d.deployer) : 'MetaMask')}). ` : ''}Monerium: ${d.monerium.already ? 'već povezan' : e(d.monerium.state)}. Router ga smije plaćati tek kad 2/3 vlasnika potpiše plan ispod.</p>
+<p>Ime adrese u Moneriumu (API ga ne dopušta, treba web sesija): otvori <a href="${e(d.name.ui)}" target="_blank" rel="noopener">${e(d.name.ui)}</a>, prijavi se i zalijepi u konzolu:</p>
+<input class="mono" readonly value="${e(d.name.snippet)}"/></div>` : '';
+  const radio = (m: NewProject['mode'], t: string) => `<label><input type="radio" name="npMode" value="${m}" ${np.mode === m ? 'checked' : ''} style="width:auto"/> ${t}</label> `;
+  const common = `<input id="npId" class="mono" placeholder="campaign_id (npr. domovinatv-novi-projekt)" value="${e(np.id)}"/>
+<input id="npLabel" placeholder="naziv projekta" value="${e(np.label)}"/>`;
+  if (np.mode === 'existing') {
+    return `${done}<p>${radio('new', 'Novi Safe')}${radio('existing', 'Postojeći Safe')}</p>
+<p class="muted">Upis u D1 (kampanja + payout whitelista) za Safe koji već postoji. Monerium link radiš sam.</p>
+${common}
+<input id="npAddr" class="mono" placeholder="0x… adresa (Safe) projekta" value="${e(np.addr)}"/>
+<p><button id="npBtn" ${dis}>Dodaj projekt</button></p>`;
+  }
+  const gas = ctx.deployer ? `Deploy plaća Worker (${addrLink(ctx.deployer)}).` : 'Worker nema deployer ključ za ovaj lanac: deploy plaća spojeni MetaMask.';
+  const plan = S.npPlan ? `<p>Adresa: ${addrLink(S.npPlan.address)} <span class="muted">${S.npPlan.deployed ? 'već deployan' : 'još nije deployan'}</span></p>` : '';
+  return `${done}<p>${radio('new', 'Novi Safe')}${radio('existing', 'Postojeći Safe')}</p>
+<p class="muted">Safe projekta (salt <span class="mono">project:&lt;campaign_id&gt;</span>, Safe ${e(ctx.safeVersion ?? '')}) rodi se s potpisanom Monerium porukom.
+Worker zatim provjeri kod, vlasnike i ERC-1271, poveže adresu u Monerium račun tenanta i upiše kampanju + whitelistu. ${gas}</p>
+${common}
+<label class="muted">Vlasnici (jedna adresa po retku)</label>
+<textarea id="npOwners" class="mono" rows="3">${e(np.owners)}</textarea>
+<label class="muted">Prag</label> <input id="npThreshold" value="${e(np.threshold)}" style="width:5em"/>
+${plan}
+<p><button id="npPlanBtn" class="sec" ${dis}>Izračunaj adresu</button> <button id="npBtn" ${dis}>Dodaj projekt</button></p>`;
+}
+
+function readNp(): NewProject {
+  const v = (id: string) => (document.getElementById(id) as HTMLInputElement | HTMLTextAreaElement | null)?.value.trim() ?? '';
+  const mode = (document.querySelector<HTMLInputElement>('input[name="npMode"]:checked')?.value ?? 'new') as NewProject['mode'];
+  const prev = S.np ?? npDefaults();
+  return { mode, id: v('npId'), label: v('npLabel'), addr: v('npAddr') || prev.addr, owners: v('npOwners') || prev.owners, threshold: v('npThreshold') || prev.threshold };
+}
+
 function render(): void {
   const s = S.signer;
   const owner = isOwner(s?.address);
@@ -513,12 +641,8 @@ ${ctx.chain === 'chiado' ? `<details><summary class="muted">Lokalni ključ (samo
 
 <h2>Projekti (primatelji role ${ROLE})</h2>
 <table><tbody>${recRows || '<tr><td class="muted">Tenant nema kampanja.</td></tr>'}</tbody></table>
-<details class="box" ${S.np ? 'open' : ''}><summary>Dodaj projekt</summary>
-<p class="muted">Upis u D1 (kampanja + payout whitelista). Router ga smije plaćati tek kad 2/3 vlasnika potpiše novi plan ispod.</p>
-<input id="npId" class="mono" placeholder="campaign_id (npr. domovinatv-novi-projekt)" value="${e(S.np?.id)}"/>
-<input id="npLabel" placeholder="naziv projekta" value="${e(S.np?.label)}"/>
-<input id="npAddr" class="mono" placeholder="0x… adresa (Safe) projekta" value="${e(S.np?.addr)}"/>
-<p><button id="npBtn" ${dis}>Dodaj projekt</button></p></details>
+<details class="box" ${S.np || S.npDone ? 'open' : ''}><summary>Dodaj projekt</summary>
+${renderNewProject(dis)}</details>
 
 <h2>Plan</h2>
 ${!S.plan ? '<p class="muted">Čitam lanac…</p>' : S.plan.txs.length === 0 ? '<p class="ok">Lanac je usklađen: nema koraka.</p>' : `
@@ -548,11 +672,20 @@ ${S.log.length ? `<div class="log">${e(S.log.join('\n'))}</div>` : ''}`;
   on('confirm', () => run('Potvrda', confirm));
   on('exec', () => run('Izvršenje', execute));
   on('reload', () => run('Osvježavanje', async () => {}));
-  on('npBtn', () => {
-    const v = (id: string) => (document.getElementById(id) as HTMLInputElement).value.trim();
-    const np = { id: v('npId'), label: v('npLabel'), addr: v('npAddr') };
+  document.querySelectorAll<HTMLInputElement>('input[name="npMode"]').forEach((r) => r.addEventListener('change', () => {
+    S.np = { ...readNp(), mode: r.value as NewProject['mode'] };
+    S.npPlan = null;
+    render();
+  }));
+  on('npPlanBtn', () => {
+    const np = readNp();
     S.np = np;
-    void run('Novi projekt', () => addProject(np.id, np.label, np.addr));
+    void run('Adresa', async () => { await planNewSafe(np); });
+  });
+  on('npBtn', () => {
+    const np = readNp();
+    S.np = np; S.npDone = null;
+    void run('Novi projekt', () => (np.mode === 'existing' ? addExisting(np.id, np.label, np.addr) : addNewProject(np)));
   });
   document.querySelectorAll<HTMLButtonElement>('button.rmCamp').forEach((b) => b.addEventListener('click', () => {
     const cid = b.dataset.cid!;

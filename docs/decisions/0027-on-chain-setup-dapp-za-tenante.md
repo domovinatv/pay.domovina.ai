@@ -104,10 +104,33 @@ Zamke iz istog dana:
   Monerium vjerodajnice po tenantu (sandbox i prod).
 - `funding-init.mjs` ostaje CLI nad istom bibliotekom (kao `009` nad `project-router-batch.mjs`).
 
+### „Dodaj projekt" s izradom Safe-a i Monerium linkom (izgrađeno 17. 10. 2026.)
+
+Jedan tok na setup stranici, `POST /admin/api/tenants/:id/projects` (`src/setup/projects.ts`):
+
+1. Plan Safe-a iz vlasnika, praga i salta `project:<campaign_id>` (`safe-tx/lib/project-safe.mjs`,
+   ista biblioteka u dAppu, workeru i `tools/funding`). Safe se rađa s potpisanom Monerium porukom
+   (SignMessageLib u `setup()`); 1.5.0 na Gnosisu ima SignMessageLib `0x4FfeF822…b5aa` (codehash
+   provjeren prema safe-deployments), pa isto radi i u produkciji.
+2. Deploy: worker ga šalje sam ako ima ključ za taj lanac (`CHIADO_DEPLOYER_PRIVATE_KEY`, kasnije
+   `GNOSIS_DEPLOYER_PRIVATE_KEY`). Ključ plaća samo `createProxyWithNonce` s argumentima koje worker
+   sam izračuna, nije vlasnik nijednog Safe-a i ne miče novac. Bez ključa stranica deploya iz MetaMaska.
+3. Worker provjeri kod, točne vlasnike i prag te ERC-1271 s `"0x"`, pa Monerium `POST /addresses`
+   **vjerodajnicama tenanta** (`getTenantRail`: italk iz env, ostali iz `tenant_rail`). Rail koji se
+   ne razriješi znači da nema projekta (fail-closed).
+4. Tek tada kampanja, whitelista i audit `project.add`. Svaka greška prije toga ne upiše ništa, a
+   ponovni pokušaj je idempotentan (postojeći Safe se samo provjeri, povezana adresa se ne veže dvaput).
+5. Ime adrese u Moneriumu: javni API ga nema (`PATCH …/config` radi samo pod web sesijom, vidi
+   `link-safe.mjs`), pa odgovor nosi naredbu za konzolu `sandbox.monerium.dev` / `monerium.app`.
+
+Router projekt smije plaćati tek kad 2/3 vlasnika potpiše novi plan na istoj stranici. Postojeći Safe
+(bez CREATE2 plana) i dalje se dodaje opcijom „Postojeći Safe" (`POST …/campaigns`).
+
 ## Sljedeće
 
-- Ostali koraci kao isti plan/potpis tok: deploy Roles modifiera (`deploy-roles.mjs`), gas za router,
-  Monerium link adrese (ERC-1271), dodavanje projekta iz `funding-init`.
+- Ostali koraci kao isti plan/potpis tok: deploy Roles modifiera (`deploy-roles.mjs`), gas za router.
+- `GNOSIS_DEPLOYER_PRIVATE_KEY` za produkciju kad se sandbox tok pokaže.
+- Chiado relayer za wallet (`wallet/functions/_lib/relayer.ts` je danas samo Gnosis).
 - Produkcijski `italk` (legacy env rail): adresa routera unosi se na stranici, ključ ostaje offline (`safe-tx/000`).
 
 ## Zamke otkrivene u MVP-u (17. 10. 2026.)
