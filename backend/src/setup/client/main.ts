@@ -125,12 +125,28 @@ const say = (m: string) => { S.log.push(`${new Date().toLocaleTimeString('hr-HR'
 
 async function resolveFromBlock(): Promise<bigint> {
   if (ctx.fromBlock) return BigInt(ctx.fromBlock);
-  // First log of the modifier = its deploy block (Blockscout returns oldest first).
-  const r = await fetch(`${BLOCKSCOUT[ctx.chain]}/api?module=logs&action=getLogs&fromBlock=0&toBlock=latest&address=${ctx.roles}`);
-  const j = (await r.json()) as { result?: { blockNumber: string }[] };
-  const first = j.result?.[0]?.blockNumber;
-  if (!first) throw new Error('Blockscout ne zna prvi događaj Roles modifiera');
-  return BigInt(first);
+  const key = `setup:fromBlock:${ctx.chainId}:${ctx.roles!.toLowerCase()}`;
+  try {
+    const hit = localStorage.getItem(key);
+    if (hit) return BigInt(hit);
+  } catch { /* storage blocked */ }
+  const block = await deployBlock(getAddress(ctx.roles!));
+  try { localStorage.setItem(key, String(block)); } catch { /* storage blocked */ }
+  return block;
+}
+
+/// The modifier's deploy block by binary search on eth_getCode over history
+/// (~25 RPC calls). Blockscout's public API answers 429 under load (17.10.2026.).
+async function deployBlock(address: Address): Promise<bigint> {
+  const has = async (n: bigint) => ((await pub.getCode({ address, blockNumber: n })) ?? '0x') !== '0x';
+  let hi = await pub.getBlockNumber();
+  if (!(await has(hi))) throw new Error(`Roles modifier ${address} nema koda na lancu`);
+  let lo = 0n;
+  while (lo < hi) {
+    const mid = (lo + hi) / 2n;
+    if (await has(mid)) hi = mid; else lo = mid + 1n;
+  }
+  return lo;
 }
 
 async function refresh(): Promise<void> {
