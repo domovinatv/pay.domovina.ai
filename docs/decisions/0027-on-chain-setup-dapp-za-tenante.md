@@ -57,3 +57,20 @@ RPC raila, `api.safe.global` i Blockscout.
 - Ostali koraci kao isti plan/potpis tok: deploy Roles modifiera (`deploy-roles.mjs`), gas za router,
   Monerium link adrese (ERC-1271), dodavanje projekta iz `funding-init`.
 - Produkcijski `italk` (legacy env rail): adresa routera unosi se na stranici, ključ ostaje offline (`safe-tx/000`).
+
+## Zamke otkrivene u MVP-u (17. 10. 2026.)
+
+- `scripts/compat-check.sh` primjenjuje samo `git diff HEAD`: novi **neverzionirani** fajlovi
+  (npr. `src/setup/routes.ts`, `client.generated.ts`) ne uđu u radnu kopiju pa 12 starih test
+  fajlova padne na importu. Commitaj prije compat-checka.
+- Blockscout legacy API (`/api?module=logs&action=getLogs&fromBlock=0`) vraća najstariji log prvi,
+  pa daje blok deploya Roles modifiera na Chiadu (23538972, isto kao `.env.sandbox`). Na
+  `gnosis.blockscout.com` isti poziv 17. 10. nije vratio JSON, pa legacy `italk` koristi fiksni
+  `46280000` iz `safe-tx/009`.
+- `simulateAndRevert` + SimulateTxAccessor (1.3.0 `0x59AD…69Da` na Chiadu, 1.4.1 `0x3d4B…6199` na
+  Gnosisu) radi kroz javni RPC: setup batch `success: true, ~271k gas`, a prevelik `EURe.transfer`
+  `success: false` s revert podacima. Na Chiadu 1.4.1 accessor ne postoji.
+- Javni Chiado RPC ima `access-control-allow-origin: *`, pa preglednik smije zvati izravno.
+- Sva tri vlasnika Chiado Safe-a imala su 0 xDAI, pa izvršava bilo koji račun s gasom.
+- MVP je testiran samo kao statična kopija stranice u headless Chromiumu (plan + simulacija).
+  MetaMask potpis, Tx Service POST i `execTransaction` još nisu prošli na pravom lancu.
