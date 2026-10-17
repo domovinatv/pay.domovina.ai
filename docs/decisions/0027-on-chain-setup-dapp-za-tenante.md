@@ -124,7 +124,7 @@ Jedan tok na setup stranici, `POST /admin/api/tenants/:id/projects` (`src/setup/
    `link-safe.mjs`), pa odgovor nosi naredbu za konzolu `sandbox.monerium.dev` / `monerium.app`.
 
 Deploy 18. 10. 2026.: #123 + #124, worker `cfa9e509`; secret `CHIADO_DEPLOYER_PRIVATE_KEY` = sandbox
-deployer `0x9915…4c65` iz `tools/funding/.env.sandbox` (~0,03 xDAI). Proba na Chiadu kroz stranicu još nije napravljena.
+deployer `0x9915…4c65` iz `tools/funding/.env.sandbox` (~0,03 xDAI). Proba na Chiadu: vidi E2E maksimir niže.
 
 Zamke:
 
@@ -134,6 +134,17 @@ Zamke:
   korak prije commita.
 - Ime walleta u Moneriumu (`sandbox.monerium.dev/wallets`) jedino je što API ne dopušta. Sve ostalo
   radi worker u jednom pozivu; 2/3 potpis plana role je ručan namjerno.
+
+**„Izvrši, MPT plaća gas" (#126, worker `63484ced`):** gas ključ lanca (isti `CHIADO_DEPLOYER_PRIVATE_KEY`)
+šalje `execTransaction` za Safe tx koji su vlasnici već potpisali do praga (`src/setup/execute.ts`).
+Worker sam pročita tx iz Tx Servicea, vlasnike/prag/nonce s lanca i safeTxHash sa Safe-a, odbije
+refund parametre i simulira prije slanja; audit `setup.execute`. Ključ samo plaća gas. Time je
+otvorena stavka „MPT plaća gas" riješena bez Safe relaya i bez wallet relayera.
+
+**Chiado E2E 18. 10. 2026.: `maksimir.DOMOVINA.ai`** dodan kroz „Dodaj projekt", plan role 2/2 potpisan
+u MetaMasku, izvršio worker `0x9915…4c65`:
+[`0x087b…487e`](https://gnosis-chiado.blockscout.com/tx/0x087b517b86c0af30dce1c3e64a4543b3bd48033dfa6516ca5f396bedcf5d487e)
+(blok 23569104, 288.311 gas, Safe nonce 3). Provjera role ✓ za maksimir.
 
 Router projekt smije plaćati tek kad 2/3 vlasnika potpiše novi plan na istoj stranici. Postojeći Safe
 (bez CREATE2 plana) i dalje se dodaje opcijom „Postojeći Safe" (`POST …/campaigns`).
