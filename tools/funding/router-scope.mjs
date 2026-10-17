@@ -22,12 +22,13 @@
 import { parseArgs } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import { resolve } from 'node:path';
-import { concatHex, decodeFunctionData, encodeFunctionData, encodePacked, getAddress, isAddress, size } from 'viem';
+import { decodeFunctionData, getAddress, isAddress } from 'viem';
 import { writeFileSync } from 'node:fs';
 import { privateKeyToAccount } from 'viem/accounts';
 import { clients, loadEnv } from './lib.mjs';
 import { buildProjectRouterBatch, ROLE, toTxBuilderJson } from '../../backend/safe-tx/009-project-router-role.mjs';
 import { ROLES_ABI } from '../../backend/safe-tx/lib/roles-v2.mjs';
+import { SAFE_TX_ABI, ZERO_ADDRESS as ZERO, encodeMultiSendCallOnly } from '../../backend/safe-tx/lib/safe-tx.mjs';
 
 /// funding env → 009 env + Safe Transaction Service
 export const ROUTER_ENV = {
@@ -36,25 +37,7 @@ export const ROUTER_ENV = {
   prod: { chain: 'gnosis', txService: 'https://api.safe.global/tx-service/gno', multiSend: '0x9641d764fc13c8B624c04430C7356C1C7C8102e2' },
 };
 
-const MULTISEND_ABI = [{ type: 'function', name: 'multiSend', stateMutability: 'payable', outputs: [],
-  inputs: [{ name: 'transactions', type: 'bytes' }] }];
-
-/// Safe MultiSend packing: operation(1) to(20) value(32) dataLength(32) data.
-export function encodeMultiSendCallOnly(calls) {
-  return encodeFunctionData({ abi: MULTISEND_ABI, functionName: 'multiSend', args: [concatHex(calls.map((c) =>
-    encodePacked(['uint8', 'address', 'uint256', 'uint256', 'bytes'], [0, getAddress(c.to), BigInt(c.value ?? 0), BigInt(size(c.data)), c.data])))] });
-}
-
-const SAFE_TX_ABI = [
-  { type: 'function', name: 'nonce', stateMutability: 'view', inputs: [], outputs: [{ type: 'uint256' }] },
-  { type: 'function', name: 'getTransactionHash', stateMutability: 'view', outputs: [{ type: 'bytes32' }], inputs: [
-    { name: 'to', type: 'address' }, { name: 'value', type: 'uint256' }, { name: 'data', type: 'bytes' },
-    { name: 'operation', type: 'uint8' }, { name: 'safeTxGas', type: 'uint256' }, { name: 'baseGas', type: 'uint256' },
-    { name: 'gasPrice', type: 'uint256' }, { name: 'gasToken', type: 'address' }, { name: 'refundReceiver', type: 'address' },
-    { name: '_nonce', type: 'uint256' },
-  ] },
-];
-const ZERO = '0x0000000000000000000000000000000000000000';
+export { encodeMultiSendCallOnly };
 
 async function txs(url, init) {
   const r = await fetch(url, { ...init, headers: { 'Content-Type': 'application/json', ...(init?.headers ?? {}) } });

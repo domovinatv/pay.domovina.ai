@@ -24,6 +24,7 @@
     "src/**/*.ts"
   ],
   "exclude": [
-    "src/receipts/client/**"
+    "src/receipts/client/**",
+    "src/setup/client/**"
   ]
 }
