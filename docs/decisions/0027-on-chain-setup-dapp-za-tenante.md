@@ -52,6 +52,16 @@ RPC raila, `api.safe.global` i Blockscout.
   izvršiti može i ne-vlasnik.
 - Stranica je za sada u adminu. Za tenante bez admin pristupa ide na `dashboard.mpt.hr` (ADR 0021).
 
+## Dodavanje i uklanjanje projekata (17. 10. 2026.)
+
+Na setup stranici „Dodaj projekt" upiše kampanju u D1 (isti `POST …/campaigns`: kampanja +
+payout whitelista + audit), a plan odmah doda adresu u `scopeFunction`. „Ukloni" opozove
+kampanju u D1 (`DELETE …/campaigns/:id`), pa plan adresu izbaci iz role. Projekt koji je samo na
+lancu (bez kampanje) uklanja se „Ukloni s lanca" (samo u memoriji stranice). Builder prima
+`remove`: uklanjanje ima prednost pred dodavanjem, a zadnji projekt se ne može ukloniti (rola
+bez primatelja; tada se opoziva router). D1 je samo željeno stanje: bez 2/3 potpisa router
+ne smije ništa novo.
+
 ## Sljedeće
 
 - Ostali koraci kao isti plan/potpis tok: deploy Roles modifiera (`deploy-roles.mjs`), gas za router,

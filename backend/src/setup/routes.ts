@@ -31,6 +31,9 @@ export interface SetupContext {
   /// First block of the modifier's events; null = the page asks Blockscout.
   fromBlock: string | null;
   recipients: { address: string; label: string | null; campaignId: string }[];
+  /// Revoked campaigns whose Safe no active campaign uses: the plan takes
+  /// them out of the role, so D1 stays the desired state in both directions.
+  revoked?: { address: string; label: string | null; campaignId: string }[];
 }
 
 const CHAIN_ID = { gnosis: 100, chiado: 10200 } as const;
@@ -45,8 +48,11 @@ const BLOCKSCOUT = { gnosis: 'https://gnosis.blockscout.com', chiado: 'https://g
 export async function loadSetupContext(env: Env, tenantId: string): Promise<SetupContext | { error: string }> {
   const tenant = await getTenant(env, tenantId);
   if (!tenant) return { error: 'tenant_not_found' };
-  const campaigns = (await listCampaigns(env, tenantId)).filter((c) => c.revoked_at === null);
-  const recipients = campaigns.map((c) => ({ address: c.safe_address, label: c.label, campaignId: c.campaign_id }));
+  const all = await listCampaigns(env, tenantId);
+  const view = (c: (typeof all)[number]) => ({ address: c.safe_address, label: c.label, campaignId: c.campaign_id });
+  const recipients = all.filter((c) => c.revoked_at === null).map(view);
+  const active = new Set(recipients.map((r) => r.address.toLowerCase()));
+  const revoked = all.filter((c) => c.revoked_at !== null && !active.has(c.safe_address.toLowerCase())).map(view);
   if (isLegacyTenant(env, tenantId)) {
     return {
       tenantId,
@@ -63,6 +69,7 @@ export async function loadSetupContext(env: Env, tenantId: string): Promise<Setu
       eure: env.EURE_CONTRACT || EURE_DEFAULT.gnosis,
       fromBlock: LEGACY_FROM_BLOCK,
       recipients,
+      revoked,
     };
   }
   const row = await getTenantRailRow(env, tenantId);
@@ -82,6 +89,7 @@ export async function loadSetupContext(env: Env, tenantId: string): Promise<Setu
     eure: row.eure_contract || EURE_DEFAULT[chain],
     fromBlock: null,
     recipients,
+    revoked,
   };
 }
 
