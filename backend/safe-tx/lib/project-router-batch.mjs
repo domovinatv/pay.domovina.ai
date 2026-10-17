@@ -106,11 +106,18 @@ export async function buildProjectRouterBatch(opts, client) {
     throw new Error(`current ProjectRouter options = ${current.options}, expected None — investigate first`);
   }
   const before = current?.recipients ?? [];
-  const recipients = normaliseRecipients([...before, ...opts.recipients], { safe });
+  // Removal wins over addition: an address in both lists leaves the set.
+  const drop = new Set((opts.remove ?? []).map((r) => r.toLowerCase()));
+  const kept = [...before, ...(opts.recipients ?? [])].filter((r) => !drop.has(r.toLowerCase()));
+  if (kept.length === 0) {
+    throw new Error('the last project cannot be removed: the role would match nobody — revoke the router instead');
+  }
+  const recipients = normaliseRecipients(kept, { safe });
   const added = recipients.filter((r) => !before.includes(r));
+  const removed = before.filter((r) => !recipients.includes(r));
   const targetLive = (await readRoleTargets(client, { roles: rolesAddr, roleKey, fromBlock })).includes(eure);
   if (!targetLive) txs.push(roleTx('scopeTarget', [roleKey, eure]));
-  if (added.length || !current) {
+  if (added.length || removed.length || !current) {
     txs.push(roleTx('scopeFunction', [
       roleKey, eure, TRANSFER_SELECTOR, transferRecipientConditions(recipients), ExecutionOptions.None,
     ]));
@@ -130,7 +137,7 @@ export async function buildProjectRouterBatch(opts, client) {
     else txs.push(roleTx('assignRoles', [getAddress(opts.revokeRouter), [roleKey], [false]]));
   }
 
-  return { safe, roles: rolesAddr, eure, roleKey, before, recipients, added, members, txs, notes, chainId: env.chainId };
+  return { safe, roles: rolesAddr, eure, roleKey, before, recipients, added, removed, members, txs, notes, chainId: env.chainId };
 }
 
 export function toTxBuilderJson(b, { name } = {}) {

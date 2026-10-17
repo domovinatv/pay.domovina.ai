@@ -60,6 +60,7 @@ interface Ctx {
   eure: string;
   fromBlock: string | null;
   recipients: { address: string; label: string | null; campaignId: string }[];
+  revoked?: { address: string; label: string | null; campaignId: string }[];
 }
 
 interface SafeTx { to: Address; value: bigint; data: Hex; operation: number }
@@ -80,7 +81,7 @@ const EXECUTION_SUCCESS = toEventSelector('ExecutionSuccess(bytes32,uint256)');
 const DEAD: Address = '0x000000000000000000000000000000000000dEaD';
 const ERC20 = parseAbi(['function transfer(address to, uint256 amount) returns (bool)', 'function balanceOf(address) view returns (uint256)']);
 
-const ctx = JSON.parse(document.getElementById('setup-config')!.textContent!) as Ctx;
+let ctx = JSON.parse(document.getElementById('setup-config')!.textContent!) as Ctx;
 const chain = CHAINS[ctx.chain];
 const pub = createPublicClient({ chain, transport: http(ctx.rpcUrl) }) as PublicClient;
 const app = document.getElementById('app')!;
@@ -102,15 +103,19 @@ const S: {
   log: string[];
   busy: boolean;
   error: string | null;
+  /// On-chain-only projects (no campaign in D1) marked for removal on this page.
+  removeLocal: Set<string>;
 } = {
   signer: null, balance: null, owners: [], threshold: 0n, nonce: 0n, version: '', fromBlock: null,
-  router: ctx.router ?? '', plan: null, tx: null, sim: null, pending: null, checks: [], log: [], busy: false, error: null,
+  router: ctx.router ?? '', plan: null, tx: null, sim: null, pending: null, checks: [], log: [], busy: false, error: null, removeLocal: new Set(),
 };
 
 const e = (s: unknown) => String(s ?? '').replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
 const short = (a: string) => `${a.slice(0, 6)}…${a.slice(-4)}`;
 const addrLink = (a: string) => `<a class="mono" href="${BLOCKSCOUT[ctx.chain]}/address/${e(a)}" target="_blank" rel="noopener">${e(a)}</a>`;
-const labelOf = (a: string) => ctx.recipients.find((r) => r.address.toLowerCase() === a.toLowerCase())?.label ?? null;
+const campaignOf = (a: string) => ctx.recipients.find((r) => r.address.toLowerCase() === a.toLowerCase());
+const revokedOf = (a: string) => ctx.revoked?.find((r) => r.address.toLowerCase() === a.toLowerCase());
+const labelOf = (a: string) => campaignOf(a)?.label ?? revokedOf(a)?.label ?? null;
 const isOwner = (a?: string | null) => !!a && S.owners.some((o) => o.toLowerCase() === a.toLowerCase());
 const say = (m: string) => { S.log.push(`${new Date().toLocaleTimeString('hr-HR')}  ${m}`); render(); };
 
@@ -148,6 +153,7 @@ async function refresh(): Promise<void> {
     eure: ctx.eure,
     fromBlock: S.fromBlock,
     recipients: ctx.recipients.map((r) => r.address),
+    remove: [...(ctx.revoked ?? []).map((r) => r.address), ...S.removeLocal],
     router,
   }, pub);
   if (S.plan.txs.length) {
@@ -305,6 +311,39 @@ async function signSafeTx(nonce: bigint): Promise<{ hash: Hex; signature: Hex }>
 
 // ── actions ───────────────────────────────────────────────────────────────
 
+/// D1 is the desired state: a campaign added or revoked here changes the
+/// plan, and only the owners' 2/3 signature changes what the router may do.
+async function reloadContext(): Promise<void> {
+  const r = await fetch(`/admin/api/tenants/${encodeURIComponent(ctx.tenantId)}/setup`);
+  if (!r.ok) throw new Error(`kontekst: HTTP ${r.status}`);
+  ctx = { ...ctx, ...((await r.json()) as Ctx) };
+}
+
+async function campaignsApi(method: 'POST' | 'DELETE', path: string, body?: unknown): Promise<void> {
+  const r = await fetch(`/admin/api/tenants/${encodeURIComponent(ctx.tenantId)}/campaigns${path}`, {
+    method,
+    headers: body ? { 'Content-Type': 'application/json' } : undefined,
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  const j = (await r.json().catch(() => ({}))) as { error?: string };
+  if (!r.ok) throw new Error(j.error ?? `HTTP ${r.status}`);
+}
+
+async function addProject(campaignId: string, label: string, address: string): Promise<void> {
+  if (!isAddress(address)) throw new Error('adresa projekta nije EVM adresa');
+  if (getAddress(address) === getAddress(ctx.safe)) throw new Error('glavni Safe ne može biti projekt');
+  await campaignsApi('POST', '', { campaign_id: campaignId, safe_address: address, label });
+  S.removeLocal.delete(getAddress(address));
+  await reloadContext();
+  say(`projekt ${campaignId} upisan; plan ga dodaje u rolu`);
+}
+
+async function removeCampaign(campaignId: string): Promise<void> {
+  await campaignsApi('DELETE', `/${encodeURIComponent(campaignId)}`);
+  await reloadContext();
+  say(`kampanja ${campaignId} opozvana; plan je uklanja iz role`);
+}
+
 async function propose(): Promise<void> {
   const s = S.signer!;
   if (!isOwner(s.address)) throw new Error('predlaže vlasnik Safe-a');
@@ -404,9 +443,21 @@ function render(): void {
   const dis = S.busy ? 'disabled' : '';
   const safeApp = `https://app.safe.global/transactions/queue?safe=${(SAFE_CHAINS as Record<number, { app: string }>)[ctx.chainId]?.app}:${ctx.safe}`;
 
-  const recRows = (S.plan?.recipients ?? ctx.recipients.map((r) => r.address)).map((r) => {
-    const onChain = S.plan?.before.some((b: string) => b.toLowerCase() === r.toLowerCase());
-    return `<tr><td>${e(labelOf(r) ?? '— (samo na lancu)')}</td><td>${addrLink(r)}</td><td>${onChain ? '<span class="ok">na lancu</span>' : '<span class="muted">dodaje se</span>'}</td></tr>`;
+  const before = S.plan?.before ?? [];
+  const rows = [...before];
+  for (const r of ctx.recipients) if (!rows.some((x) => x.toLowerCase() === r.address.toLowerCase())) rows.push(r.address);
+  const recRows = rows.map((r) => {
+    const has = (l?: string[]) => !!l?.some((x) => x.toLowerCase() === r.toLowerCase());
+    const status = has(S.plan?.removed) ? '<span class="bad">uklanja se</span>'
+      : has(S.plan?.added) ? '<span class="muted">dodaje se</span>'
+        : has(before) ? '<span class="ok">na lancu</span>' : '<span class="muted">čeka plan</span>';
+    const cmp = campaignOf(r);
+    const local = S.removeLocal.has(getAddress(r));
+    const act = cmp ? `<button class="sec rmCamp" data-cid="${e(cmp.campaignId)}" ${dis}>Ukloni</button>`
+      : revokedOf(r) ? '<span class="muted">opozvana u D1</span>'
+        : `<button class="sec rmLocal" data-addr="${e(getAddress(r))}" ${dis}>${local ? 'Vrati' : 'Ukloni s lanca'}</button>`;
+    const name = cmp ? `${e(cmp.label ?? cmp.campaignId)} <span class="muted mono">${e(cmp.campaignId)}</span>` : e(labelOf(r) ?? '— (samo na lancu)');
+    return `<tr><td>${name}</td><td>${addrLink(r)}</td><td>${status}</td><td>${act}</td></tr>`;
   }).join('');
 
   app.innerHTML = `
@@ -432,6 +483,12 @@ ${ctx.chain === 'chiado' ? `<details><summary class="muted">Lokalni ključ (samo
 
 <h2>Projekti (primatelji role ${ROLE})</h2>
 <table><tbody>${recRows || '<tr><td class="muted">Tenant nema kampanja.</td></tr>'}</tbody></table>
+<details class="box"><summary>Dodaj projekt</summary>
+<p class="muted">Upis u D1 (kampanja + payout whitelista). Router ga smije plaćati tek kad 2/3 vlasnika potpiše novi plan ispod.</p>
+<input id="npId" class="mono" placeholder="campaign_id (npr. domovinatv-novi-projekt)"/>
+<input id="npLabel" placeholder="naziv projekta"/>
+<input id="npAddr" class="mono" placeholder="0x… adresa (Safe) projekta"/>
+<p><button id="npBtn" ${dis}>Dodaj projekt</button></p></details>
 
 <h2>Plan</h2>
 ${!S.plan ? '<p class="muted">Čitam lanac…</p>' : S.plan.txs.length === 0 ? '<p class="ok">Lanac je usklađen: nema koraka.</p>' : `
@@ -460,6 +517,19 @@ ${S.log.length ? `<div class="log">${e(S.log.join('\n'))}</div>` : ''}`;
   on('confirm', () => run('Potvrda', confirm));
   on('exec', () => run('Izvršenje', execute));
   on('reload', () => run('Osvježavanje', async () => {}));
+  on('npBtn', () => run('Novi projekt', () => {
+    const v = (id: string) => (document.getElementById(id) as HTMLInputElement).value.trim();
+    return addProject(v('npId'), v('npLabel'), v('npAddr'));
+  }));
+  document.querySelectorAll<HTMLButtonElement>('button.rmCamp').forEach((b) => b.addEventListener('click', () => {
+    const cid = b.dataset.cid!;
+    if (window.confirm(`Opozvati kampanju ${cid}? Plan će je ukloniti iz role; na lancu vrijedi tek nakon 2/3 potpisa.`)) void run('Uklanjanje', () => removeCampaign(cid));
+  }));
+  document.querySelectorAll<HTMLButtonElement>('button.rmLocal').forEach((b) => b.addEventListener('click', () => {
+    const a = getAddress(b.dataset.addr!);
+    if (S.removeLocal.has(a)) S.removeLocal.delete(a); else S.removeLocal.add(a);
+    void run('Plan', async () => {});
+  }));
   document.getElementById('router')?.addEventListener('change', (ev) => {
     S.router = (ev.target as HTMLInputElement).value.trim();
     run('Router', async () => {
