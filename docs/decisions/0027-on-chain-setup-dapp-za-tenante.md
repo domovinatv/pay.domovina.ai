@@ -123,6 +123,18 @@ Jedan tok na setup stranici, `POST /admin/api/tenants/:id/projects` (`src/setup/
 5. Ime adrese u Moneriumu: javni API ga nema (`PATCH …/config` radi samo pod web sesijom, vidi
    `link-safe.mjs`), pa odgovor nosi naredbu za konzolu `sandbox.monerium.dev` / `monerium.app`.
 
+Deploy 18. 10. 2026.: #123 + #124, worker `cfa9e509`; secret `CHIADO_DEPLOYER_PRIVATE_KEY` = sandbox
+deployer `0x9915…4c65` iz `tools/funding/.env.sandbox` (~0,03 xDAI). Proba na Chiadu kroz stranicu još nije napravljena.
+
+Zamke:
+
+- `client.generated.ts` u #123 izgrađen je prije zadnje izmjene `main.ts`, a CI to ne provjerava
+  (job „bundle" gradi worker, ne uspoređuje bundle s izvorom). Deploy s maina ponovno izgradi
+  klijent, pa je produkcija bila ispravna, a main nije (#124). `npm run build:setup-client` je zadnji
+  korak prije commita.
+- Ime walleta u Moneriumu (`sandbox.monerium.dev/wallets`) jedino je što API ne dopušta. Sve ostalo
+  radi worker u jednom pozivu; 2/3 potpis plana role je ručan namjerno.
+
 Router projekt smije plaćati tek kad 2/3 vlasnika potpiše novi plan na istoj stranici. Postojeći Safe
 (bez CREATE2 plana) i dalje se dodaje opcijom „Postojeći Safe" (`POST …/campaigns`).
 
