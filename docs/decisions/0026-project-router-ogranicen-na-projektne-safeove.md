@@ -1,6 +1,6 @@
 # ADR 0026 — ProjectRouter: rola na MPT Safe-u ograničena on-chain na projektne Safe-ove
 
-- **Status:** Proposed (2026-10-16)
+- **Status:** Accepted (2026-10-17, nakon Chiado E2E). Predloženo 2026-10-16
 - **Kontekst:** MPT rail (`backend/`), MPT Safe `0x449a…af2e` (2/3), Roles modifier `0x3303…762c`
   (Zodiac Roles v2, mastercopy `0x9646…D337`)
 - **Gradi na:** [0025](0025-mpt-router-umirovljen-svi-tenanti-direct.md) (§Revolut bez reference) ·
@@ -172,7 +172,7 @@ Stari `ROUTER_PRIVATE_KEY` / `ROLE_KEY` (`EUReForwarder`) se ne vraćaju. Ključ
 | 2. `safe-tx/009` | ✅ generator + `009-simulate-fork.mjs`; Gnosis fork 13/13, Chiado fork 11/11 |
 | 3. `funding-init` + delegate | ✅ `router-scope.mjs` (korak 6), `--setup` predlaže cijeli 009 kao MultiSend; `deploy-roles.mjs` |
 | 4. Rail | ✅ `router_claim`, `routeOwed`, cron `routeAllOwedForwards`, 16 testova, compat-check prolazi |
-| 5. Chiado E2E | 🟡 Kod mergan (#112) i deployan 16. 10. (`246b390b`). Roles proxy, biblioteke, router `0xD922…6759` (0,01 xDAI) i rail `italk-sandbox` (`roles_modifier`, `role_key`, router ključ, verify OK) gotovi. Čeka registraciju delegatea (vlasnički potpis), prijedlog `router-scope --setup` i 2/3 potvrdu |
+| 5. Chiado E2E | ✅ 17. 10. 2026. kroz setup dApp (ADR 0027), bez delegatea: 2/3 potpis u MetaMasku, `execTransaction` [`0x7a19…1c15`](https://gnosis-chiado.blockscout.com/tx/0x7a19a3a92a6c8b0effd6a9444d7f9f9b24bf5923454d0bae8d61e2c32e3e1c15) (blok 23568189). 20 blokova kasnije cron je proslijedio owed #96 (2,27 €, `0xadf7…`) i #97 (2,31 €, `0xfa2e…`) na Stranke; reconcile ih označio `confirmed` |
 | 6. Produkcija | ⏳ |
 
 ### Chiado: Roles v2 bez biblioteka (16. 10. 2026.)

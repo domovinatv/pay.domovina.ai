@@ -1,6 +1,6 @@
 # ADR 0027 — On-chain setup dApp za tenante (bez Safe sučelja i bez delegatea)
 
-- **Status:** Proposed (2026-10-17), MVP na grani `feat/adr0027-tenant-setup-dapp`
+- **Status:** Accepted (2026-10-17): MVP mergan (#114, #115), deployan i prošao Chiado E2E
 - **Kontekst:** MPT rail (`backend/`), tenanti s načinom `direct` (ADR 0025), ProjectRouter (ADR 0026)
 - **Gradi na:** [0026](0026-project-router-ogranicen-na-projektne-safeove.md) ·
   [0017](0017-multi-tenant-rail.md) (rail po tenantu) · [0021](0021-mpt-hr-javni-hostovi-i-api-v1.md) (dashboard.mpt.hr)
@@ -72,5 +72,19 @@ RPC raila, `api.safe.global` i Blockscout.
   `success: false` s revert podacima. Na Chiadu 1.4.1 accessor ne postoji.
 - Javni Chiado RPC ima `access-control-allow-origin: *`, pa preglednik smije zvati izravno.
 - Sva tri vlasnika Chiado Safe-a imala su 0 xDAI, pa izvršava bilo koji račun s gasom.
-- MVP je testiran samo kao statična kopija stranice u headless Chromiumu (plan + simulacija).
-  MetaMask potpis, Tx Service POST i `execTransaction` još nisu prošli na pravom lancu.
+- `eth_requestAccounts` vraća račun koji je već spojen sa stranicom, pa promjena računa u
+  MetaMasku i novi klik nisu ništa mijenjali. Sada `accountsChanged` mijenja potpisnika, a klik
+  otvori izbor računa (`wallet_requestPermissions`); EIP-6963 bira MetaMask ispred Brave Walleta (#115).
+- MetaMask ne daje dAppu ime računa, a app.safe.global imena drži u localStorageu svoje domene:
+  čitljiva imena vlasnika moraju biti naš vlastiti adresar.
+- Safeovi sponzorirani izvršaji idu kroz njihov relay (`safe-client.safe.global/v1/chains/<id>/relay`):
+  na Chiadu `403 No relayer defined`, a za tuđe sučelje nije namijenjen.
+- Chiado base fee 17. 10. bio je 7 wei: setup (381.548 gas) stajao je 0,0000000000027 xDAI.
+
+## Chiado E2E (17. 10. 2026.)
+
+Na produkcijskoj stranici `mpt.domovina.ai/admin/tenants/italk-sandbox/setup`: prijedlog nonce 0
+(`0x5975…d26d`) potpisala su u MetaMasku dva vlasnika (`0x4924…`, `0xC238…`), a izvršio ga je
+račun s faucet xDAI-jem (`0x788b…d1E2`): [`0x7a19…1c15`](https://gnosis-chiado.blockscout.com/tx/0x7a19a3a92a6c8b0effd6a9444d7f9f9b24bf5923454d0bae8d61e2c32e3e1c15),
+blok 23568189. Nakon osvježavanja: „Lanac je usklađen", provjera role ✓ za oba projekta i
+✓ odbijanje `0x…dEaD`. Cron je u bloku 23568209 proslijedio owed #96 i #97 (ADR 0026).
