@@ -66,6 +66,7 @@ history.
 | [0024](0024-samoposluzni-sandbox-i-return-url.md) | Samoposlužni sandbox tenant bez Moneriuma (simulirane uplate kroz isti paid put, `sk_test_` ključevi, `POST /api/sandbox/tenants`) i `return_url` na intentu (samo uz `sk_`); za Open SaaS MPT provider | 2026-10-12 | ✅ Accepted | ✅ PR 1 (sandbox + `return_url`) i PR 2 (lista + zbrojevi intenta, #98) deployani 2026-10-12 |
 | [0025](0025-mpt-router-umirovljen-svi-tenanti-direct.md) | MPT router umirovljen: svi tenanti u načinu `direct` (Monerium minta ravno u Safe projekta), `EUReForwarder` rola i Roles modul skinuti s MPT Safe-a, `ROUTER_PRIVATE_KEY` obrisan; MPT ne drži ključ koji pomiče novac | 2026-10-15 | ✅ Accepted | ✅ 2026-10-15: `italk` na direct (#108), `safe-tx/008` izvršen (rola + Roles modul skinuti), `ROUTER_PRIVATE_KEY` obrisan |
 | [0026](0026-project-router-ogranicen-na-projektne-safeove.md) | ProjectRouter: rola na MPT Safe-u smije samo `EURe.transfer` prema projektnim Safe-ovima koje su 2/3 vlasnika odobrili (on-chain `Or(EqualTo…)`, bez kapice); D4 uplate bez reference proslijede se same, novi projekt = prijedlog delegatea u redu Safe-a | 2026-10-16 | 📝 Proposed | ⏳ ADR; `safe-tx/009`, delegate korak, rail i Chiado slijede |
+| [0027](0027-on-chain-setup-dapp-za-tenante.md) | On-chain setup dApp: plan iz lanca, simulacija, prijedlog/potpis/izvršenje vlasnika kroz MetaMask (lokalni ključ samo sandbox), red u Safe Transaction Serviceu; bez Safe Pro i delegatea | 2026-10-17 | 📝 Proposed | ⏳ MVP (ProjectRouter) na grani, Chiado E2E slijedi |
 
 ---
 

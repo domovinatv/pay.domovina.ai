@@ -100,10 +100,14 @@ export function mountAdminAuth(app: Hono<{ Bindings: Env }>): void {
       c.res = new Response(html.replace(/<script(?![^>]*\bsrc=)/g, `<script nonce="${nonce}"`), c.res);
     }
     const out = c.res.headers;
+    // Setup dApp (ADR 0027) talks to the rail RPC, Safe Transaction Service
+    // and Blockscout from the browser; the route names those hosts itself.
+    const extraConnect = (out.get('x-admin-connect-src') ?? '').replace(/[^a-zA-Z0-9:/.\- ]/g, '').trim();
+    out.delete('x-admin-connect-src');
     out.set(
       'content-security-policy',
       `default-src 'none'; script-src 'self' 'nonce-${nonce}'; style-src 'self' 'unsafe-inline'; ` +
-        `img-src 'self' data:; connect-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'`,
+        `img-src 'self' data:; connect-src 'self'${extraConnect ? ` ${extraConnect}` : ''}; form-action 'self'; frame-ancestors 'none'; base-uri 'none'`,
     );
     out.set('x-content-type-options', 'nosniff');
     // Ne "no-referrer": uz nju preglednik na <form> POST šalje `Origin: null`

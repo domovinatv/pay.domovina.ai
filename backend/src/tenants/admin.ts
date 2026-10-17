@@ -26,6 +26,7 @@ import { generateApiKey } from './auth';
 import { trySendAlert } from '../alerts';
 import { renderWhitelistPage } from '../admin/views';
 import { mountRailAdmin } from './railAdmin';
+import { mountSetupPages } from '../setup/routes';
 
 /// Admin surface for the tenant payout whitelist. Mounted under `/admin/*`,
 /// which the admin session middleware (../admin/auth/mount.ts) already gates —
@@ -39,6 +40,7 @@ const ID_RE = /^[A-Za-z0-9_-]{2,64}$/;
 
 export function mountTenantAdmin(app: Hono<{ Bindings: Env }>): void {
   mountRailAdmin(app);
+  mountSetupPages(app);
   app.get('/admin/whitelist', (c) => c.html(renderWhitelistPage()));
 
   app.get('/admin/api/tenants', async (c) => {

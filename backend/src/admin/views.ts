@@ -1994,6 +1994,7 @@ export function renderTenantsPage(): string {
   <button type="button" data-act="activate">Aktiviraj</button>
   <button type="button" data-act="suspend">Suspendiraj</button>
   <button type="button" data-act="resume">Nastavi</button>
+  <a id="setupLink" href="#">On-chain setup (ADR 0027) →</a>
 </div>
 
 <h2 style="margin-top:1.5rem">Rail</h2>
@@ -2057,6 +2058,7 @@ async function loadRail() {
   const id = $t('tSel').value;
   if (!id) return;
   $t('tEnvPill').innerHTML = envPillFor(id);
+  $t('setupLink').href = '/admin/tenants/' + encodeURIComponent(id) + '/setup';
   const { d } = await api('GET', '/admin/api/tenants/' + encodeURIComponent(id) + '/rail');
   $t('tStatus').textContent = d.legacy ? 'ITalk — rail iz env (nije ovdje)' : ('status: ' + (d.status || '?'));
   const r = d.rail;

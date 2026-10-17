@@ -8,9 +8,10 @@
     "deploy": "wrangler deploy",
     "db:migrate:local": "wrangler d1 migrations apply pay_domovina --local",
     "db:migrate:prod": "wrangler d1 migrations apply pay_domovina --remote",
-    "typecheck": "tsc --noEmit && tsc --noEmit -p src/receipts/client",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p src/receipts/client && tsc --noEmit -p src/setup/client",
     "test": "vitest run",
-    "build:receipt-client": "node scripts/build-receipt-client.mjs"
+    "build:receipt-client": "node scripts/build-receipt-client.mjs",
+    "build:setup-client": "node scripts/build-setup-client.mjs"
   },
   "dependencies": {
     "@simplewebauthn/server": "^14.0.3",

@@ -241,3 +241,20 @@ export async function readRoleTargets(client, { roles, roleKey, fromBlock, chunk
   }
   return [...state].filter(([, live]) => live).map(([t]) => t);
 }
+
+/// Members of a role (last AssignRoles for that key wins), replayed from the
+/// modifier's events. Lowercase-insensitive Set of checksummed addresses.
+export async function readRoleMembers(client, { roles, roleKey, fromBlock, chunk = 200_000n }) {
+  const head = await client.getBlockNumber();
+  const key = roleKey.toLowerCase();
+  const state = new Map();
+  for (let from = BigInt(fromBlock); from <= head; from += chunk) {
+    const to = from + chunk - 1n > head ? head : from + chunk - 1n;
+    const logs = await client.getLogs({ address: getAddress(roles), event: ASSIGN_ROLES_EVENT, fromBlock: from, toBlock: to });
+    for (const l of logs) {
+      const i = (l.args?.roleKeys ?? []).findIndex((k) => k.toLowerCase() === key);
+      if (i >= 0) state.set(getAddress(l.args.module), l.args.memberOf[i]);
+    }
+  }
+  return [...state].filter(([, m]) => m).map(([a]) => a);
+}
