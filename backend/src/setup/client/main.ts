@@ -268,6 +268,17 @@ function watch(eth: Eip1193): void {
   });
 }
 
+/// On load: an account this site is already allowed to see becomes the signer
+/// without a click or a popup (eth_accounts never prompts).
+async function autoConnect(): Promise<void> {
+  let eth: Eip1193;
+  try { eth = injected(); } catch { return; }
+  const [a] = ((await eth.request({ method: 'eth_accounts' }).catch(() => [])) as string[]) ?? [];
+  if (!a || S.signer) return;
+  watch(eth);
+  useMetaMaskAccount(eth, a);
+}
+
 /// A repeat click opens MetaMask's account picker (wallet_requestPermissions),
 /// so an account not yet connected to this site can be chosen.
 async function connectMetaMask(): Promise<void> {
@@ -504,7 +515,8 @@ ${p.nonce !== S.nonce ? `<p class="muted">Prije njega se moraju izvršiti transa
 <button id="confirm" ${dis || !s || !owner || signed ? 'disabled' : ''}>Potpiši</button>
 <button id="exec" ${dis || !canExec ? 'disabled' : ''}>${owner && !signed ? 'Potpiši i izvrši' : 'Izvrši'}</button>
 <a href="${safeApp}" target="_blank" rel="noopener">otvori u app.safe.global</a></div>`
-    : `<button id="propose" ${dis || !s || !owner || !S.sim?.success ? 'disabled' : ''}>Predloži i potpiši</button>`}`}
+    : `<button id="propose" ${dis || !s || !owner || !S.sim?.success ? 'disabled' : ''}>Predloži i potpiši</button>
+${!s ? '<span class="muted">prvo spoji MetaMask (Potpisnik gore)</span>' : !owner ? '<span class="bad">spojeni račun nije vlasnik Safe-a — odaberi vlasnika u MetaMasku</span>' : S.sim && !S.sim.success ? '<span class="bad">simulacija pada</span>' : ''}`}`}
 
 ${S.checks.length ? `<h2>Provjera role (eth_call kao router, 1 wei)</h2><table><tbody>${S.checks.map((c) =>
     `<tr><td>${e(c.label)}</td><td class="mono">${e(short(c.address))}</td><td>${c.expect ? 'mora proći' : 'mora pasti'}</td><td>${c.ok ? '<span class="ok">✓</span>' : `<span class="bad">✗</span> <span class="muted">${e(c.why ?? '')}</span>`}</td></tr>`).join('')}</tbody></table>` : ''}
@@ -543,4 +555,4 @@ ${S.log.length ? `<div class="log">${e(S.log.join('\n'))}</div>` : ''}`;
   });
 }
 
-run('Učitavanje', async () => {});
+run('Učitavanje', autoConnect);
