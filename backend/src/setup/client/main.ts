@@ -202,21 +202,81 @@ async function runChecks(): Promise<void> {
 
 // ── signers ───────────────────────────────────────────────────────────────
 
-type Eip1193 = { request(a: { method: string; params?: unknown[] }): Promise<unknown> };
+type Eip1193 = {
+  request(a: { method: string; params?: unknown[] }): Promise<unknown>;
+  on?(event: string, f: (x: unknown) => void): void;
+};
 
-async function connectMetaMask(): Promise<void> {
-  const eth = (window as unknown as { ethereum?: Eip1193 }).ethereum;
+// EIP-6963: prefer MetaMask by rdns, since Brave Wallet (or another extension)
+// may own window.ethereum.
+const announced: { rdns: string; provider: Eip1193 }[] = [];
+window.addEventListener('eip6963:announceProvider', (ev) => {
+  const d = (ev as CustomEvent<{ info: { rdns: string }; provider: Eip1193 }>).detail;
+  if (d?.provider && !announced.some((a) => a.provider === d.provider)) announced.push({ rdns: d.info.rdns, provider: d.provider });
+});
+window.dispatchEvent(new Event('eip6963:requestProvider'));
+
+let watched: Eip1193 | null = null;
+
+function injected(): Eip1193 {
+  const eth = announced.find((a) => a.rdns === 'io.metamask')?.provider ?? (window as unknown as { ethereum?: Eip1193 }).ethereum;
   if (!eth) throw new Error('MetaMask nije pronađen u ovom pregledniku');
-  const wallet = createWalletClient({ chain, transport: custom(eth) });
-  const [address] = await wallet.requestAddresses();
+  return eth;
+}
+
+async function ensureChain(wallet: WalletClient): Promise<void> {
+  if ((await wallet.getChainId()) === chain.id) return;
   try {
     await wallet.switchChain({ id: chain.id });
   } catch {
     await wallet.addChain({ chain });
     await wallet.switchChain({ id: chain.id });
   }
-  S.signer = { kind: 'metamask', address: getAddress(address), wallet };
+}
+
+function useMetaMaskAccount(eth: Eip1193, address: string): void {
+  S.signer = { kind: 'metamask', address: getAddress(address), wallet: createWalletClient({ chain, transport: custom(eth) }) };
   say(`MetaMask: ${address}${isOwner(address) ? ' (vlasnik)' : ' (nije vlasnik)'}`);
+}
+
+/// Follow the account picked in MetaMask, as app.safe.global does: a switch in
+/// the extension replaces the signer without another click.
+function watch(eth: Eip1193): void {
+  if (watched === eth || !eth.on) return;
+  watched = eth;
+  eth.on('accountsChanged', (x) => {
+    if (S.signer?.kind !== 'metamask') return;
+    const [a] = (x as string[]) ?? [];
+    if (!a) {
+      S.signer = null;
+      say('MetaMask: račun odspojen');
+    } else if (getAddress(a) !== S.signer.address) {
+      useMetaMaskAccount(eth, a);
+    } else return;
+    void run('MetaMask račun', async () => {});
+  });
+  eth.on('chainChanged', (x) => {
+    if (S.signer?.kind === 'metamask' && Number(x) !== chain.id) say(`MetaMask je prešao na lanac ${Number(x)}; prije potpisa vraćam na ${chain.name}`);
+  });
+}
+
+/// A repeat click opens MetaMask's account picker (wallet_requestPermissions),
+/// so an account not yet connected to this site can be chosen.
+async function connectMetaMask(): Promise<void> {
+  const eth = injected();
+  watch(eth);
+  const wallet = createWalletClient({ chain, transport: custom(eth) });
+  let address: string | undefined;
+  try {
+    await eth.request({ method: 'wallet_requestPermissions', params: [{ eth_accounts: {} }] });
+    [address] = await wallet.getAddresses();
+  } catch (err) {
+    if ((err as { code?: number }).code === 4001) throw err;
+    [address] = await wallet.requestAddresses();
+  }
+  if (!address) throw new Error('MetaMask nije dao račun');
+  await ensureChain(wallet);
+  useMetaMaskAccount(eth, address);
 }
 
 /// Sandbox only: a generated test owner key, kept in this tab's memory and
@@ -236,6 +296,7 @@ async function signSafeTx(nonce: bigint): Promise<{ hash: Hex; signature: Hex }>
   const s = S.signer!;
   const hash = (await safeTxHash(pub, { chainId: ctx.chainId, safe: ctx.safe, tx: S.tx!, nonce })) as Hex;
   const td = safeTxTypedData({ chainId: ctx.chainId, safe: ctx.safe, tx: S.tx!, nonce });
+  if (s.kind === 'metamask') await ensureChain(s.wallet);
   const signature = await s.wallet.signTypedData({ account: s.kind === 'local' ? s.wallet.account! : s.address, ...td } as never);
   const back = await recoverTypedDataAddress({ ...td, signature } as never);
   if (getAddress(back) !== s.address) throw new Error(`potpis je od ${back}, ne od ${s.address}`);
@@ -287,6 +348,7 @@ async function execute(): Promise<void> {
   const args = [tx.to, tx.value, tx.data, tx.operation, 0n, 0n, 0n, '0x0000000000000000000000000000000000000000', '0x0000000000000000000000000000000000000000', signatures] as const;
   const bal = await pub.getBalance({ address: s.address });
   if (bal === 0n) throw new Error(`${short(s.address)} nema xDAI za gas`);
+  if (s.kind === 'metamask') await ensureChain(s.wallet);
   say('simuliram execTransaction…');
   const { request } = await pub.simulateContract({ account: s.kind === 'local' ? s.wallet.account! : s.address, address: getAddress(ctx.safe), abi: SAFE_TX_ABI, functionName: 'execTransaction', args });
   const txHash = await s.wallet.writeContract({ ...request, account: s.kind === 'local' ? s.wallet.account! : s.address, chain } as never);
