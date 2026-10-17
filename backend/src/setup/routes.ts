@@ -1,7 +1,7 @@
 import type { Hono } from 'hono';
 
 import type { Env } from '../types';
-import { getTenant, listCampaigns } from '../tenants/db';
+import { getTenant, listCampaigns, writeAudit } from '../tenants/db';
 import {
   CHIADO_RPC_DEFAULT,
   GNOSIS_RPC_DEFAULT,
@@ -12,6 +12,7 @@ import {
 import { SETUP_CLIENT_JS } from './client.generated';
 import { actorOf } from '../admin/auth/mount';
 import { addProjectForTenant, deployerAddress, type AddProjectInput } from './projects';
+import { executeWithGasKey } from './execute';
 // @ts-expect-error — plain .mjs shared with the setup dApp and tools/funding
 import * as ps from '../../safe-tx/lib/project-safe.mjs';
 
@@ -210,6 +211,26 @@ export function mountSetupPages(app: Hono<{ Bindings: Env }>): void {
       return c.json({ error: 'invalid_json' }, 400);
     }
     const r = await addProjectForTenant(c.env, tenantId, input, actorOf(c));
+    return c.json(r.body, r.status);
+  });
+
+  /// Executes an owner-signed (threshold reached) Safe tx with the Worker's
+  /// gas key for this chain. Audited: who pressed it, which tx.
+  app.post('/admin/api/tenants/:id/setup/execute', async (c) => {
+    const tenantId = c.req.param('id');
+    let body: { safe_tx_hash?: string };
+    try {
+      body = await c.req.json();
+    } catch {
+      return c.json({ error: 'invalid_json' }, 400);
+    }
+    const r = await executeWithGasKey(c.env, tenantId, (body.safe_tx_hash ?? '').trim());
+    if (r.status === 200) {
+      await writeAudit(c.env, {
+        tenantId, action: 'setup.execute', actor: actorOf(c),
+        detail: JSON.stringify({ safe_tx_hash: body.safe_tx_hash, tx_hash: r.body.tx_hash, executor: r.body.executor }),
+      });
+    }
     return c.json(r.body, r.status);
   });
 }

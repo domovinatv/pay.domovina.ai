@@ -185,3 +185,20 @@ describe('POST …/projects (addProject)', () => {
     expect((await call({ campaign_id: 'taken' })).body.error).toBe('campaign_owned_by_other_tenant');
   });
 });
+
+describe('execute with the gas key: signature pick', () => {
+  const o = ps.DEFAULT_OWNERS as string[];
+  const sig = (b: string) => `0x${b.repeat(65)}`;
+  it('takes threshold signatures of current owners, one each; else null', async () => {
+    const { pickExecSignatures } = await import('../src/setup/execute');
+    const conf = [
+      { owner: '0x' + '99'.repeat(20), signature: sig('11') }, // not an owner
+      { owner: o[1], signature: sig('22') },
+      { owner: o[1].toLowerCase(), signature: sig('33') }, // same owner twice
+      { owner: o[0], signature: '0x12' }, // malformed
+    ];
+    expect(pickExecSignatures(conf, o, 2)).toBeNull();
+    const two = pickExecSignatures([...conf, { owner: o[2], signature: sig('44') }], o, 2);
+    expect(two?.map((x) => x.signer)).toEqual([getAddress(o[1]), getAddress(o[2])]);
+  });
+});

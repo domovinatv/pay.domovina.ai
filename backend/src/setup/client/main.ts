@@ -514,6 +514,19 @@ async function execute(): Promise<void> {
   say(rc.status === 'success' && okLog ? `izvršeno u bloku ${rc.blockNumber} (ExecutionSuccess)` : `transakcija bez ExecutionSuccess — provjeri ${txHash}`);
 }
 
+/// The Worker's gas key sends execTransaction for a tx already signed to
+/// threshold; it only pays gas (ADR 0027, src/setup/execute.ts).
+async function executeByMpt(): Promise<void> {
+  const p = S.pending!;
+  say(`izvršava MPT (gas: ${short(ctx.deployer!)})…`);
+  const r = await fetch(`/admin/api/tenants/${encodeURIComponent(ctx.tenantId)}/setup/execute`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ safe_tx_hash: p.hash }),
+  });
+  const j = (await r.json().catch(() => ({}))) as { error?: string; detail?: string; tx_hash?: string; block?: string };
+  if (!r.ok) throw new Error(`${j.error ?? `HTTP ${r.status}`}${j.detail ? `: ${j.detail}` : ''}${j.tx_hash ? ` (${j.tx_hash})` : ''}`);
+  say(`izvršeno u bloku ${j.block}: ${j.tx_hash}`);
+}
+
 /// Exactly `threshold` signatures, keeping the executor's own when it has one.
 function pickThreshold(sigs: { signer: Address; data: Hex }[], me: Address) {
   const mine = sigs.filter((x) => x.signer === me);
@@ -597,6 +610,7 @@ function render(): void {
   const p = S.pending;
   const signed = p && s ? p.confirmations.some((c) => c.owner === s.address) : false;
   const have = p ? p.confirmations.filter((c) => isOwner(c.owner)).length : 0;
+  const canMptExec = !!p && !!ctx.deployer && p.nonce === S.nonce && have >= Number(S.threshold);
   const canExec = !!p && !!s && p.nonce === S.nonce && (have >= Number(S.threshold) || (owner && !signed && have + 1 >= Number(S.threshold)));
   const dis = S.busy ? 'disabled' : '';
   const safeApp = `https://app.safe.global/transactions/queue?safe=${(SAFE_CHAINS as Record<number, { app: string }>)[ctx.chainId]?.app}:${ctx.safe}`;
@@ -653,7 +667,8 @@ ${p ? `<div class="box"><p>U redu Safe-a: nonce ${p.nonce}, potpisa ${have}/${S.
 ${p.confirmations.map((c) => `<div class="mono">✓ ${e(c.owner)}</div>`).join('')}
 ${p.nonce !== S.nonce ? `<p class="muted">Prije njega se moraju izvršiti transakcije s nonceom ${S.nonce}…${p.nonce - 1n}.</p>` : ''}
 <button id="confirm" ${dis || !s || !owner || signed ? 'disabled' : ''}>Potpiši</button>
-<button id="exec" ${dis || !canExec ? 'disabled' : ''}>${owner && !signed ? 'Potpiši i izvrši' : 'Izvrši'}</button>
+${ctx.deployer ? `<button id="mptExec" ${dis || !canMptExec ? 'disabled' : ''}>Izvrši, MPT plaća gas</button>` : ''}
+<button id="exec" class="${ctx.deployer ? 'sec' : ''}" ${dis || !canExec ? 'disabled' : ''}>${owner && !signed ? 'Potpiši i izvrši' : 'Izvrši'} iz MetaMaska</button>
 <a href="${safeApp}" target="_blank" rel="noopener">otvori u app.safe.global</a></div>`
     : `<button id="propose" ${dis || !s || !owner || !S.sim?.success ? 'disabled' : ''}>Predloži i potpiši</button>
 ${!s ? '<span class="muted">prvo spoji MetaMask (Potpisnik gore)</span>' : !owner ? '<span class="bad">spojeni račun nije vlasnik Safe-a — odaberi vlasnika u MetaMasku</span>' : S.sim && !S.sim.success ? '<span class="bad">simulacija pada</span>' : ''}`}`}
@@ -671,6 +686,7 @@ ${S.log.length ? `<div class="log">${e(S.log.join('\n'))}</div>` : ''}`;
   on('propose', () => run('Prijedlog', propose));
   on('confirm', () => run('Potvrda', confirm));
   on('exec', () => run('Izvršenje', execute));
+  on('mptExec', () => run('Izvršenje (MPT)', executeByMpt));
   on('reload', () => run('Osvježavanje', async () => {}));
   document.querySelectorAll<HTMLInputElement>('input[name="npMode"]').forEach((r) => r.addEventListener('change', () => {
     S.np = { ...readNp(), mode: r.value as NewProject['mode'] };
