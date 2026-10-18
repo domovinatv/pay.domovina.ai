@@ -124,9 +124,15 @@ tbody tr:last-child td { border-bottom: 0; }
   padding: .45rem 1.5rem; border-bottom: 1px solid var(--border);
   background: var(--surface); font-size: .8rem; color: var(--muted);
 }
-.tenant-strip .scope { font-weight: 600; color: var(--navy); margin-right: .3rem; }
-.tenant-strip .tchip { display: inline-flex; align-items: center; gap: .3rem; }
+.tenant-strip .scope { font-weight: 600; color: var(--navy); }
+.tenant-strip #tenantStripList { display: flex; flex-wrap: wrap; align-items: center; gap: .3rem 1.1rem; }
+.tenant-strip .tgroup { display: inline-flex; flex-wrap: wrap; align-items: center; gap: .3rem .7rem; }
+.tenant-strip .tgroup + .tgroup { padding-left: 1.1rem; border-left: 1px solid var(--border); }
 .tenant-strip .tchip .mono { color: var(--navy); }
+.tenant-strip .tchip .dim { font-size: .74rem; }
+.tenant-strip details.tgroup summary { cursor: pointer; list-style: none; }
+.tenant-strip details.tgroup summary::-webkit-details-marker { display: none; }
+.tenant-strip details.tgroup[open] summary { margin-right: .3rem; }
 .tenant-cell .tname { display: block; font-size: .76rem; color: var(--muted); }
 .pager {
   display: flex; justify-content: space-between; align-items: center;
@@ -191,6 +197,7 @@ a.button.secondary { background: #fff; color: var(--navy); border: 1px solid var
   th, td { padding: .45rem .55rem; font-size: .82rem; }
   .detail-grid { grid-template-columns: 1fr; gap: .15rem; }
   .detail-grid dt { padding-top: .55rem; }
+  .tenant-strip .tgroup + .tgroup { padding-left: 0; border-left: 0; }
 }
 </style>`;
 
@@ -203,6 +210,9 @@ interface ShellOptions {
   /// Kratka napomena u traci tenanta: je li ovaj tab po tenantu ili globalan.
   scope?: string;
 }
+
+/// Tabovi koji nisu po tenantu: traka pokazuje samo napomenu, bez popisa.
+const GLOBAL_TABS: ShellOptions['tab'][] = ['wallets', 'sybil', 'passkeys'];
 
 /// Shared CSS + JS injected once per page: snackbar/toast notification
 /// system + audio chime. Used by per-tab JS (currently intents) to fire
@@ -360,7 +370,7 @@ ${TOAST_JS}
 </nav>
 <div class="tenant-strip" id="tenantStrip">
   <span class="scope">${escapeHtml(scope ?? 'Po tenantu')}</span>
-  <span id="tenantStripList" class="dim">Tenanti…</span>
+  ${GLOBAL_TABS.includes(tab) ? '' : '<span id="tenantStripList" class="dim">Tenanti…</span>'}
 </div>
 <main>${body}</main>
 ${TENANT_STRIP_SCRIPT}
@@ -384,13 +394,25 @@ const TENANT_STRIP_SCRIPT = `<script>
     .then((r) => r.ok ? r.json() : Promise.reject(new Error("HTTP " + r.status)))
     .then((d) => {
       el.className = "";
-      el.innerHTML = (d.tenants || []).map((t) => {
-        const env = t.monerium_env || "unknown";
-        return '<span class="tchip" title="' + e(t.tenant_name || "") + '"><span class="mono">' + e(t.tenant_id) + '</span>' +
-          (t.tenant_id === d.default_tenant_id ? ' <span class="dim">(zadani)</span>' : '') +
-          ' <span class="pill env-' + e(env) + '">' + e(env === "production" ? "prod" : env) + '</span>' +
-          (t.chain && t.chain !== "gnosis" ? ' <span class="dim">' + e(t.chain) + '</span>' : '') + '</span>';
-      }).join("");
+      const chip = (t) => '<span class="tchip" title="' + e(t.tenant_name || "") + '"><span class="mono">' + e(t.tenant_id) + '</span>' +
+        (t.tenant_id === d.default_tenant_id ? ' <span class="dim">(zadani)</span>' : '') +
+        (t.chain && t.chain !== "gnosis" ? ' <span class="dim">· ' + e(t.chain) + '</span>' : '') + '</span>';
+      const all = d.tenants || [];
+      // Samoposlužni sandbox tenanti (ADR 0024) nemaju Monerium; ima ih puno
+      // pa idu u jednu sklopljenu grupu umjesto po chip svaki.
+      const sbx = all.filter((t) => String(t.tenant_id).startsWith("sbx-"));
+      const rest = all.filter((t) => !String(t.tenant_id).startsWith("sbx-"));
+      const groups = [
+        ["production", "prod"], ["sandbox", "sandbox"], ["unknown", "unknown"],
+      ].map(([env, label]) => {
+        const ts = rest.filter((t) => (t.monerium_env || "unknown") === env);
+        return ts.length ? '<span class="tgroup"><span class="pill env-' + env + '">' + label + '</span>' + ts.map(chip).join("") + '</span>' : "";
+      });
+      if (sbx.length) {
+        groups.push('<details class="tgroup"><summary><span class="pill env-unknown">sbx · ' + sbx.length + '</span> <span class="dim">samoposlužni</span></summary>' +
+          sbx.map(chip).join("") + '</details>');
+      }
+      el.innerHTML = groups.join("");
     })
     .catch(() => { el.textContent = "tenanti nedostupni"; });
 })();
@@ -1813,7 +1835,7 @@ export function renderWhitelistPage(): string {
   </table>
 </div>
 ${WHITELIST_SCRIPT}`;
-  return renderShell({ title: 'Payout whitelist', tab: 'whitelist', body, scope: 'Po tenantu (odabrani gore)' });
+  return renderShell({ title: 'Payout whitelist', tab: 'whitelist', body, scope: 'Po tenantu (odabir na stranici)' });
 }
 
 const WHITELIST_SCRIPT = `<script>
@@ -2027,7 +2049,7 @@ export function renderTenantsPage(): string {
   <tbody id="verifyRows"><tr><td colspan="3" class="empty">Još nije pokrenut.</td></tr></tbody>
 </table></div>
 ${TENANTS_SCRIPT}`;
-  return renderShell({ title: 'Tenanti', tab: 'tenants', body, scope: 'Po tenantu (odabrani dolje)' });
+  return renderShell({ title: 'Tenanti', tab: 'tenants', body, scope: 'Po tenantu (odabir na stranici)' });
 }
 
 const TENANTS_SCRIPT = `<script>
