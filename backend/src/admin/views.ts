@@ -130,9 +130,21 @@ tbody tr:last-child td { border-bottom: 0; }
 .tenant-strip .tgroup + .tgroup { padding-left: 1.1rem; border-left: 1px solid var(--border); }
 .tenant-strip .tchip .mono { color: var(--navy); }
 .tenant-strip .tchip .dim { font-size: .74rem; }
-.tenant-strip details.tgroup summary { cursor: pointer; list-style: none; }
-.tenant-strip details.tgroup summary::-webkit-details-marker { display: none; }
-.tenant-strip details.tgroup[open] summary { margin-right: .3rem; }
+.tenant-strip { position: relative; }
+.tenant-strip details summary { cursor: pointer; list-style: none; }
+.tenant-strip details summary::-webkit-details-marker { display: none; }
+.tenant-strip .tmore summary { color: var(--navy); font-weight: 600; }
+.tenant-strip .tmore summary:hover { text-decoration: underline; }
+.tenant-strip .tpanel {
+  position: absolute; top: 100%; left: 1.5rem; z-index: 20;
+  width: min(26rem, calc(100vw - 2rem)); max-height: 60vh;
+  display: flex; flex-direction: column; gap: .4rem; padding: .6rem;
+  background: #fff; border: 1px solid var(--border); border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0,0,0,.12);
+}
+.tenant-strip .tpanel input { width: 100%; padding: .35rem .5rem; font: inherit; border: 1px solid var(--border); border-radius: 6px; }
+.tenant-strip .tlist { overflow: auto; display: flex; flex-direction: column; gap: .15rem; }
+.tenant-strip .tlist .tchip { padding: .15rem .2rem; }
 .tenant-cell .tname { display: block; font-size: .76rem; color: var(--muted); }
 .pager {
   display: flex; justify-content: space-between; align-items: center;
@@ -397,22 +409,51 @@ const TENANT_STRIP_SCRIPT = `<script>
       const chip = (t) => '<span class="tchip" title="' + e(t.tenant_name || "") + '"><span class="mono">' + e(t.tenant_id) + '</span>' +
         (t.tenant_id === d.default_tenant_id ? ' <span class="dim">(zadani)</span>' : '') +
         (t.chain && t.chain !== "gnosis" ? ' <span class="dim">· ' + e(t.chain) + '</span>' : '') + '</span>';
-      const all = d.tenants || [];
+      const all = (d.tenants || []).slice().sort((x, y) =>
+        (y.tenant_id === d.default_tenant_id) - (x.tenant_id === d.default_tenant_id));
+      // Grupa pokazuje do INLINE chipova u traci, ostatak ide u padajući panel
+      // s pretragom, da traka ostane jedan red i kad je tenanata stotinu.
+      const INLINE = 4;
+      const panel = (summary, ts) => '<details class="tmore"><summary>' + summary + '</summary><div class="tpanel">' +
+        (ts.length > 8 ? '<input type="search" placeholder="Traži tenanta…" aria-label="Traži tenanta" />' : '') +
+        '<div class="tlist">' + ts.map(chip).join("") + '</div></div></details>';
+      const group = (pill, ts, inline) => '<span class="tgroup">' +
+        (inline ? pill + ts.slice(0, inline).map(chip).join("") : "") +
+        (ts.length > inline ? panel(inline ? "+" + (ts.length - inline) : pill, ts) : "") + '</span>';
       // Samoposlužni sandbox tenanti (ADR 0024) nemaju Monerium; ima ih puno
-      // pa idu u jednu sklopljenu grupu umjesto po chip svaki.
-      const sbx = all.filter((t) => String(t.tenant_id).startsWith("sbx-"));
-      const rest = all.filter((t) => !String(t.tenant_id).startsWith("sbx-"));
+      // pa su cijeli u panelu, u traci samo broj.
+      const isSbx = (t) => String(t.tenant_id).startsWith("sbx-");
+      const sbx = all.filter(isSbx);
+      const rest = all.filter((t) => !isSbx(t));
       const groups = [
         ["production", "prod"], ["sandbox", "sandbox"], ["unknown", "unknown"],
       ].map(([env, label]) => {
         const ts = rest.filter((t) => (t.monerium_env || "unknown") === env);
-        return ts.length ? '<span class="tgroup"><span class="pill env-' + env + '">' + label + '</span>' + ts.map(chip).join("") + '</span>' : "";
+        return ts.length ? group('<span class="pill env-' + env + '">' + label + '</span>', ts, INLINE) : "";
       });
       if (sbx.length) {
-        groups.push('<details class="tgroup"><summary><span class="pill env-unknown">sbx · ' + sbx.length + '</span> <span class="dim">samoposlužni</span></summary>' +
-          sbx.map(chip).join("") + '</details>');
+        groups.push(group('<span class="pill env-unknown">sbx · ' + sbx.length + '</span> <span class="dim">samoposlužni</span>', sbx, 0));
       }
       el.innerHTML = groups.join("");
+      const panels = Array.from(el.querySelectorAll("details.tmore"));
+      panels.forEach((p) => {
+        p.addEventListener("toggle", () => {
+          if (!p.open) return;
+          panels.forEach((o) => { if (o !== p) o.open = false; });
+          const q = p.querySelector("input");
+          if (q) q.focus();
+        });
+        const q = p.querySelector("input");
+        if (q) q.addEventListener("input", () => {
+          const v = q.value.trim().toLowerCase();
+          p.querySelectorAll(".tlist .tchip").forEach((c) => {
+            c.hidden = !!v && !c.textContent.toLowerCase().includes(v) && !(c.title || "").toLowerCase().includes(v);
+          });
+        });
+      });
+      const closeAll = () => panels.forEach((p) => { p.open = false; });
+      document.addEventListener("click", (ev) => { if (!ev.target.closest || !ev.target.closest("details.tmore")) closeAll(); });
+      document.addEventListener("keydown", (ev) => { if (ev.key === "Escape") closeAll(); });
     })
     .catch(() => { el.textContent = "tenanti nedostupni"; });
 })();
