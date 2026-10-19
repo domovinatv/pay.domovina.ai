@@ -102,3 +102,5 @@ konzolu).
   `italk`.
 - Gornja granica veličine `Or` stabla u Roles v2. Ako projekata bude puno: custom
   condition s registry ugovorom kojim upravlja 2/3.
+
+Nastavak (produkcija, 2026-10-19): [ITalk u D1 rail + ProjectRouter](2026-10-19-italk-d1-rail-prelazak.md).
