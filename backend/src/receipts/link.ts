@@ -8,7 +8,7 @@ import { isReceiptSid } from './sid';
 ///
 /// Anchor = a forward of a receipt sid that came in the payer's OWN remittance
 /// (memo_prefix 'mpt'/'cmp', or 'gnosis'/'chiado' in direct mode, ADR 0025;
-/// never the stray resolver's 'auto'/'manual').
+/// never the short code's 'code' (ADR 0028) or the stray resolver's 'auto'/'manual').
 /// Each confirmed anchor gets a direct leaf, then covers every earlier,
 /// delivered, not-yet-covered payment from the same payer IBAN since the
 /// previous anchor from that IBAN (lazy leaves).

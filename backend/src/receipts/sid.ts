@@ -75,12 +75,13 @@ export function receiptSidMatches(sid: string, owner: string, salt: string): boo
 
 /// `kind` written into the forward's PaymentRegistry event (ADR 0022 §3).
 /// `via` is how the forward found its intent: null = the sid came in the
-/// payer's own remittance; 'auto' | 'manual' = stray resolver / operator
+/// payer's own remittance; 'code' | 'auto' | 'manual' = short code (ADR 0028,
+/// no receipt: anyone who knows the code can type it) / stray resolver / operator
 /// (amount + time is not proof of who paid). Non-receipt sids keep the
 /// registry default ('payment').
 export function receiptKind(
   sid: string | null | undefined,
-  via: 'auto' | 'manual' | null,
+  via: 'code' | 'auto' | 'manual' | null,
 ): 'rcpt1' | 'rcpt1-unbound' | undefined {
   if (!isReceiptSid(sid)) return undefined;
   return via === null ? 'rcpt1' : 'rcpt1-unbound';

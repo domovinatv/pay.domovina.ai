@@ -1,6 +1,6 @@
 # ADR 0028 — Kratka referenca intenta (3 znamenke) kao zamjena za dugi opis plaćanja
 
-- **Status:** Accepted (2026-10-20), čeka implementaciju. Predloženo 2026-10-19
+- **Status:** Accepted (2026-10-20), implementirano 2026-10-20 (`backend/src/intents/shortRef.ts`, migracija 0031). Predloženo 2026-10-19
 - **Kontekst:** MPT rail (`backend/`), uparivanje SEPA naloga s intentom
 - **Gradi na:** [0018](0018-stray-payment-resolver.md) (stray resolver) ·
   [0022](0022-potvrda-o-uplati-vezana-uz-kljuc-uplatitelja.md) (potvrda o uplati) ·
@@ -58,20 +58,41 @@ malo vjerojatan.
   provjerava kao dosad (BW-01 under/over). Odredište je uvijek `payment_intents.target_address`,
   kao kod stray resolvera, i prolazi `authorizeForward`. Kod koji ne pogodi živi intent →
   uobičajeni stray put (0018).
-- **Prikaz.** Uz QR veliko i odvojeno: „Ako Revolut ostavi Reference prazno, upiši **007**”.
+- **Prikaz.** Uz QR veliko i odvojeno: „Ako Revolut ostavi Reference prazno, upiši **0076**”.
   Prikazuje se kao jedan niz (`0071`), a uplatitelj ne mora znati koja je znamenka kontrolna.
   Kod je čitljiv i sa screenshota i s ekrana računala, bez kopiranja. EPC QR i dalje nosi puni
   memo; kratka referenca je rezerva, ne zamjena.
 
+## Implementacija (2026-10-20)
+
+- **Migracija 0031.** `payment_intents.short_ref` je trajni zapis koda. Zauzeće drži tablica
+  `intent_short_refs` s `PRIMARY KEY (tenant_id, short_ref)`. Redak je živ dok je
+  `hold_until > sada` i intent nije plaćen. Dodjela je jedan upsert
+  (`ON CONFLICT … DO UPDATE … WHERE redak nije živ`): mrtav redak preuzme, živ nikad, pa dva
+  istovremena `POST`-a ne mogu dobiti isti kod ni kad oba pročitaju isti slobodan skup.
+- **Dodjela** (`allocateShortRef`): slučajno slobodno tijelo od 3 znamenke. Za 3 i 4 znamenke čita
+  zauzeti skup i bira među slobodnima, pa tijelo raste tek kad je bazen stvarno pun. Dodjela je
+  best effort: ako ne uspije, intent nastaje s `short_ref = null` (kod je rezerva, ne uvjet).
+  Svi putovi stvaranja intenta (javni, sandbox, `receipt-intent`) idu kroz `insertWithRetry`.
+- **Uparivanje** (`handleForward`, `previewStraySid`): samo kad memo nema adrese, `sid`-a ni
+  kampanje. Normalizacija skida razmake, interpunkciju i simbole; mora ostati točno jedan niz
+  znamenki s ispravnom Damm znamenkom. Memo i `referenceNumber` ne smiju nositi dva različita
+  koda. Pogodak mora biti živ, nenaplaćen, bez živog forwarda (`pending/submitted/confirmed`)
+  i **pouzdan po SR-01**. Promašaj ide u stray resolver kao prije. Pogodak dobiva
+  `memo_prefix = 'code'`, jedan kandidat i isti gate (`authorizeForward`).
+- **API:** `short_ref` na vrhu JSON-a intenta (`POST /api/intents`, `GET status_url`, lista).
+  Checkout prikazuje kod veliko ispod reference (`data-revolut-reference`).
+
 ## Otvoreno
 
 1. ~~Tipfeler~~ — riješeno kontrolnom znamenkom (3 + 1, Damm), odluka 2026-10-20.
-2. **Potvrda o uplati (0022).** Potvrda danas traži da opis nosi `sid` izveden iz ključa
-   uplatitelja. Treba odlučiti smije li kratka referenca usidriti potvrdu. Rizik: tko zna tuđi
-   kod, može ga upisati u svoju uplatu. Time pokloni uplatu tuđem intentu, ali ne dobiva
-   ništa. Treba provjeriti dokazuje li potvrda tada i dalje ono što tvrdi.
-3. **Dužina prozora zadržavanja** u odnosu na veličinu bazena: 1000 kodova po tenantu s 48 h
-   zadržavanja napuni se tek uz oko 20 napuštenih intenta na sat.
-4. **Kratki prefiks `sid`-a umjesto zasebnog koda** (git short-hash) je prirodna varijanta, ali
-   `sid` potvrde je izveden iz ključa (`r1…`) i ne može se ponovno izvući kad se sudari. Zato je
-   prijedlog zaseban kod; odluka pri implementaciji.
+2. ~~Potvrda o uplati (0022)~~ — **riješeno 2026-10-20: kratki kod NE daje potvrdu.** Kod je
+   javan na ekranu i nije izveden iz ključa uplatitelja, pa ne dokazuje tko je platio. Forward
+   nađen kodom nosi `memo_prefix = 'code'`: ne sidri potvrdu (`receipts/link.ts` ga ne broji kao
+   opis uplatitelja), a `receiptKind` ga na lancu bilježi kao `rcpt1-unbound`, kao stray.
+3. ~~Dužina prozora zadržavanja~~ — **riješeno 2026-10-20: `expires_at` + 48 h**
+   (`SHORT_REF_HOLD_SECONDS = STRAY_LOOKBACK_SECONDS`). Isti prozor u kojem stray resolver još
+   prihvaća kasnu uplatu; kod oslobođen ranije mogao bi kasnu uplatu poslati tuđem intentu.
+   Plaćen intent oslobađa kod odmah. 1000 kodova po tenantu napuni se tek uz ~20 napuštenih
+   intenta na sat; tada tijelo naraste na 4 + 1.
+4. ~~Kratki prefiks `sid`-a~~ — **odbačeno**: zaseban kod, iz razloga navedenog u prijedlogu.

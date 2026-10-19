@@ -219,6 +219,11 @@ h1 { font-size: 1.5rem; margin: 0 0 .4rem; }
   border: 0; border-radius: .4rem; background: var(--navy); color: #fff;
 }
 .ref-hint { font-size: .8rem; color: var(--muted); line-height: 1.4; margin: .6rem 0 0; }
+.short-ref { margin-top: .75rem; padding-top: .75rem; border-top: 1px solid var(--border); text-align: center; }
+.short-ref-code {
+  margin: .25rem 0 .35rem; font-size: 2.2rem; font-weight: 800; color: var(--navy); letter-spacing: .3em;
+  padding-left: .3em; font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; user-select: all;
+}
 .amount-block { text-align: center; margin: .25rem 0 1rem; }
 .amount {
   font-size: 2.4rem; font-weight: 800; color: var(--navy);
@@ -431,6 +436,7 @@ ${moneriumSandbox ? '<div class="sandbox-ribbon" role="note">MONERIUM SANDBOX ·
           <p class="ref-hint"><b>Revolut:</b> nakon skeniranja polje <i>Reference</i> ostaje prazno. Prije slanja dodirnite ga i zalijepite kopiranu referencu${direct
             ? '. Bez nje novac ne stiže izravno u projekt.'
             : '.'}</p>
+          ${shortRefBlock(intent.short_ref)}
         </div>
       </div>
       ${hub3Svg === null ? '' : `<div id="hub3Pane" class="qr-wrap" style="margin:0;display:none">
@@ -957,4 +963,16 @@ applyState(INITIAL);
 </script>
 </body>
 </html>`;
+}
+
+/// ADR 0028: the short code, big and on its own, for a payer whose bank app
+/// dropped the reference and who cannot paste (QR on another screen, or a
+/// screenshot). Nothing when the intent has no code.
+function shortRefBlock(code: string | null | undefined): string {
+  if (!code || !/^\d{4,7}$/.test(code)) return '';
+  return `<div class="short-ref">
+            <div class="ref-label">Kratka referenca</div>
+            <div class="short-ref-code" id="shortRef" data-revolut-reference>${code}</div>
+            <p class="ref-hint">Ako Revolut ostavi <i>Reference</i> prazno, a referencu ne možete zalijepiti, upišite <b>${code}</b>.</p>
+          </div>`;
 }
