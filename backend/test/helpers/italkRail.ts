@@ -37,3 +37,35 @@ export async function seedItalkRail(
     EURE_CONTRACT: '0x420CA0f9B9b604cE0fd9C18EF134C705e5Fa3430',
   };
 }
+
+/// Router key the sync seed stores (only when `withRouter`).
+export const ITALK_ROUTER_KEY = '0x' + '11'.repeat(32);
+
+const kekSync = await importKek(ITALK_KEK);
+const BLOBS = {
+  client_secret: await encryptSecret(kekSync, 'italk', 'client_secret', 'cs-italk'),
+  webhook_secret: await encryptSecret(kekSync, 'italk', 'webhook_secret', ITALK_WEBHOOK_SECRET),
+  router_key: await encryptSecret(kekSync, 'italk', 'router_key', ITALK_ROUTER_KEY),
+};
+
+/// Same row as `seedItalkRail`, for setups that are not async.
+export function seedItalkRailSync(
+  raw: DatabaseSync,
+  over: { mode?: 'direct' | 'forward'; withRouter?: boolean } = {},
+): { MULTI_TENANT_RAIL: string; TENANT_SECRETS_KEK: string; EURE_CONTRACT: string } {
+  raw.prepare(
+    `INSERT INTO tenant_rail (tenant_id, monerium_env, chain, client_id, client_secret_enc, profile_id,
+       receiving_safe, roles_modifier, role_key, router_key_enc, webhook_secret_enc, webhook_subscription_id,
+       mode, created_at, updated_at)
+     VALUES ('italk', 'production', 'gnosis', 'cid-italk', ?, 'prof-italk', ?, ?, ?, ?, ?, 'sub-italk', ?, 0, 0)`,
+  ).run(
+    BLOBS.client_secret,
+    ITALK_SAFE,
+    '0x330347d656b1a5df972f758de1e25e99ec36762c',
+    '0x50726f6a656374526f7574657200000000000000000000000000000000000000',
+    over.withRouter ? BLOBS.router_key : null,
+    BLOBS.webhook_secret,
+    over.mode ?? 'direct',
+  );
+  return { MULTI_TENANT_RAIL: '1', TENANT_SECRETS_KEK: ITALK_KEK, EURE_CONTRACT: '0x420CA0f9B9b604cE0fd9C18EF134C705e5Fa3430' };
+}

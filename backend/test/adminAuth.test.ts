@@ -243,28 +243,6 @@ describe('ops routes (AD-02)', () => {
     expect(res.status).toBe(401);
   });
 
-  it('a subscription can only point at our own webhook URL — session or legacy token', async () => {
-    const body = JSON.stringify({ url: 'https://attacker.example/hook' });
-    const viaSession = await worker.fetch(
-      req('/admin/api/monerium/webhooks', {
-        method: 'POST', cookie: true,
-        headers: { origin: HOST, 'content-type': 'application/json' }, body,
-      }),
-      env({ email: 'ops@domovina.ai' }),
-      ctx,
-    );
-    expect(viaSession.status).toBe(400);
-    expect(await viaSession.json()).toEqual({ error: 'url_not_ours' });
-    const viaToken = await worker.fetch(
-      req('/api/monerium/admin/webhooks', {
-        method: 'POST',
-        headers: { authorization: 'Bearer tok-123', 'content-type': 'application/json' }, body,
-      }),
-      env(undefined, { ADMIN_TOKEN: 'tok-123' } as Partial<Env>),
-      ctx,
-    );
-    expect(viaToken.status).toBe(400);
-  });
 });
 
 describe('passkey registration (AD-03)', () => {

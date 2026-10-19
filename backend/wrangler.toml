@@ -71,7 +71,6 @@ GOCARDLESS_REDIRECT_URL = "https://monerium.domovina.ai/api/hpb/callback"
 
 # Monerium — production. Flip to https://api.monerium.dev for sandbox testing.
 MONERIUM_BASE_URL = "https://api.monerium.app"
-MONERIUM_PROFILE_ID = ""
 
 # otp.domovina.ai — Reverse OTP service for wallet phone binding + recovery.
 # Source repo: /Users/ms/git/domovinatv/sms.domovina.ai
@@ -98,12 +97,12 @@ DEFAULT_TENANT_ID = "italk"
 INTENT_REQUIRE_TENANT_KEY = "0"
 
 # Multi-tenant rail (ADR 0017 — docs/decisions/0017-multi-tenant-rail.md).
-# Every tenant other than DEFAULT_TENANT_ID has its own Monerium account,
+# Every tenant, ITalk included (migration 0030), has its own Monerium account,
 # webhook (/api/monerium/webhook/t/<tenant>) and signer, stored in the
 # tenant_rail table with secrets encrypted under TENANT_SECRETS_KEK.
 #   MULTI_TENANT_RAIL — "1" turns tenant rails on. "0": per-tenant webhook 404,
 #                       intents for non-default tenants refused, reconcile
-#                       only touches the default tenant. ITalk never reads it.
+#                       touches nobody. Must stay "1".
 #   INTENT_SSE        — "1" serves GET /api/intents/:sid/stream as SSE; "0"
 #                       keeps the historical 404 (clients poll).
 # Mora ostati "1" u main: 9. 10. ga je deploy iz main vratio na "0" i ugasio
@@ -126,17 +125,6 @@ STRAY_RESOLVER = "1"
 # on OpenTimestamps. "0" → no receipt rows are written and nothing is stamped.
 RECEIPTS = "1"
 
-# ADR 0025: ITalk u izravnom načinu. Referenca `gnosis:<Safe projekta> sid:<sid>`,
-# Monerium minta ravno u Safe projekta, router ključ se ne učitava ni ne potpisuje.
-# Uplata sa starom `mpt:` referencom koja sleti u MPT Safe = „dugovano“ (D4),
-# prebacuju je 2/3 vlasnika. "forward" = stari router put (rollback).
-LEGACY_RAIL_MODE = "direct"
-
-# MT-03 (Fable 5.1 r2): ITalk forwards only issue orders minted at SAFE_ADDRESS,
-# as tenant rails always did. Pre-check 2026-10-10: every ITalk issue order
-# since 2026-05-21 minted at the Safe. "0" = old behaviour (rollback switch).
-LEGACY_REQUIRE_MINT_AT = "1"
-
 # /admin prijava (src/admin/auth/mount.ts, docs/admin-auth.md) — isti model kao
 # bank-push-gateway: Cloudflare Access (OTP na e-mail) na /admin/sso ili passkey.
 # Nisu tajne. Oduzimanje pristupa: makni e-mail odavde (djeluje odmah, i na
@@ -149,27 +137,13 @@ ADMIN_HOST = "mpt.domovina.ai"
 ACCESS_TEAM_DOMAIN = "domovina.cloudflareaccess.com"
 ACCESS_AUD = "c1e0493deb2d777529744e4ff5d74cebae4fe070a0dae77fdda73e81d01a6bb2"
 
-# MPT routing — Safe + Zodiac Roles Modifier on Gnosis chain (100).
-# All public; private signer key lives in ROUTER_PRIVATE_KEY secret below.
+# Gnosis chain (100). ITalk's Safe, modifier and router live in tenant_rail.
 GNOSIS_RPC_URL = "https://rpc.gnosischain.com"
 EURE_CONTRACT = "0x420CA0f9B9b604cE0fd9C18EF134C705e5Fa3430"
-# MPT main-rail Safe (Monerium default wallet). Verified on-chain 2026-05-21:
+# MPT main-rail Safe (Monerium default wallet); read only by the on-chain
+# donation indexer. Verified on-chain 2026-05-21:
 # Safe v1.4.1, threshold 2/3, owners ms-/ds-/md-mpt-mr-signer.
 SAFE_ADDRESS = "0x449aBCEf4e29a7Dd8d98dB451AF2c463561BAf2e"
-# Zodiac Roles Modifier v2 instance, owner = SAFE_ADDRESS, enabled as Safe module.
-# Verified on-chain 2026-05-21.
-ROLES_MODIFIER_ADDRESS = "0x330347d656b1a5DF972f758DE1E25E99ec36762c"
-# Bytes32 role key for "EUReForwarder" — formatBytes32String("EUReForwarder").
-# Set via safe-tx/001-eure-forwarder-role-setup.{mjs,json}; assigned to backend
-# EOA 0xd61289c5035c6e5eaD6F100b6A8F90ac4ee054CB once that batch executes on Safe.
-ROLE_KEY = "0x45555265466f7277617264657200000000000000000000000000000000000000"
-# ADR 0026: rola ProjectRouter na istom modifieru smije samo EURe.transfer prema
-# projektnim Safe-ovima koje su 2/3 vlasnika odobrili (safe-tx/009). Rail njome
-# zatvara D4 dugove (uplata bez reference, mint na MPT Safe). Uključuje se tek kad
-# su postavljeni OBOJE: ova vrijednost i secret PROJECT_ROUTER_PRIVATE_KEY.
-# Prazno = D4 ostaje ručni 2/3 prijenos. Vrijednost nakon izvršenja 009:
-#   0x50726f6a656374526f7574657200000000000000000000000000000000000000
-PROJECT_ROUTER_ROLE_KEY = ""
 
 # PaymentRegistry onchain memo (optional). When BOTH set, the rail forwards
 # via Safe MultiSend so each forward emits an onchain `Payment` event in the
@@ -186,10 +160,6 @@ MULTISEND_ADDRESS = "0x9641d764fc13c8B624c04430C7356C1C7C8102e2"
 #   ENABLE_BANKING_PRIVATE_KEY      # full PEM PKCS8 (preserve newlines)
 #   GOCARDLESS_SECRET_ID            # only needed if BANKING_PROVIDER=gocardless
 #   GOCARDLESS_SECRET_KEY
-#   MONERIUM_CLIENT_ID              # from monerium.app/developers/apps
-#   MONERIUM_CLIENT_SECRET
-#   MONERIUM_WEBHOOK_SECRET         # HMAC secret you set in Monerium webhook config
-#   ROUTER_PRIVATE_KEY              # 0x-prefixed 32-byte hex — backend EOA member of EUReForwarder role
 #   PHONE_PEPPER                    # opaque secret string — HMAC key for hashing E.164 phones in wallet_registry
 #   TELEGRAM_BOT_TOKEN              # optional — @BotFather token for blocked-forward alerts
 #   TELEGRAM_CHAT_ID                # optional — ops chat id; both unset = alerts degrade to console warnings

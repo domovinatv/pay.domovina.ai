@@ -136,17 +136,6 @@ describe('outbound webhooks stay with their tenant', () => {
     expect(f.sql.some((q) => q.includes('webhook_outbox'))).toBe(false);
     expect(fetchSpy).not.toHaveBeenCalled();
   });
-
-  it('still delivers the default tenant’s events to the global endpoint', async () => {
-    const f: Fake = { sql: [], rows: {} };
-    const fetchSpy = vi.fn(async () => new Response('ok', { status: 200 }));
-    vi.stubGlobal('fetch', fetchSpy);
-    await enqueueWebhook(env(f), { id: 'rcv_ord-2', type: 'payment.received', tenantId: 'italk', payload: {} });
-    await enqueueWebhook(env(f), { id: 'rcv_ord-3', type: 'payment.received', tenantId: null, payload: {} });
-    expect(f.sql.filter((q) => q.includes('INSERT OR IGNORE INTO webhook_outbox'))).toHaveLength(2);
-    expect(fetchSpy).toHaveBeenCalledTimes(2);
-    expect(fetchSpy.mock.calls[0][0]).toBe('https://pinka.example/hook');
-  });
 });
 
 describe("an order on tenant X's IBAN never advances tenant Y's intent", () => {

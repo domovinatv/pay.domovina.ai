@@ -160,10 +160,8 @@ export async function deliverDue(
 
 // ---- Env wiring -----------------------------------------------------------
 
-/// The endpoint is resolved at send time, per tenant (ADR 0017). The default
-/// tenant (rows with tenant_id NULL or = DEFAULT_TENANT_ID) keeps the global
-/// INTENT_WEBHOOK_URL; any other tenant uses only its own endpoint from
-/// tenant_rail, or gets none.
+/// The endpoint is resolved at send time, per tenant (ADR 0017): only the
+/// tenant's own endpoint from tenant_rail (or sandbox_tenants), or none.
 async function endpointFor(
   env: Env,
   tenantId: string | null,
