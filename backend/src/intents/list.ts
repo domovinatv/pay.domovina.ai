@@ -13,8 +13,6 @@ export type IntentStateFilter = 'pending' | 'paid' | 'expired';
 
 export interface TenantIntentQuery {
   tenantId: string;
-  /// The default tenant also owns rows with tenant_id NULL.
-  includeLegacyNull: boolean;
   state: IntentStateFilter | null;
   /// Unix seconds, inclusive / exclusive, on created_at.
   createdFrom: number | null;
@@ -37,10 +35,8 @@ export function decodeCursor(raw: string): { createdAt: number; sid: string } | 
   }
 }
 
-function tenantWhere(q: Pick<TenantIntentQuery, 'tenantId' | 'includeLegacyNull'>): { sql: string; args: unknown[] } {
-  return q.includeLegacyNull
-    ? { sql: '(tenant_id = ? OR tenant_id IS NULL)', args: [q.tenantId] }
-    : { sql: 'tenant_id = ?', args: [q.tenantId] };
+function tenantWhere(q: Pick<TenantIntentQuery, 'tenantId'>): { sql: string; args: unknown[] } {
+  return { sql: 'tenant_id = ?', args: [q.tenantId] };
 }
 
 function rangeWhere(q: Pick<TenantIntentQuery, 'createdFrom' | 'createdTo'>, where: string[], args: unknown[]): void {
@@ -98,7 +94,7 @@ export interface IntentStats {
 
 export async function tenantIntentStats(
   env: Env,
-  q: Pick<TenantIntentQuery, 'tenantId' | 'includeLegacyNull' | 'createdFrom' | 'createdTo'>,
+  q: Pick<TenantIntentQuery, 'tenantId' | 'createdFrom' | 'createdTo'>,
 ): Promise<IntentStats> {
   const t = tenantWhere(q);
   const where = [t.sql];

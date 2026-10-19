@@ -3,12 +3,9 @@ import type { Hono } from 'hono';
 import type { Env } from '../types';
 import { writeAudit } from './db';
 import { actorOf } from '../admin/auth/mount';
-import { MoneriumClient } from '../monerium/client';
-import { isLegacyTenant, legacyRail, railFromStoredRow } from './rail';
+import { railFromStoredRow } from './rail';
 import {
   createTenant,
-  envRailBody,
-  legacySubscriptionId,
   generateRouterKey,
   loadTenantAndRail,
   makeVerifyDeps,
@@ -29,9 +26,7 @@ import { renderTenantsPage } from '../admin/views';
 /// Admin surface for tenant onboarding (ADR 0017 §Admin). Mounted under
 /// `/admin/*`, behind the same admin session as the rest of the dashboard.
 ///
-/// The default tenant (ITalk) is moving from the Worker env into its own row:
-/// `rail/import-env` writes it, the rest of the flow is the same as for any
-/// tenant, except the per-tenant webhook until the env rail is removed.
+/// Every tenant, ITalk included, goes through the same flow.
 
 async function jsonBody(req: { json<T>(): Promise<T> }): Promise<Record<string, unknown> | null> {
   try {
@@ -69,7 +64,6 @@ export function mountRailAdmin(app: Hono<{ Bindings: Env }>): void {
     if (!body) return c.json({ error: 'invalid_json' }, 400);
     const v = validateCreateTenant(body);
     if (!v.ok) return c.json({ error: v.error }, 400);
-    if (isLegacyTenant(c.env, v.value.id)) return c.json({ error: 'default_tenant_uses_env' }, 400);
     // `sbx-` is the self-serve sandbox namespace (ADR 0024).
     if (v.value.id.startsWith('sbx-')) return c.json({ error: 'reserved_tenant_id' }, 400);
     const r = await createTenant(c.env, v.value);
@@ -87,7 +81,7 @@ export function mountRailAdmin(app: Hono<{ Bindings: Env }>): void {
     const id = c.req.param('id');
     const { tenant, row } = await loadTenantAndRail(c.env, id);
     if (!tenant) return c.json({ error: 'tenant_not_found' }, 404);
-    return c.json({ tenant_id: id, status: tenant.status, legacy: isLegacyTenant(c.env, id), rail: row ? redactRail(row) : null });
+    return c.json({ tenant_id: id, status: tenant.status, rail: row ? redactRail(row) : null });
   });
 
   app.put('/admin/api/tenants/:id/rail', async (c) => {
@@ -127,51 +121,6 @@ export function mountRailAdmin(app: Hono<{ Bindings: Env }>): void {
     return c.json({ ok: true, rail: fresh.row ? redactRail(fresh.row) : null });
   });
 
-  // ITalk → D1: the Worker writes its own env rail (Monerium credentials,
-  // outbound webhook secret) into the tenant's row, encrypted under the KEK.
-  // Workers secrets cannot be read back, so this is the only path that keeps
-  // the values out of people's hands. Once only: an existing row is refused.
-  app.post('/admin/api/tenants/:id/rail/import-env', async (c) => {
-    const id = c.req.param('id');
-    if (!isLegacyTenant(c.env, id)) return c.json({ error: 'only_default_tenant' }, 400);
-    const { tenant, row } = await loadTenantAndRail(c.env, id);
-    if (!tenant) return c.json({ error: 'tenant_not_found' }, 404);
-    if (tenant.status === 'active') return c.json({ error: 'suspend_first' }, 409);
-    if (row) return c.json({ error: 'rail_exists' }, 409);
-    const monerium = new MoneriumClient(c.env, legacyRail(c.env).monerium);
-    let profileId: string;
-    try {
-      profileId = await monerium.resolveProfileId();
-    } catch (e) {
-      return c.json({ error: 'profile_unresolved', detail: (e as Error).message.slice(0, 200) }, 502);
-    }
-    const v = validateRailInput(envRailBody(c.env, profileId), null);
-    if (!v.ok) return c.json({ error: v.error }, 400);
-    if (await profileTakenByOther(c.env, id, v.value.profileId)) {
-      return c.json({ error: 'profile_in_use' }, 409);
-    }
-    await upsertRail(c.env, id, v.value, null);
-    let subscription: string | null = null;
-    try {
-      subscription = legacySubscriptionId(await monerium.listWebhookSubscriptions());
-    } catch (e) {
-      console.error(`import-env ${id}: listing webhooks failed: ${(e as Error).message}`);
-    }
-    if (subscription) {
-      await c.env.DB.prepare('UPDATE tenant_rail SET webhook_subscription_id = ? WHERE tenant_id = ?')
-        .bind(subscription, id).run();
-    }
-    await writeAudit(c.env, {
-      tenantId: id,
-      action: 'rail.import_env',
-      address: v.value.receivingSafe,
-      actor: actorOf(c),
-      detail: JSON.stringify({ profile_id: v.value.profileId, mode: v.value.mode, legacy_subscription: subscription }),
-    });
-    const fresh = await loadTenantAndRail(c.env, id);
-    return c.json({ ok: true, legacy_subscription: subscription, rail: fresh.row ? redactRail(fresh.row) : null });
-  });
-
   app.post('/admin/api/tenants/:id/rail/router-key', async (c) => {
     const id = c.req.param('id');
     const { tenant, row } = await loadTenantAndRail(c.env, id);
@@ -193,9 +142,6 @@ export function mountRailAdmin(app: Hono<{ Bindings: Env }>): void {
 
   app.post('/admin/api/tenants/:id/rail/webhook', async (c) => {
     const id = c.req.param('id');
-    // ITalk's row is prepared while the env rail still runs it; its per-tenant
-    // webhook would have no rail behind it until the env rail is removed.
-    if (isLegacyTenant(c.env, id)) return c.json({ error: 'default_tenant_uses_env' }, 400);
     const { tenant, row } = await loadTenantAndRail(c.env, id);
     if (!tenant || !row) return c.json({ error: 'rail_not_found' }, 404);
     if (tenant.status === 'active') return c.json({ error: 'suspend_first' }, 409);
@@ -255,10 +201,8 @@ export function mountRailAdmin(app: Hono<{ Bindings: Env }>): void {
   }
 }
 
-/// Jedan Monerium profil smije imati samo jedan tenant (migracija 0025), a
-/// profil ITalka (env, bez reda u tenant_rail) ne smije nijedan drugi.
+/// Jedan Monerium profil smije imati samo jedan tenant (migracija 0025).
 async function profileTakenByOther(env: Env, tenantId: string, profileId: string): Promise<boolean> {
-  if (!isLegacyTenant(env, tenantId) && env.MONERIUM_PROFILE_ID && env.MONERIUM_PROFILE_ID === profileId) return true;
   const other = await env.DB.prepare(
     'SELECT tenant_id FROM tenant_rail WHERE profile_id = ? AND tenant_id != ?',
   ).bind(profileId, tenantId).first<{ tenant_id: string }>();

@@ -16,7 +16,7 @@ const SECRET_B = 'whsec_' + btoa('zupa-b-webhook-secret-32-bytes!!');
 function rail(over: Partial<TenantRail> = {}): TenantRail {
   return {
     tenantId: 'zupa-a',
-    legacy: false,
+    mode: 'forward',
     monerium: {
       baseUrl: 'https://api.monerium.app',
       clientId: 'c',
@@ -44,9 +44,8 @@ function rail(over: Partial<TenantRail> = {}): TenantRail {
 
 const italk = rail({
   tenantId: 'italk',
-  legacy: true,
   webhookSecret: SECRET_ITALK,
-  monerium: { ...rail().monerium, profileId: null, tokenCacheKey: 'monerium:access_token' },
+  monerium: { ...rail().monerium, tokenCacheKey: 'monerium:access_token:italk' },
 });
 
 async function sign(secret: string, id: string, ts: string, body: string): Promise<string> {
@@ -195,9 +194,9 @@ describe('per-tenant webhook — attribution', () => {
     expect(rec.records[0]).toMatchObject({ signatureOk: true, tenantId: 'zupa-a', processingNote: null });
   });
 
-  it('namespaces the idempotency key per tenant; ITalk keeps the bare id', async () => {
+  it('namespaces the idempotency key per tenant, ITalk included', async () => {
     expect(dedupKey(rail(), 'msg_1')).toBe('zupa-a:msg_1');
-    expect(dedupKey(italk, 'msg_1')).toBe('msg_1');
+    expect(dedupKey(italk, 'msg_1')).toBe('italk:msg_1');
     const { deps, rec } = harness();
     const d = await delivery(SECRET_A, { type: 'order.updated', data: processedOrder() });
     await handleMoneriumWebhook(deps, rail(), d.body, d.headers);
@@ -208,14 +207,14 @@ describe('per-tenant webhook — attribution', () => {
   });
 });
 
-describe('legacy (ITalk) webhook — behaviour unchanged', () => {
+describe('ITalk webhook (now an ordinary tenant rail)', () => {
   it('forwards a processed issue order on order.updated', async () => {
     const { deps, rec, settle } = harness();
-    const d = await delivery(SECRET_ITALK, { type: 'order.updated', data: processedOrder({ profile: 'anything' }) });
+    const d = await delivery(SECRET_ITALK, { type: 'order.updated', data: processedOrder() });
     const res = await handleMoneriumWebhook(deps, italk, d.body, d.headers);
     await settle();
     expect(res).toEqual({ status: 200, body: { ok: true } });
-    expect(rec.claims).toEqual(['msg_1']);
+    expect(rec.claims).toEqual(['italk:msg_1']);
     expect(rec.upserts).toEqual(['ord-1']);
     expect(rec.forwards).toBe(1);
   });

@@ -6,7 +6,6 @@ import {
   CHIADO_RPC_DEFAULT,
   GNOSIS_RPC_DEFAULT,
   getTenantRailRow,
-  isLegacyTenant,
   parseChain,
 } from '../tenants/rail';
 import { SETUP_CLIENT_JS } from './client.generated';
@@ -24,7 +23,6 @@ import * as ps from '../../safe-tx/lib/project-safe.mjs';
 export interface SetupContext {
   tenantId: string;
   tenantName: string;
-  legacy: boolean;
   chain: 'gnosis' | 'chiado';
   chainId: number;
   rpcUrl: string;
@@ -53,8 +51,6 @@ const EURE_DEFAULT = {
   gnosis: '0x420CA0f9B9b604cE0fd9C18EF134C705e5Fa3430',
   chiado: '0x7a47605930002cc2cd2c3c408d1f33fc2a18ab71',
 } as const;
-/// Batch 001 set the MPT modifier up in this block (safe-tx/009 ENVS.gnosis).
-const LEGACY_FROM_BLOCK = '46280000';
 const BLOCKSCOUT = { gnosis: 'https://gnosis.blockscout.com', chiado: 'https://gnosis-chiado.blockscout.com' } as const;
 
 export async function loadSetupContext(env: Env, tenantId: string): Promise<SetupContext | { error: string }> {
@@ -65,33 +61,12 @@ export async function loadSetupContext(env: Env, tenantId: string): Promise<Setu
   const recipients = all.filter((c) => c.revoked_at === null).map(view);
   const active = new Set(recipients.map((r) => r.address.toLowerCase()));
   const revoked = all.filter((c) => c.revoked_at !== null && !active.has(c.safe_address.toLowerCase())).map(view);
-  if (isLegacyTenant(env, tenantId)) {
-    return {
-      tenantId,
-      tenantName: tenant.name,
-      legacy: true,
-      chain: 'gnosis',
-      chainId: CHAIN_ID.gnosis,
-      rpcUrl: env.GNOSIS_RPC_URL || GNOSIS_RPC_DEFAULT,
-      safe: env.SAFE_ADDRESS ?? '',
-      roles: env.ROLES_MODIFIER_ADDRESS || null,
-      roleKey: env.PROJECT_ROUTER_ROLE_KEY || null,
-      // The legacy router key is generated offline (safe-tx/000): the page asks for its address.
-      router: null,
-      eure: env.EURE_CONTRACT || EURE_DEFAULT.gnosis,
-      fromBlock: LEGACY_FROM_BLOCK,
-      recipients,
-      revoked,
-      ...projectDefaults(env, 'gnosis'),
-    };
-  }
   const row = await getTenantRailRow(env, tenantId);
   if (!row) return { error: 'rail_not_found' };
   const chain = parseChain(row.chain) ?? 'gnosis';
   return {
     tenantId,
     tenantName: tenant.name,
-    legacy: false,
     chain,
     chainId: CHAIN_ID[chain],
     rpcUrl: row.rpc_url || (chain === 'gnosis' ? env.GNOSIS_RPC_URL || GNOSIS_RPC_DEFAULT : CHIADO_RPC_DEFAULT),
@@ -100,7 +75,7 @@ export async function loadSetupContext(env: Env, tenantId: string): Promise<Setu
     roleKey: row.role_key,
     router: row.router_address,
     eure: row.eure_contract || EURE_DEFAULT[chain],
-    fromBlock: null,
+    fromBlock: row.roles_from_block ?? null,
     recipients,
     revoked,
     ...projectDefaults(env, chain),

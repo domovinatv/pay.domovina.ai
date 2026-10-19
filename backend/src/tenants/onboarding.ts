@@ -3,14 +3,13 @@ import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts';
 import { gnosis, gnosisChiado } from 'viem/chains';
 
 import type { Env } from '../types';
-import { MoneriumClient, type MoneriumIban, type MoneriumWebhookSubscription } from '../monerium/client';
+import { MoneriumClient, type MoneriumIban } from '../monerium/client';
 import { sendAlert } from '../alerts';
 import { decryptSecret, encryptSecret, importKek, importKeks, type SecretField } from './secrets';
 import { getTenant, type TenantRow } from './db';
 import {
   getTenantRail,
   getTenantRailRow,
-  legacyRail,
   listRailTenantIds,
   moneriumBaseUrl,
   parseChain,
@@ -182,40 +181,6 @@ export function validateRailInput(
       mode,
     },
   };
-}
-
-/// bytes32 of "ProjectRouter" (ADR 0026), the role a direct rail signs with.
-export const PROJECT_ROUTER_ROLE_KEY = '0x50726f6a656374526f7574657200000000000000000000000000000000000000';
-
-/// ITalk's env rail as a `PUT /rail` body: the Worker copies its own secrets
-/// into D1, so no value passes through a person or a terminal. The row is a
-/// direct rail with the ProjectRouter role on the same Safe and modifier; the
-/// router key is generated separately (router-key endpoint).
-export function envRailBody(env: Env, profileId: string): Record<string, unknown> {
-  const base = (env.MONERIUM_BASE_URL ?? '').replace(/\/+$/, '');
-  return {
-    monerium_env: base === 'https://api.monerium.app' ? 'production' : base === 'https://api.monerium.dev' ? 'sandbox' : 'unknown',
-    chain: 'gnosis',
-    mode: 'direct',
-    client_id: env.MONERIUM_CLIENT_ID ?? '',
-    client_secret: env.MONERIUM_CLIENT_SECRET ?? '',
-    profile_id: profileId,
-    receiving_safe: env.SAFE_ADDRESS ?? '',
-    roles_modifier: env.ROLES_MODIFIER_ADDRESS ?? '',
-    role_key: PROJECT_ROUTER_ROLE_KEY,
-    eure_contract: env.EURE_CONTRACT ?? '',
-    rpc_url: env.GNOSIS_RPC_URL ?? '',
-    outbound_webhook_url: env.INTENT_WEBHOOK_URL ?? '',
-    outbound_webhook_secret: env.INTENT_WEBHOOK_SECRET ?? '',
-  };
-}
-
-/// The env rail's own Monerium subscription (it points at the shared
-/// `/api/monerium/webhook`). Stored as the row's subscription id, the
-/// per-tenant registration disables it right after creating its own (MT-05).
-export function legacySubscriptionId(subs: MoneriumWebhookSubscription[]): string | null {
-  const live = subs.filter((s) => /\/api\/monerium\/webhook\/?$/.test(s.url ?? '') && s.state !== 'disabled');
-  return live.length === 1 ? live[0].id : null;
 }
 
 async function enc(env: Env, tenantId: string, field: SecretField, plaintext: string): Promise<string> {
@@ -662,18 +627,19 @@ export async function loadTenantAndRail(
 /// without gas turns every forward into `failed` + a manual retry.
 export async function checkRouterGas(env: Env): Promise<number> {
   let low = 0;
-  // MT-07: ITalk's router too — it carries all live traffic today.
-  for (const tenantId of [null, ...(await listRailTenantIds(env))]) {
+  for (const tenantId of await listRailTenantIds(env)) {
     try {
-      const rail = tenantId === null ? legacyRail(env) : await getTenantRail(env, tenantId);
-      if (!rail?.signer.privateKey) continue;
-      const address = privateKeyToAccount(rail.signer.privateKey as Hex).address;
+      const rail = await getTenantRail(env, tenantId);
+      // Direct rails sign only through the ProjectRouter (ADR 0026).
+      const signer = rail?.projectRouter ?? rail?.signer;
+      if (!rail || !signer?.privateKey) continue;
+      const address = privateKeyToAccount(signer.privateKey as Hex).address;
       const chain = createPublicClient({
-        chain: rail.signer.chain === 'chiado' ? gnosisChiado : gnosis,
-        transport: http(rail.signer.rpcUrl),
+        chain: signer.chain === 'chiado' ? gnosisChiado : gnosis,
+        transport: http(signer.rpcUrl),
       });
       const bal = await chain.getBalance({ address });
-      const min = minRouterGasWei(rail.signer.chain);
+      const min = minRouterGasWei(signer.chain);
       if (bal < min) {
         low++;
         await sendAlert(
@@ -684,7 +650,7 @@ export async function checkRouterGas(env: Env): Promise<number> {
         );
       }
     } catch (e) {
-      console.error(`router gas check ${tenantId ?? 'legacy'}: ${(e as Error).message}`);
+      console.error(`router gas check ${tenantId}: ${(e as Error).message}`);
     }
   }
   return low;

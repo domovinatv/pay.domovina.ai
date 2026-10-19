@@ -1,5 +1,5 @@
 import type { Env } from '../types';
-import { legacyRail, type MoneriumCreds } from '../tenants/rail';
+import type { MoneriumCreds } from '../tenants/rail';
 import type {
   MoneriumOrder,
   MoneriumProfile,

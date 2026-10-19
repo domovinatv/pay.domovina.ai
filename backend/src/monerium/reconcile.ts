@@ -2,7 +2,7 @@ import type { Env } from '../types';
 import { sendAlert } from '../alerts';
 import { notifyOrderLifecycle } from '../intents/lifecycle';
 import { MoneriumClient } from './client';
-import { getTenantRail, legacyRail, listRailTenantIds, type TenantRail } from '../tenants/rail';
+import { getTenantRail, listRailTenantIds, type TenantRail } from '../tenants/rail';
 import { getForwardByOrder, getMoneriumOrder, upsertMoneriumOrder } from './db';
 import { makeForwardDeps, maybeForward } from './forward';
 import { orderState, orderStateRank } from './orderState';
@@ -41,27 +41,11 @@ export interface ReconcileResult {
 }
 
 /// Worth an API call only while something could still be in flight: a recent
-/// pending intent, or an order stored in a non-terminal state. ITalk keeps the
-/// historical rail-wide query; other tenants only look at their own rows.
+/// pending intent, or an order stored in a non-terminal state, of this tenant.
 async function somethingInFlight(env: Env, rail: TenantRail, nowUnix: number): Promise<boolean> {
   // SR-05: a processed issue order without any forward row is "in flight"
   // too — otherwise a quiet night (no pending intent) skips the very check
   // that would notice it.
-  if (rail.legacy) {
-    const row = await env.DB.prepare(
-      `SELECT 1 AS hit WHERE
-         EXISTS (SELECT 1 FROM payment_intents WHERE state = 'pending' AND created_at > ?1)
-         OR EXISTS (SELECT 1 FROM monerium_orders WHERE state IN ('placed', 'pending')
-                     AND id NOT LIKE 'sim\\_%' ESCAPE '\\')
-         OR EXISTS (SELECT 1 FROM monerium_orders o
-                     WHERE o.kind = 'issue' AND o.state = 'processed' AND o.updated_at > ?2
-                       AND (o.tenant_id IS NULL OR o.tenant_id = ?3)
-                       AND NOT EXISTS (SELECT 1 FROM monerium_forwards f WHERE f.order_id = o.id))`,
-    )
-      .bind(nowUnix - 2 * 86_400, nowUnix - 86_400, rail.tenantId)
-      .first<{ hit: number }>();
-    return row !== null;
-  }
   const row = await env.DB.prepare(
     `SELECT 1 AS hit WHERE
        EXISTS (SELECT 1 FROM payment_intents WHERE tenant_id = ?1 AND state = 'pending' AND created_at > ?2)
@@ -75,17 +59,11 @@ async function somethingInFlight(env: Env, rail: TenantRail, nowUnix: number): P
   return row !== null;
 }
 
-/// Reconcile ITalk (env rail) and then every other tenant with a rail, each
-/// with its own Monerium client and profile (ADR 0017). One tenant failing
+/// Reconcile every tenant with a rail, each with its own Monerium client and
+/// profile (ADR 0017). One tenant failing
 /// (expired credentials, Monerium 5xx) never stops the others.
 export async function reconcileMoneriumOrders(env: Env, nowUnix: number): Promise<ReconcileResult> {
   let total: ReconcileResult = { skipped: true, fetched: 0, advanced: 0, unforwarded: 0 };
-  let legacyError: unknown = null;
-  try {
-    total = await reconcileTenant(env, legacyRail(env), nowUnix);
-  } catch (e) {
-    legacyError = e;
-  }
   for (const tenantId of await listRailTenantIds(env)) {
     const rail = await getTenantRail(env, tenantId);
     if (!rail) continue;
@@ -99,9 +77,6 @@ export async function reconcileMoneriumOrders(env: Env, nowUnix: number): Promis
       console.error(`reconcile tenant ${tenantId} failed: ${(e as Error).message}`);
     }
   }
-  // ITalk's failure still surfaces exactly as before (cron logs it), but only
-  // after the other tenants had their turn.
-  if (legacyError) throw legacyError;
   return total;
 }
 
@@ -117,7 +92,7 @@ async function reconcileTenant(env: Env, rail: TenantRail, nowUnix: number): Pro
     if (placedAt !== null && placedAt < nowUnix - LOOKBACK_S) continue;
     // Same profile rule as the per-tenant webhook: /orders?profile= should
     // only return this tenant's orders, but never trust that silently.
-    if (!rail.legacy && order.profile !== rail.monerium.profileId) {
+    if (order.profile !== rail.monerium.profileId) {
       console.error(`reconcile tenant ${rail.tenantId}: order ${order.id} has profile ${order.profile ?? '-'} — skipped`);
       continue;
     }
@@ -139,10 +114,10 @@ async function reconcileTenant(env: Env, rail: TenantRail, nowUnix: number): Pro
         await sendAlert(
           env,
           `⚠️ <b>Monerium order obrađen, a forward nije pokrenut</b>\n` +
-            (rail.legacy ? '' : `tenant: <code>${rail.tenantId}</code>\n`) +
+            `tenant: <code>${rail.tenantId}</code>\n` +
             `order: <code>${order.id}</code> · iznos: <b>${order.amount} EUR</b>\n` +
             `memo: <code>${(order.memo ?? '-').slice(0, 120)}</code>\n` +
-            `Webhook order.updated vjerojatno nije stigao. EURe je u ${rail.legacy ? 'MPT Safeu' : 'prihvatnom Safeu tenanta'}; ` +
+            `Webhook order.updated vjerojatno nije stigao. EURe je u prihvatnom Safeu tenanta; ` +
             `forward se ne pokreće automatski (RECONCILE_FORWARDS≠1) — preusmjeriti iz /admin/forwards ili riješiti ručno. ` +
             `Alarm se ponavlja svakih 6 h dok forward red ne postoji (najviše 48 h).`,
         );

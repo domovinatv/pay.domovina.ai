@@ -15,7 +15,7 @@ import { listIntents, listRerouteCandidates } from '../intents/db';
 import { checkReroute, eurToWei, handleForward, makeForwardDeps, maybeForward } from '../monerium/forward';
 import { STRAY_LOOKBACK_SECONDS } from '../monerium/strayResolver';
 import type { MoneriumOrder } from '../monerium/types';
-import { getTenantRail, isLegacyTenant, legacyRail, type TenantRail } from '../tenants/rail';
+import { getTenantRail, type TenantRail } from '../tenants/rail';
 import { defaultTenantId } from '../tenants/whitelist';
 import { writeAudit } from '../tenants/db';
 import { getIntent, isTrustedTarget } from '../intents/db';
@@ -389,7 +389,7 @@ async function loadParkedOrder(
   const row = await getMoneriumOrder(env, orderId);
   if (!row) return { error: 'order_not_found' };
   const tenantId = row.tenant_id ?? defaultTenantId(env);
-  const rail = isLegacyTenant(env, tenantId) ? legacyRail(env) : await getTenantRail(env, tenantId);
+  const rail = await getTenantRail(env, tenantId);
   if (!rail) return { error: 'tenant_rail_not_found' };
   let order: MoneriumOrder;
   try {

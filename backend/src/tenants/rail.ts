@@ -118,6 +118,8 @@ export interface TenantRailRow {
   outbound_webhook_url: string | null;
   outbound_webhook_secret_enc: string | null;
   max_forward_cents: number | null;
+  /// Migration 0030: block the Roles modifier was set up in (setup dApp log scan start).
+  roles_from_block?: string | null;
   /// Migration 0026; absent in fixtures written before it = 'forward'.
   mode?: string;
   verified_at: number | null;
