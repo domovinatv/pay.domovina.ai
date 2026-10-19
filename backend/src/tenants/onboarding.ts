@@ -3,7 +3,7 @@ import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts';
 import { gnosis, gnosisChiado } from 'viem/chains';
 
 import type { Env } from '../types';
-import { MoneriumClient, type MoneriumIban } from '../monerium/client';
+import { MoneriumClient, type MoneriumIban, type MoneriumWebhookSubscription } from '../monerium/client';
 import { sendAlert } from '../alerts';
 import { decryptSecret, encryptSecret, importKek, importKeks, type SecretField } from './secrets';
 import { getTenant, type TenantRow } from './db';
@@ -182,6 +182,40 @@ export function validateRailInput(
       mode,
     },
   };
+}
+
+/// bytes32 of "ProjectRouter" (ADR 0026), the role a direct rail signs with.
+export const PROJECT_ROUTER_ROLE_KEY = '0x50726f6a656374526f7574657200000000000000000000000000000000000000';
+
+/// ITalk's env rail as a `PUT /rail` body: the Worker copies its own secrets
+/// into D1, so no value passes through a person or a terminal. The row is a
+/// direct rail with the ProjectRouter role on the same Safe and modifier; the
+/// router key is generated separately (router-key endpoint).
+export function envRailBody(env: Env, profileId: string): Record<string, unknown> {
+  const base = (env.MONERIUM_BASE_URL ?? '').replace(/\/+$/, '');
+  return {
+    monerium_env: base === 'https://api.monerium.app' ? 'production' : base === 'https://api.monerium.dev' ? 'sandbox' : 'unknown',
+    chain: 'gnosis',
+    mode: 'direct',
+    client_id: env.MONERIUM_CLIENT_ID ?? '',
+    client_secret: env.MONERIUM_CLIENT_SECRET ?? '',
+    profile_id: profileId,
+    receiving_safe: env.SAFE_ADDRESS ?? '',
+    roles_modifier: env.ROLES_MODIFIER_ADDRESS ?? '',
+    role_key: PROJECT_ROUTER_ROLE_KEY,
+    eure_contract: env.EURE_CONTRACT ?? '',
+    rpc_url: env.GNOSIS_RPC_URL ?? '',
+    outbound_webhook_url: env.INTENT_WEBHOOK_URL ?? '',
+    outbound_webhook_secret: env.INTENT_WEBHOOK_SECRET ?? '',
+  };
+}
+
+/// The env rail's own Monerium subscription (it points at the shared
+/// `/api/monerium/webhook`). Stored as the row's subscription id, the
+/// per-tenant registration disables it right after creating its own (MT-05).
+export function legacySubscriptionId(subs: MoneriumWebhookSubscription[]): string | null {
+  const live = subs.filter((s) => /\/api\/monerium\/webhook\/?$/.test(s.url ?? '') && s.state !== 'disabled');
+  return live.length === 1 ? live[0].id : null;
 }
 
 async function enc(env: Env, tenantId: string, field: SecretField, plaintext: string): Promise<string> {
