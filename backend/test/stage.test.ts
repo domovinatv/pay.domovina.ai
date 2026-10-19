@@ -123,6 +123,32 @@ describe('computeStage', () => {
     expect(step(r, 'settled').status).toBe('proven');
   });
 
+  it('reference-less order (Revolut, stray resolver) without forward yet → minted, not settled', () => {
+    for (const memo of [null, '', 'Sent from Revolut']) {
+      const r = computeStage({
+        intent: baseIntent(),
+        order: processedOrder({ memo, reference_number: null }),
+        forward: null,
+        now: NOW,
+      });
+      expect(r.stage).toBe('minted');
+      expect(r.forward_expected).toBe(true);
+      expect(step(r, 'forwarding').status).toBe('waiting');
+      expect(step(r, 'settled').status).toBe('waiting');
+    }
+  });
+
+  it('reference-less order settles once the ProjectRouter forward is confirmed', () => {
+    const r = computeStage({
+      intent: baseIntent(),
+      order: processedOrder({ memo: null }),
+      forward: forward({ status: 'confirmed', updated_at: NOW - 1 }),
+      now: NOW,
+    });
+    expect(r.stage).toBe('settled');
+    expect(step(r, 'forwarding').tx_hash).toBe('0xfwd1');
+  });
+
   it('forward submitted → forwarding (broadcast, awaiting mining)', () => {
     const r = computeStage({
       intent: baseIntent(), order: processedOrder(), forward: forward(), now: NOW,
