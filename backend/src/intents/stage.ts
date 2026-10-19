@@ -117,6 +117,8 @@ export interface StageInput {
 }
 
 const ORDER_ROUTED_RE = /^(mpt|gnosis|cmp):/i;
+/// Bare `0x…` memo: Monerium mints straight to that address, no forward hop.
+const ORDER_BARE_ADDRESS_RE = /^\s*0x[0-9a-f]{40}\b/i;
 
 /// Pure stage computation — single source of truth for all three surfaces
 /// (checkout page, Flutter in-app status, merchant/POS view).
@@ -133,13 +135,22 @@ export function computeStage(input: StageInput): StageResult {
   const processedAt = isoToUnix(order?.processed_at ?? null) ?? order?.updated_at ?? null;
 
   // Forward expected: an actual forward row settles the question; otherwise
-  // infer from the routing prefix in the order memo/reference. Before any
-  // order exists the rail default is "yes" (every intent QR emits mpt:…),
-  // which only affects which steps render as `waiting`.
+  // infer from the order memo/reference. Before any order exists the rail
+  // default is "yes" (every intent QR emits mpt:/gnosis:…), which only affects
+  // which steps render as `waiting`.
+  //
+  // Only a bare `0x…` memo mints straight to its target. A reference-less
+  // order (Revolut drops the QR's Reference — ADR 0025/0026) that reached this
+  // intent through the stray resolver was minted to the tenant's main Safe and
+  // gets to the intent's target only through a forward row (ProjectRouter,
+  // direct_owed or self_noop). Treating it as "no forward" reported `settled`
+  // ~6 s before the ProjectRouter transfer (measured 2026-10-19), and the
+  // terminal stage closed the SSE stream before the forward hash was sent.
   const forwardExpected = forward
     ? true
     : order
       ? ORDER_ROUTED_RE.test(order.memo ?? '') || ORDER_ROUTED_RE.test(order.reference_number ?? '')
+        || !(ORDER_BARE_ADDRESS_RE.test(order.memo ?? '') || ORDER_BARE_ADDRESS_RE.test(order.reference_number ?? ''))
       : true;
 
   const stage = resolveStage(intent, order, forward, forwardExpected);
