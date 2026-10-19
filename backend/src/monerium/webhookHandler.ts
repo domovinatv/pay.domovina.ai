@@ -82,17 +82,16 @@ export interface WebhookResponse {
   body: Record<string, unknown>;
 }
 
-/// Idempotency key. ITalk keeps the bare webhook-id (unchanged rows in
-/// monerium_processed_event_ids); other tenants are namespaced because a
-/// webhook-id is unique per subscription, not across Monerium accounts.
+/// Idempotency key, namespaced per tenant: a webhook-id is unique per
+/// subscription, not across Monerium accounts.
 export function dedupKey(rail: TenantRail, webhookId: string): string {
-  return rail.legacy ? webhookId : `${rail.tenantId}:${webhookId}`;
+  return `${rail.tenantId}:${webhookId}`;
 }
 
-/// For a non-legacy tenant the order must belong to the tenant's own Monerium
-/// profile. A missing profile counts as a mismatch (fail-closed).
+/// The order must belong to the tenant's own Monerium profile. A missing
+/// profile counts as a mismatch (fail-closed).
 export function profileMismatch(rail: TenantRail, order: MoneriumOrder | null): boolean {
-  if (rail.legacy || !order) return false;
+  if (!order) return false;
   const expected = rail.monerium.profileId;
   return !expected || !order.profile || order.profile !== expected;
 }
@@ -157,7 +156,7 @@ export async function handleMoneriumWebhook(
   if (!verify.ok) {
     console.warn(
       `monerium webhook signature FAILED: ${verify.reason}\n` +
-        (rail.legacy ? '' : `  tenant: ${rail.tenantId}\n`) +
+        `  tenant: ${rail.tenantId}\n` +
         `  body[${rawBody.length}b]: ${rawBody.slice(0, 300)}\n` +
         `  debug: ${JSON.stringify(verify.debug, null, 2)}`,
     );
@@ -174,11 +173,7 @@ export async function handleMoneriumWebhook(
   }
   // `subscription.created` is sent once on registration — just return 200.
   if (eventType === 'subscription.created') {
-    console.log(
-      rail.legacy
-        ? 'monerium subscription.created — webhook activated'
-        : `monerium subscription.created — webhook activated for tenant ${rail.tenantId}`,
-    );
+    console.log(`monerium subscription.created — webhook activated for tenant ${rail.tenantId}`);
     return { status: 200, body: { ok: true } };
   }
   if (order && wrongProfile) {

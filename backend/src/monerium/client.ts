@@ -91,11 +91,9 @@ async function getAccessToken(env: Env, creds: MoneriumCreds): Promise<string> {
 export class MoneriumClient {
   private creds: MoneriumCreds;
 
-  /// Without `creds` the client acts for the default (ITalk) tenant from env,
-  /// exactly as before ADR 0017. Pass a tenant's `TenantRail.monerium` to act
-  /// on that tenant's own Monerium account.
-  constructor(private env: Env, creds?: MoneriumCreds) {
-    this.creds = creds ?? legacyRail(env).monerium;
+  /// Acts on one tenant's own Monerium account (`TenantRail.monerium`).
+  constructor(private env: Env, creds: MoneriumCreds) {
+    this.creds = creds;
   }
 
   private async call<T>(path: string, init?: RequestInit): Promise<T> {

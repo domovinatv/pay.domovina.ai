@@ -1,20 +1,14 @@
 import type { Env } from '../types';
 import { decryptSecret, importKeks, type SecretField } from './secrets';
-import { defaultTenantId } from './whitelist';
 
 /// The ONE place that knows where a tenant's money infrastructure lives
 /// (ADR 0017): Monerium credentials + profile, webhook secret, the Safe the
 /// tenant's IBAN mints into, and the signer that may move EURe out of it.
 ///
-/// - The default tenant (ITalk) is built from the Worker env, byte-for-byte
-///   what the rail read before multi-tenancy. It has no `tenant_rail` row.
-/// - Every other tenant comes from `tenant_rail`, secrets decrypted with the
-///   KEK. No row, multi-tenancy switched off, or a secret that will not
-///   decrypt → `null`. There is NO fallback to ITalk's config: a caller that
-///   gets `null` must refuse (fail-closed).
-///
-/// Nothing outside this file may read env.MONERIUM_CLIENT_* / SAFE_ADDRESS /
-/// ROLES_MODIFIER_ADDRESS / ROLE_KEY / ROUTER_PRIVATE_KEY for money decisions.
+/// Every tenant, ITalk included, comes from `tenant_rail`, secrets decrypted
+/// with the KEK. No row, multi-tenancy switched off, or a secret that will not
+/// decrypt → `null`. There is no fallback to another tenant's config: a caller
+/// that gets `null` must refuse (fail-closed).
 
 export const GNOSIS_RPC_DEFAULT = 'https://rpc.gnosischain.com';
 export const CHIADO_RPC_DEFAULT = 'https://rpc.chiadochain.net';
@@ -44,9 +38,9 @@ export interface RailSigner {
   rolesModifier: string;
   roleKey: string;
   privateKey: string;
-  /// PaymentRegistry MultiSend path. Only the legacy (ITalk) rail may use it:
-  /// role conditions are not applied inside a multiSend blob without an
-  /// unwrapper (safe-tx/006 §1), so tenants always use the direct transfer.
+  /// PaymentRegistry MultiSend path. Unused: role conditions are not applied
+  /// inside a multiSend blob without an unwrapper (safe-tx/006 §1), so every
+  /// rail uses the direct transfer.
   paymentRegistry: string;
   multiSend: string;
 }
@@ -55,8 +49,7 @@ export interface MoneriumCreds {
   baseUrl: string;
   clientId: string;
   clientSecret: string;
-  /// Profile to operate on. ITalk: env override or resolved from /auth/context
-  /// (null). Tenants: always set — it is part of their identity.
+  /// Profile to operate on: always set, it is part of the tenant's identity.
   profileId: string | null;
   /// KV key for the cached access token. Per tenant, so two tenants can never
   /// share (or overwrite) each other's token.
@@ -65,14 +58,10 @@ export interface MoneriumCreds {
 
 export interface TenantRail {
   tenantId: string;
-  /// True for the env-backed default tenant (ITalk).
-  legacy: boolean;
-  /// Absent = 'forward' (the legacy rail and every pre-0026 row).
-  mode?: RailMode;
+  mode: RailMode;
   monerium: MoneriumCreds;
   webhookSecret: string;
-  /// Lowercase address the tenant's IBAN mints into. ITalk: env.SAFE_ADDRESS
-  /// (may be empty → null, as before).
+  /// Lowercase address the tenant's IBAN mints into.
   receivingSafe: string | null;
   signer: RailSigner;
   /// ADR 0026: direct-mode rails only. Signs `EURe.transfer` from the main Safe
@@ -88,28 +77,15 @@ export interface TenantRail {
   outboundWebhook: { url: string; secret: string } | null;
 }
 
-export const LEGACY_TOKEN_KEY = 'monerium:access_token';
+const TOKEN_CACHE_PREFIX = 'monerium:access_token';
 
 export function multiTenantEnabled(env: Env): boolean {
   return (env.MULTI_TENANT_RAIL ?? '').trim() === '1';
 }
 
-export function isLegacyTenant(env: Env, tenantId: string): boolean {
-  return tenantId === defaultTenantId(env);
-}
-
 function lc(addr: string | null | undefined): string | null {
   const v = (addr ?? '').trim().toLowerCase();
   return v ? v : null;
-}
-
-/// How the default tenant settles (ADR 0025). Unset/'forward' = the
-/// pre-ADR-0017 router path, byte-identical. 'direct' = the payer's reference
-/// makes Monerium mint straight into the project Safe and the env router key is
-/// never loaded. Any other value is a typo we never validated → 'direct', the
-/// mode that cannot sign (fail-closed).
-export function legacyRailMode(env: Env): RailMode {
-  return parseRailMode(env.LEGACY_RAIL_MODE?.trim()) ?? 'direct';
 }
 
 /// A ProjectRouter signer only when every piece is there; anything missing
@@ -119,55 +95,6 @@ function projectRouterSigner(s: Omit<RailSigner, 'paymentRegistry' | 'multiSend'
   const v = (x: string) => x.trim();
   if (!v(s.safe) || !v(s.rolesModifier) || !v(s.roleKey) || !v(s.privateKey) || !v(s.eureContract)) return null;
   return { ...s, paymentRegistry: '', multiSend: '' };
-}
-
-/// The pre-ADR-0017 rail, read from env. Must stay byte-identical in effect
-/// while LEGACY_RAIL_MODE is unset.
-export function legacyRail(env: Env): TenantRail {
-  const mode = legacyRailMode(env);
-  const projectRouter = mode === 'direct'
-    ? projectRouterSigner({
-        chain: 'gnosis',
-        rpcUrl: env.GNOSIS_RPC_URL || GNOSIS_RPC_DEFAULT,
-        eureContract: env.EURE_CONTRACT ?? '',
-        safe: env.SAFE_ADDRESS ?? '',
-        rolesModifier: env.ROLES_MODIFIER_ADDRESS ?? '',
-        roleKey: env.PROJECT_ROUTER_ROLE_KEY ?? '',
-        privateKey: env.PROJECT_ROUTER_PRIVATE_KEY ?? '',
-      })
-    : null;
-  return {
-    tenantId: defaultTenantId(env),
-    legacy: true,
-    ...(mode === 'direct' ? { mode } : {}),
-    monerium: {
-      baseUrl: env.MONERIUM_BASE_URL,
-      clientId: env.MONERIUM_CLIENT_ID ?? '',
-      clientSecret: env.MONERIUM_CLIENT_SECRET ?? '',
-      profileId: env.MONERIUM_PROFILE_ID || null,
-      tokenCacheKey: LEGACY_TOKEN_KEY,
-    },
-    webhookSecret: env.MONERIUM_WEBHOOK_SECRET ?? '',
-    receivingSafe: lc(env.SAFE_ADDRESS),
-    signer: {
-      chain: 'gnosis',
-      rpcUrl: env.GNOSIS_RPC_URL || GNOSIS_RPC_DEFAULT,
-      eureContract: env.EURE_CONTRACT ?? '',
-      safe: env.SAFE_ADDRESS ?? '',
-      rolesModifier: env.ROLES_MODIFIER_ADDRESS ?? '',
-      roleKey: env.ROLE_KEY ?? '',
-      // Direct mode never signs, so the router key is never even read.
-      privateKey: mode === 'direct' ? '' : env.ROUTER_PRIVATE_KEY ?? '',
-      paymentRegistry: mode === 'direct' ? '' : env.PAYMENT_REGISTRY_ADDRESS ?? '',
-      multiSend: mode === 'direct' ? '' : env.MULTISEND_ADDRESS ?? '',
-    },
-    ...(projectRouter ? { projectRouter } : {}),
-    maxForwardCents: null,
-    outboundWebhook:
-      env.INTENT_WEBHOOK_URL?.trim() && env.INTENT_WEBHOOK_SECRET?.trim()
-        ? { url: env.INTENT_WEBHOOK_URL.trim(), secret: env.INTENT_WEBHOOK_SECRET.trim() }
-        : null,
-  };
 }
 
 export interface TenantRailRow {
@@ -246,14 +173,13 @@ export async function railFromRow(
     : null;
   return {
     tenantId: row.tenant_id,
-    legacy: false,
     mode,
     monerium: {
       baseUrl,
       clientId: row.client_id,
       clientSecret: await decrypt('client_secret', row.client_secret_enc),
       profileId: row.profile_id,
-      tokenCacheKey: `${LEGACY_TOKEN_KEY}:${row.tenant_id}`,
+      tokenCacheKey: `${TOKEN_CACHE_PREFIX}:${row.tenant_id}`,
     },
     webhookSecret: row.webhook_secret_enc ? await decrypt('webhook_secret', row.webhook_secret_enc) : '',
     receivingSafe: lc(row.receiving_safe),
@@ -289,9 +215,8 @@ export async function getTenantRailRow(env: Env, tenantId: string): Promise<Tena
 }
 
 /// Resolve a tenant's rail. `null` = this tenant cannot receive webhooks or
-/// move money right now; callers refuse, they never substitute ITalk.
+/// move money right now; callers refuse, they never substitute another tenant.
 export async function getTenantRail(env: Env, tenantId: string): Promise<TenantRail | null> {
-  if (isLegacyTenant(env, tenantId)) return legacyRail(env);
   if (!multiTenantEnabled(env)) return null;
   const row = await getTenantRailRow(env, tenantId);
   if (!row) return null;
@@ -315,17 +240,15 @@ export async function railFromStoredRow(env: Env, row: TenantRailRow): Promise<T
   }
 }
 
-/// Tenant ids with a rail row — what the reconcile cron iterates besides ITalk.
-/// ITalk's own row (prepared before the env rail is removed) is left out: the
-/// crons already run ITalk through `legacyRail`, and twice would be twice.
+/// Tenant ids with a rail row — what the crons iterate.
 export async function listRailTenantIds(env: Env): Promise<string[]> {
   if (!multiTenantEnabled(env)) return [];
   const res = await env.DB.prepare(
     `SELECT r.tenant_id FROM tenant_rail r
        JOIN tenants t ON t.id = r.tenant_id
-      WHERE t.status IN ('active', 'suspended') AND r.tenant_id != ?
+      WHERE t.status IN ('active', 'suspended')
       ORDER BY r.tenant_id`,
-  ).bind(defaultTenantId(env)).all<{ tenant_id: string }>();
+  ).all<{ tenant_id: string }>();
   return res.results.map((r) => r.tenant_id);
 }
 
@@ -346,9 +269,7 @@ export interface ReferenceStyle {
 }
 
 export async function getReferenceStyle(env: Env, tenantId: string | null): Promise<ReferenceStyle | null> {
-  if (!tenantId || isLegacyTenant(env, tenantId)) {
-    return legacyRailMode(env) === 'direct' ? { mode: 'direct', chain: 'gnosis' } : null;
-  }
+  if (!tenantId) return null;
   const row = await env.DB.prepare(`SELECT mode, chain FROM tenant_rail WHERE tenant_id = ?`)
     .bind(tenantId)
     .first<{ mode: string | null; chain: string }>();
