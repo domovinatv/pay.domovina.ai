@@ -38,6 +38,13 @@ git worktree remove ../pay.domovina-payment-registry
 If the user starts a parallel session without setting this up, proactively
 offer to migrate to a worktree before doing any file edits.
 
+## Iznos uplate nikad ne nosi identitet
+
+Ne predlaži jedinstven iznos po intentu (1,00 → 1,01), centski nonce ni bilo koji drugi
+hack u kojem iznos razlikuje uplate. Vlasnik je to odbacio 19. 10. 2026. Iznos je ono što
+uplatitelj želi dati. Za uplatu bez reference (Revolut) smjer je kratka referenca intenta,
+[ADR 0028](docs/decisions/0028-kratka-referenca-intenta.md).
+
 ## Regression contract — old tests are the spec
 
 Before merging or deploying anything: `scripts/compat-check.sh` (old tests vs
