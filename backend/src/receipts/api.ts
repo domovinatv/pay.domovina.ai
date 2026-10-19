@@ -93,7 +93,7 @@ async function directStatus(env: Env, sid: string): Promise<{ status: string; fo
       LIMIT 1`,
   ).bind(sid).first<{ status: string; memo_prefix: string | null; tx_hash: string | null }>();
   if (!fwd) return { status: 'awaiting_payment', forward_tx_hash: null };
-  if (fwd.memo_prefix === 'auto' || fwd.memo_prefix === 'manual') {
+  if (fwd.memo_prefix === 'code' || fwd.memo_prefix === 'auto' || fwd.memo_prefix === 'manual') {
     return { status: 'unbound_stray', forward_tx_hash: fwd.tx_hash };
   }
   if (fwd.status === 'confirmed') return { status: 'confirmed', forward_tx_hash: fwd.tx_hash };

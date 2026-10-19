@@ -3,6 +3,7 @@ import { Hono, type Context } from 'hono';
 import type { Env } from '../types';
 import { countOpenIntentsForTarget, createIntent, getIntent, isTrustedTarget } from './db';
 import { generateSid } from './sid';
+import { allocateShortRef, SHORT_REF_HOLD_SECONDS } from './shortRef';
 import { isReceiptSid } from '../receipts/sid';
 import { registerReceiptRoutes } from '../receipts/api';
 import { registerSimulateRoute } from '../sandbox/api';
@@ -561,6 +562,7 @@ export function intentResponseJson(
     forward_tx_hash: intent.forward_tx_hash,
     amount_received_cents: intent.amount_received_cents,
     return_url: intent.return_url ?? null,
+    short_ref: intent.short_ref ?? null,
   };
 }
 
@@ -613,6 +615,7 @@ async function insertWithRetry(
         createdWithKey,
         returnUrl,
       });
+      await assignShortRef(env, body.sid, tenantId, ttlSeconds);
       return body.sid;
     } catch (e) {
       if (/UNIQUE constraint failed/i.test((e as Error)?.message ?? '')) {
@@ -635,14 +638,34 @@ async function insertWithRetry(
         createdWithKey,
         returnUrl,
       });
-      return sid;
     } catch (e) {
       // Most likely PK collision on sid — retry. Any other DB error
       // bubbles up on the third attempt.
       if (i === 2) throw e;
+      continue;
     }
+    await assignShortRef(env, sid, tenantId, ttlSeconds);
+    return sid;
   }
   return null;
+}
+
+/// ADR 0028: give a fresh intent its short reference. Best effort: the code is
+/// a fallback for a dropped memo, so a failed allocation leaves `short_ref`
+/// null instead of failing the intent the payer is about to pay.
+async function assignShortRef(env: Env, sid: string, tenantId: string, ttlSeconds: number): Promise<void> {
+  const now = Math.floor(Date.now() / 1000);
+  try {
+    const code = await allocateShortRef(env, {
+      tenantId,
+      sid,
+      holdUntil: now + ttlSeconds + SHORT_REF_HOLD_SECONDS,
+      nowUnix: now,
+    });
+    if (!code) console.error(`short_ref: no free code for tenant ${tenantId} (intent ${sid})`);
+  } catch (e) {
+    console.error(`short_ref allocation failed for intent ${sid}: ${(e as Error).message}`);
+  }
 }
 
 function maxOpenIntentsPerTarget(env: Env): number {

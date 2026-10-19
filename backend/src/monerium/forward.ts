@@ -17,6 +17,7 @@ import {
   type StrayCandidate,
 } from './strayResolver';
 import { findStrayCandidates } from '../intents/db';
+import { findIntentByShortRef, shortRefFromOrder } from '../intents/shortRef';
 import { forwardViaSafe, simulateForwardViaSafe, type ForwardArgs, type ForwardResult } from '../router/safe';
 import {
   makeConfirmDeps,
@@ -90,6 +91,9 @@ export interface ForwardDeps {
     createdFrom: number;
     createdTo: number;
   }): Promise<StrayCandidate[]>;
+  /// ADR 0028: the live intent of the rail tenant holding this short code, or
+  /// null. Absent = short codes are not matched (test doubles of older paths).
+  findByShortRef?(code: string, nowUnix: number): Promise<{ sid: string; target_address: string; trusted: boolean } | null>;
   /// Clock for the resolver window; defaults to Date.now().
   nowUnix?(): number;
   /// Poke the intent's SSE stream (ADR 0017). Optional, fail-soft.
@@ -149,6 +153,12 @@ export function makeForwardDeps(env: Env, rail: TenantRail): ForwardDeps {
           defaultTenantId: defaultTenantId(env),
         })
       : undefined,
+    findByShortRef: (code, nowUnix) => findIntentByShortRef(env, {
+      tenantId: rail.tenantId,
+      code,
+      nowUnix,
+      defaultTenantId: defaultTenantId(env),
+    }),
     publish: (sid) => publishIntentChange(env, sid),
     audit: (entry) => writeAudit(env, entry),
     emitBlocked: (args) => emitForwardBlockedWebhook(env, args),
@@ -184,10 +194,15 @@ export async function maybeForward(
   await handleForward(deps, order);
 }
 
-/// How a forward found its intent: from the memo (null), by the stray
-/// resolver ('auto') or by an operator in the admin UI ('manual'). Stored in
-/// monerium_forwards.memo_prefix for the latter two.
-type ResolvedVia = 'auto' | 'manual';
+/// How a forward found its intent: from the memo (null), by the short code
+/// the payer typed ('code', ADR 0028), by the stray resolver ('auto') or by an
+/// operator in the admin UI ('manual'). Stored in monerium_forwards.memo_prefix
+/// for the last three.
+export type ResolvedVia = 'code' | 'auto' | 'manual';
+
+function viaText(via: ResolvedVia): string {
+  return via === 'code' ? 'po kratkoj referenci' : via === 'auto' ? 'automatski po iznosu i vremenu' : 'ručno';
+}
 
 export async function handleForward(
   deps: ForwardDeps,
@@ -210,6 +225,7 @@ export async function handleForward(
   let via: ResolvedVia | null = null;
   let strayNote: string | null = null;
   let ambiguousIntent = false;
+  const coded = manual ? null : await matchShortRef(deps, order, routing);
   if (manual) {
     const intent = await deps.authorize.getIntentBySid(manual.sid);
     if (intent) {
@@ -217,6 +233,11 @@ export async function handleForward(
       claimSids = [manual.sid];
       via = 'manual';
     }
+  } else if (coded) {
+    // The payer named the intent themselves: no guessing, one candidate.
+    routing = resolvedRouting(coded.target_address, coded.sid);
+    claimSids = [coded.sid];
+    via = 'code';
   } else if (isStray(routing) && deps.findStrayCandidates && amountCents !== null) {
     const now = deps.nowUnix?.() ?? Math.floor(Date.now() / 1000);
     const placed = placedAtUnix(order.meta?.placedAt, now);
@@ -387,7 +408,7 @@ export async function handleForward(
       await safely(deps.alert(
         `🧾 <b>Uplata povezana s projektom — čeka ProjectRouter</b>\n` +
           `order: <code>${order.id}</code> · iznos: <b>${order.amount} EUR</b>\n` +
-          `intent: <code>${claimed.sid}</code>${via ? ` (${via === 'auto' ? 'automatski po iznosu i vremenu' : 'ručno'})` : ''}\n` +
+          `intent: <code>${claimed.sid}</code>${via ? ` (${viaText(via)})` : ''}\n` +
           `novac je na glavnom Safeu <code>${deps.authorize.safeAddress ?? '-'}</code> → <code>${decision.target}</code>\n` +
           `simulacija: <code>${(routed.error ?? '-').slice(0, 200)}</code>\n` +
           `Rail ga prosljeđuje sam čim simulacija prođe (Safe projekta u roli, prijedlog potvrđen 2/3). ` +
@@ -398,7 +419,7 @@ export async function handleForward(
     await safely(deps.alert(
       `🧾 <b>Uplata povezana s projektom — treba ručni prijenos</b>\n` +
         `order: <code>${order.id}</code> · iznos: <b>${order.amount} EUR</b>\n` +
-        `intent: <code>${claimed.sid}</code>${via ? ` (${via === 'auto' ? 'automatski po iznosu i vremenu' : 'ručno'})` : ''}\n` +
+        `intent: <code>${claimed.sid}</code>${via ? ` (${viaText(via)})` : ''}\n` +
         `novac je na glavnom Safeu <code>${deps.authorize.safeAddress ?? '-'}</code>\n` +
         `2/3 vlasnika: prebaciti <b>točno ${order.amount} EURe</b> → <code>${decision.target}</code>.\n` +
         `Rail prepoznaje taj prijenos sam i zatvara intent.` +
@@ -487,7 +508,7 @@ export async function handleForward(
   console.log(`forward ${order.id} → ${target} tx=${result.txHash}${via ? ` (${via} sid=${routing.sid})` : ''}`);
   if (via) {
     await safely(deps.alert(
-      `🔀 <b>Uplata bez reference ${via === 'auto' ? 'automatski' : 'ručno'} povezana s intentom</b>\n` +
+      `🔀 <b>Uplata bez reference povezana s intentom ${viaText(via)}</b>\n` +
         `order: <code>${order.id}</code> · iznos: <b>${order.amount} EUR</b>\n` +
         `intent: <code>${routing.sid}</code> → <code>${target}</code>\n` +
         `tx: <code>${result.txHash}</code>` +
@@ -757,11 +778,14 @@ async function park(
 /// then the preview lit "received" on a sibling intent of the SAME payee.
 /// Conflict / none → null, and the checkout simply waits as before.
 export async function previewStraySid(
-  deps: Pick<ForwardDeps, 'findStrayCandidates' | 'nowUnix'>,
+  deps: Pick<ForwardDeps, 'findStrayCandidates' | 'findByShortRef' | 'nowUnix'>,
   order: MoneriumOrder,
 ): Promise<string | null> {
-  if (order.kind !== 'issue' || order.state === 'rejected' || !deps.findStrayCandidates) return null;
-  if (!isStray(extractRoutingFromOrder(order))) return null;
+  if (order.kind !== 'issue' || order.state === 'rejected') return null;
+  const routing = extractRoutingFromOrder(order);
+  const coded = await matchShortRef(deps, order, routing);
+  if (coded) return coded.sid;
+  if (!deps.findStrayCandidates || !isStray(routing)) return null;
   const amountCents = parseAmountCents(order.amount);
   if (amountCents === null) return null;
   const now = deps.nowUnix?.() ?? Math.floor(Date.now() / 1000);
@@ -773,6 +797,29 @@ export async function previewStraySid(
   });
   const res = resolveStray(candidates, placed);
   return res.kind === 'match' ? res.sids[0] : null;
+}
+
+/// ADR 0028: a reference-less order whose remittance carries one valid short
+/// code held by a live, unsettled intent of this tenant. Only TRUSTED intents
+/// (SR-01, same rule as the stray resolver): anyone may open a keyless intent
+/// to a self-registered wallet, and a payer's typo with a valid check digit
+/// must not land on it. A miss falls through to the stray resolver.
+async function matchShortRef(
+  deps: Pick<ForwardDeps, 'findByShortRef' | 'nowUnix'>,
+  order: MoneriumOrder,
+  routing: RoutingTarget,
+): Promise<{ sid: string; target_address: string } | null> {
+  if (!deps.findByShortRef || !isStray(routing)) return null;
+  const code = shortRefFromOrder(order);
+  if (!code) return null;
+  const now = deps.nowUnix?.() ?? Math.floor(Date.now() / 1000);
+  const hit = await deps.findByShortRef(code, now);
+  if (!hit) return null;
+  if (!hit.trusted) {
+    console.warn(`short_ref ${code} → intent ${hit.sid} is not a trusted candidate, ignored`);
+    return null;
+  }
+  return hit;
 }
 
 /// No address, no sid, no campaign — nothing in the remittance to route on.

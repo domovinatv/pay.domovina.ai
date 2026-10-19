@@ -24,6 +24,9 @@ export interface PaymentIntentRow {
   /// Migration 0029 (ADR 0024 D6): where the checkout sends the buyer back.
   /// Absent on rows read by older code paths/tests.
   return_url?: string | null;
+  /// Migration 0031 (ADR 0028): short reference the payer may type instead
+  /// of the memo. Null when allocation failed; absent on older rows/tests.
+  short_ref?: string | null;
 }
 
 export interface CreateIntentArgs {
@@ -70,7 +73,7 @@ export async function createIntent(
 
 /// SQL: is intent `i` a trusted stray / reroute candidate (SR-01)? Binds one
 /// parameter: the default tenant id (for NULL tenant_id rows).
-const TRUSTED_CANDIDATE_SQL = `(i.created_with_key = 1
+export const TRUSTED_CANDIDATE_SQL = `(i.created_with_key = 1
           OR EXISTS (SELECT 1 FROM tenant_payout_addresses p
                       WHERE p.tenant_id = COALESCE(i.tenant_id, ?)
                         AND lower(p.address) = lower(i.target_address)

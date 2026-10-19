@@ -932,7 +932,8 @@ async function load() {
   let html = "";
   for (const f of data.items) {
     const parked = (f.status === "failed" || f.status === "blocked") && !live.has(f.order_id);
-    const via = f.memo_prefix === "auto" ? ' <span class="pill warn" title="uplata bez reference, povezana po iznosu i vremenu">auto</span>'
+    const via = f.memo_prefix === "code" ? ' <span class="pill" title="uplatitelj upisao kratku referencu intenta (ADR 0028)">kod</span>'
+      : f.memo_prefix === "auto" ? ' <span class="pill warn" title="uplata bez reference, povezana po iznosu i vremenu">auto</span>'
       : f.memo_prefix === "manual" ? ' <span class="pill warn" title="ručno preusmjereno iz admina">ručno</span>'
       : f.memo_prefix === "offrail" ? ' <span class="pill" title="novac pomaknut ručno izvan raila (2/3 vlasnici)">izvan raila</span>' : "";
     const pill = (f.status === "confirmed" || f.status === "resolved_offrail") ? "ok"
