@@ -183,14 +183,19 @@ describe('admin routes', () => {
   const call = (env: Env, method: string, path: string, body?: unknown) =>
     worker.fetch(new Request('https://mpt.domovina.ai' + path, { method, headers: auth, body: body ? JSON.stringify(body) : undefined }), env, ctx);
 
-  it('refuses to touch the default tenant', async () => {
-    const { env, sql } = fakeEnv({});
-    for (const [m, p] of [['PUT', '/admin/api/tenants/italk/rail'], ['POST', '/admin/api/tenants/italk/suspend'], ['POST', '/admin/api/tenants/italk/rail/router-key']]) {
-      const res = await call(env, m, p, {});
-      expect(res.status).toBe(400);
-      expect(await res.json()).toEqual({ error: 'default_tenant_uses_env' });
-    }
-    expect(sql.some((q) => q.startsWith('UPDATE'))).toBe(false);
+  // behavior-change (italk → D1): the default tenant's rail row is prepared
+  // through the same admin flow while the env rail still serves it; only the
+  // per-tenant webhook stays closed until the env rail is gone.
+  it('lets the admin prepare the default tenant rail, but not its webhook', async () => {
+    const { env } = fakeEnv({ 'FROM tenants WHERE id': { id: 'italk', status: 'suspended' } });
+    const put = await call(env, 'PUT', '/admin/api/tenants/italk/rail', {});
+    expect(put.status).toBe(400);
+    expect(await put.json()).not.toEqual({ error: 'default_tenant_uses_env' });
+    const key = await call(env, 'POST', '/admin/api/tenants/italk/rail/router-key');
+    expect(await key.json()).toEqual({ error: 'rail_not_found' });
+    const hook = await call(env, 'POST', '/admin/api/tenants/italk/rail/webhook');
+    expect(hook.status).toBe(400);
+    expect(await hook.json()).toEqual({ error: 'default_tenant_uses_env' });
   });
 
   it('refuses to change the rail of an active tenant', async () => {

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  listRailTenantIds,
   getTenantRail,
   legacyRail,
   railFromRow,
@@ -165,5 +166,20 @@ describe('getTenantRail — fail-closed, no fallback to the default tenant', () 
   it('returns null when secrets cannot be decrypted (no KEK)', async () => {
     const { db } = fakeDb(row());
     expect(await getTenantRail(env({ DB: db, TENANT_SECRETS_KEK: '' }), 'zupa-a')).toBeNull();
+  });
+});
+
+describe('listRailTenantIds — ITalk runs once while the env rail serves it', () => {
+  it('leaves the default tenant row out of the cron set', async () => {
+    let sql = '';
+    let args: unknown[] = [];
+    const env = {
+      MULTI_TENANT_RAIL: '1',
+      DEFAULT_TENANT_ID: 'italk',
+      DB: { prepare: (q: string) => { sql = q; return { bind: (...a: unknown[]) => { args = a; return { all: async () => ({ results: [{ tenant_id: 'zupa-a' }] }) }; } }; } },
+    } as unknown as Env;
+    expect(await listRailTenantIds(env)).toEqual(['zupa-a']);
+    expect(sql).toContain('r.tenant_id != ?');
+    expect(args).toEqual(['italk']);
   });
 });

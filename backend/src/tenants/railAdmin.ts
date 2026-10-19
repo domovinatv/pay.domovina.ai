@@ -82,15 +82,13 @@ export function mountRailAdmin(app: Hono<{ Bindings: Env }>): void {
 
   app.get('/admin/api/tenants/:id/rail', async (c) => {
     const id = c.req.param('id');
-    if (isLegacyTenant(c.env, id)) return c.json({ tenant_id: id, legacy: true, rail: null });
     const { tenant, row } = await loadTenantAndRail(c.env, id);
     if (!tenant) return c.json({ error: 'tenant_not_found' }, 404);
-    return c.json({ tenant_id: id, status: tenant.status, legacy: false, rail: row ? redactRail(row) : null });
+    return c.json({ tenant_id: id, status: tenant.status, legacy: isLegacyTenant(c.env, id), rail: row ? redactRail(row) : null });
   });
 
   app.put('/admin/api/tenants/:id/rail', async (c) => {
     const id = c.req.param('id');
-    if (isLegacyTenant(c.env, id)) return c.json({ error: 'default_tenant_uses_env' }, 400);
     const { tenant, row } = await loadTenantAndRail(c.env, id);
     if (!tenant) return c.json({ error: 'tenant_not_found' }, 404);
     // ADR 0024: a sandbox tenant never gets a rail — production is a new
@@ -128,7 +126,6 @@ export function mountRailAdmin(app: Hono<{ Bindings: Env }>): void {
 
   app.post('/admin/api/tenants/:id/rail/router-key', async (c) => {
     const id = c.req.param('id');
-    if (isLegacyTenant(c.env, id)) return c.json({ error: 'default_tenant_uses_env' }, 400);
     const { tenant, row } = await loadTenantAndRail(c.env, id);
     if (!tenant || !row) return c.json({ error: 'rail_not_found' }, 404);
     if (tenant.status === 'active') return c.json({ error: 'suspend_first' }, 409);
@@ -148,6 +145,8 @@ export function mountRailAdmin(app: Hono<{ Bindings: Env }>): void {
 
   app.post('/admin/api/tenants/:id/rail/webhook', async (c) => {
     const id = c.req.param('id');
+    // ITalk's row is prepared while the env rail still runs it; its per-tenant
+    // webhook would have no rail behind it until the env rail is removed.
     if (isLegacyTenant(c.env, id)) return c.json({ error: 'default_tenant_uses_env' }, 400);
     const { tenant, row } = await loadTenantAndRail(c.env, id);
     if (!tenant || !row) return c.json({ error: 'rail_not_found' }, 404);
@@ -174,7 +173,6 @@ export function mountRailAdmin(app: Hono<{ Bindings: Env }>): void {
 
   app.post('/admin/api/tenants/:id/rail/verify', async (c) => {
     const id = c.req.param('id');
-    if (isLegacyTenant(c.env, id)) return c.json({ error: 'default_tenant_uses_env' }, 400);
     const { tenant, row } = await loadTenantAndRail(c.env, id);
     if (!tenant || !row) return c.json({ error: 'rail_not_found' }, 404);
     const rail = await railFromStoredRow(c.env, row);
@@ -193,7 +191,6 @@ export function mountRailAdmin(app: Hono<{ Bindings: Env }>): void {
   for (const transition of ['activate', 'suspend', 'resume'] as Transition[]) {
     app.post(`/admin/api/tenants/:id/${transition}`, async (c) => {
       const id = c.req.param('id');
-      if (isLegacyTenant(c.env, id)) return c.json({ error: 'default_tenant_uses_env' }, 400);
       const { tenant, row } = await loadTenantAndRail(c.env, id);
       if (!tenant) return c.json({ error: 'tenant_not_found' }, 404);
       const next = nextStatus(tenant.status, transition, Boolean(row?.verified_at));
