@@ -316,14 +316,16 @@ export async function railFromStoredRow(env: Env, row: TenantRailRow): Promise<T
 }
 
 /// Tenant ids with a rail row — what the reconcile cron iterates besides ITalk.
+/// ITalk's own row (prepared before the env rail is removed) is left out: the
+/// crons already run ITalk through `legacyRail`, and twice would be twice.
 export async function listRailTenantIds(env: Env): Promise<string[]> {
   if (!multiTenantEnabled(env)) return [];
   const res = await env.DB.prepare(
     `SELECT r.tenant_id FROM tenant_rail r
        JOIN tenants t ON t.id = r.tenant_id
-      WHERE t.status IN ('active', 'suspended')
+      WHERE t.status IN ('active', 'suspended') AND r.tenant_id != ?
       ORDER BY r.tenant_id`,
-  ).all<{ tenant_id: string }>();
+  ).bind(defaultTenantId(env)).all<{ tenant_id: string }>();
   return res.results.map((r) => r.tenant_id);
 }
 

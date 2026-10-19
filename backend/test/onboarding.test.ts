@@ -2,6 +2,9 @@ import { describe, expect, it } from 'vitest';
 
 import worker from '../src/index';
 import {
+  envRailBody,
+  legacySubscriptionId,
+  PROJECT_ROUTER_ROLE_KEY,
   MIN_ROUTER_GAS_WEI,
   MIN_ROUTER_GAS_WEI_CHIADO,
   nextStatus,
@@ -157,6 +160,49 @@ it('builds the per-tenant webhook URL', () => {
   expect(webhookUrlFor('https://mpt.domovina.ai/', 'zupa-a')).toBe('https://mpt.domovina.ai/api/monerium/webhook/t/zupa-a');
 });
 
+describe('ITalk env rail → D1 row', () => {
+  const env = {
+    MONERIUM_BASE_URL: 'https://api.monerium.app',
+    MONERIUM_CLIENT_ID: 'cid-prod',
+    MONERIUM_CLIENT_SECRET: 'sec-prod',
+    SAFE_ADDRESS: '0x449aBCEf4e29a7Dd8d98dB451AF2c463561BAf2e',
+    ROLES_MODIFIER_ADDRESS: '0x330347d656b1a5DF972f758DE1E25E99ec36762c',
+    EURE_CONTRACT: '0x420CA0f9B9b604cE0fd9C18EF134C705e5Fa3430',
+    GNOSIS_RPC_URL: '',
+    INTENT_WEBHOOK_URL: 'https://api.domovina.ai/functions/v1/pinka-webhook',
+    INTENT_WEBHOOK_SECRET: 'whsec_x',
+  } as unknown as Env;
+
+  it('becomes a valid direct rail with the ProjectRouter role on the same Safe', () => {
+    const v = validateRailInput(envRailBody(env, 'prof-italk'), null);
+    expect(v.ok).toBe(true);
+    if (!v.ok) return;
+    expect(v.value).toMatchObject({
+      moneriumEnv: 'production', chain: 'gnosis', mode: 'direct',
+      clientId: 'cid-prod', clientSecret: 'sec-prod', profileId: 'prof-italk',
+      receivingSafe: '0x449abcef4e29a7dd8d98db451af2c463561baf2e',
+      rolesModifier: '0x330347d656b1a5df972f758de1e25e99ec36762c',
+      roleKey: PROJECT_ROUTER_ROLE_KEY,
+      rpcUrl: null,
+      outboundWebhookUrl: 'https://api.domovina.ai/functions/v1/pinka-webhook',
+      outboundWebhookSecret: 'whsec_x',
+    });
+    expect(PROJECT_ROUTER_ROLE_KEY.slice(2, 28)).toBe(Buffer.from('ProjectRouter').toString('hex'));
+  });
+
+  it('refuses an unknown Monerium host instead of guessing', () => {
+    const v = validateRailInput(envRailBody({ ...env, MONERIUM_BASE_URL: 'https://evil.example' } as Env, 'p'), null);
+    expect(v).toEqual({ ok: false, error: 'invalid_monerium_env' });
+  });
+
+  it('finds the one live shared-webhook subscription, nothing else', () => {
+    const shared = { id: 's1', url: 'https://mpt.domovina.ai/api/monerium/webhook', state: 'active' };
+    expect(legacySubscriptionId([shared, { id: 's2', url: 'https://mpt.domovina.ai/api/monerium/webhook/t/x' }])).toBe('s1');
+    expect(legacySubscriptionId([{ ...shared, state: 'disabled' }])).toBeNull();
+    expect(legacySubscriptionId([shared, { ...shared, id: 's3', url: 'https://pay.domovina.ai/api/monerium/webhook' }])).toBeNull();
+  });
+});
+
 describe('admin routes', () => {
   function fakeEnv(rows: Record<string, unknown>): { env: Env; sql: string[] } {
     // Valid admin session for the cookie below (src/admin/auth/session.ts).
@@ -183,14 +229,29 @@ describe('admin routes', () => {
   const call = (env: Env, method: string, path: string, body?: unknown) =>
     worker.fetch(new Request('https://mpt.domovina.ai' + path, { method, headers: auth, body: body ? JSON.stringify(body) : undefined }), env, ctx);
 
-  it('refuses to touch the default tenant', async () => {
-    const { env, sql } = fakeEnv({});
-    for (const [m, p] of [['PUT', '/admin/api/tenants/italk/rail'], ['POST', '/admin/api/tenants/italk/suspend'], ['POST', '/admin/api/tenants/italk/rail/router-key']]) {
-      const res = await call(env, m, p, {});
-      expect(res.status).toBe(400);
-      expect(await res.json()).toEqual({ error: 'default_tenant_uses_env' });
-    }
-    expect(sql.some((q) => q.startsWith('UPDATE'))).toBe(false);
+  // behavior-change (italk → D1): the default tenant's rail row is prepared
+  // through the same admin flow while the env rail still serves it; only the
+  // per-tenant webhook stays closed until the env rail is gone.
+  it('lets the admin prepare the default tenant rail, but not its webhook', async () => {
+    const { env } = fakeEnv({ 'FROM tenants WHERE id': { id: 'italk', status: 'suspended' } });
+    const put = await call(env, 'PUT', '/admin/api/tenants/italk/rail', {});
+    expect(put.status).toBe(400);
+    expect(await put.json()).not.toEqual({ error: 'default_tenant_uses_env' });
+    const key = await call(env, 'POST', '/admin/api/tenants/italk/rail/router-key');
+    expect(await key.json()).toEqual({ error: 'rail_not_found' });
+    const hook = await call(env, 'POST', '/admin/api/tenants/italk/rail/webhook');
+    expect(hook.status).toBe(400);
+    expect(await hook.json()).toEqual({ error: 'default_tenant_uses_env' });
+  });
+
+  it('imports the env rail only for the default tenant, suspended, without a row', async () => {
+    const other = fakeEnv({ 'FROM tenants WHERE id': { id: 'zupa-a', status: 'suspended' } });
+    expect(await (await call(other.env, 'POST', '/admin/api/tenants/zupa-a/rail/import-env')).json()).toEqual({ error: 'only_default_tenant' });
+    const active = fakeEnv({ 'FROM tenants WHERE id': { id: 'italk', status: 'active' } });
+    expect(await (await call(active.env, 'POST', '/admin/api/tenants/italk/rail/import-env')).json()).toEqual({ error: 'suspend_first' });
+    const exists = fakeEnv({ 'FROM tenants WHERE id': { id: 'italk', status: 'suspended' }, 'FROM tenant_rail': row({ tenant_id: 'italk' }) });
+    expect(await (await call(exists.env, 'POST', '/admin/api/tenants/italk/rail/import-env')).json()).toEqual({ error: 'rail_exists' });
+    for (const e of [other, active, exists]) expect(e.sql.some((q) => q.includes('INSERT INTO tenant_rail'))).toBe(false);
   });
 
   it('refuses to change the rail of an active tenant', async () => {
