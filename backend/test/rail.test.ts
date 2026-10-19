@@ -1,9 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
-  listRailTenantIds,
   getTenantRail,
-  legacyRail,
   railFromRow,
   type TenantRailRow,
 } from '../src/tenants/rail';
@@ -65,36 +63,10 @@ function row(over: Partial<TenantRailRow> = {}): TenantRailRow {
 
 const fakeDecrypt = async (field: string, blob: string | null) => `plain:${field}:${blob}`;
 
-describe('legacyRail — ITalk from env, unchanged', () => {
-  it('maps every env value the rail used before ADR 0017', () => {
-    const r = legacyRail(env());
-    expect(r).toMatchObject({
-      tenantId: 'italk',
-      legacy: true,
-      webhookSecret: 'whsec_italk',
-      receivingSafe: ITALK_SAFE.toLowerCase(),
-      monerium: {
-        baseUrl: 'https://api.monerium.app',
-        clientId: 'italk-client',
-        clientSecret: 'italk-secret',
-        profileId: null,
-        tokenCacheKey: 'monerium:access_token',
-      },
-    });
-    expect(r.signer).toMatchObject({
-      safe: ITALK_SAFE,
-      privateKey: '0xitalk-router',
-      rpcUrl: 'https://rpc.gnosischain.com',
-      multiSend: '0x9641d764fc13c8B624c04430C7356C1C7C8102e2',
-    });
-  });
-});
-
 describe('railFromRow — a tenant never inherits ITalk config', () => {
   it('builds the tenant rail only from its own row', async () => {
     const r = await railFromRow(env(), row(), fakeDecrypt);
     expect(r).not.toBeNull();
-    expect(r!.legacy).toBe(false);
     expect(r!.monerium.tokenCacheKey).toBe('monerium:access_token:zupa-a');
     expect(r!.monerium.clientSecret).toBe('plain:client_secret:enc:client_secret');
     expect(r!.monerium.profileId).toBe('prof-zupa');
@@ -145,11 +117,10 @@ function fakeDb(r: TenantRailRow | null): { db: D1Database; queries: string[] } 
 }
 
 describe('getTenantRail — fail-closed, no fallback to the default tenant', () => {
-  it('returns the env rail for the default tenant without touching D1', async () => {
+  it('reads the default tenant from D1 like any other (no env rail)', async () => {
     const { db, queries } = fakeDb(null);
-    const r = await getTenantRail(env({ DB: db }), 'italk');
-    expect(r?.legacy).toBe(true);
-    expect(queries).toHaveLength(0);
+    expect(await getTenantRail(env({ DB: db, MULTI_TENANT_RAIL: '1' }), 'italk')).toBeNull();
+    expect(queries.length).toBeGreaterThan(0);
   });
 
   it('returns null for another tenant while MULTI_TENANT_RAIL is off', async () => {
@@ -166,20 +137,5 @@ describe('getTenantRail — fail-closed, no fallback to the default tenant', () 
   it('returns null when secrets cannot be decrypted (no KEK)', async () => {
     const { db } = fakeDb(row());
     expect(await getTenantRail(env({ DB: db, TENANT_SECRETS_KEK: '' }), 'zupa-a')).toBeNull();
-  });
-});
-
-describe('listRailTenantIds — ITalk runs once while the env rail serves it', () => {
-  it('leaves the default tenant row out of the cron set', async () => {
-    let sql = '';
-    let args: unknown[] = [];
-    const env = {
-      MULTI_TENANT_RAIL: '1',
-      DEFAULT_TENANT_ID: 'italk',
-      DB: { prepare: (q: string) => { sql = q; return { bind: (...a: unknown[]) => { args = a; return { all: async () => ({ results: [{ tenant_id: 'zupa-a' }] }) }; } }; } },
-    } as unknown as Env;
-    expect(await listRailTenantIds(env)).toEqual(['zupa-a']);
-    expect(sql).toContain('r.tenant_id != ?');
-    expect(args).toEqual(['italk']);
   });
 });

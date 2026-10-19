@@ -33,7 +33,7 @@ import {
 } from '../tenants/whitelist';
 import { writeAudit } from '../tenants/db';
 import { defaultTenantId } from '../tenants/whitelist';
-import { getTenantRail, legacyRail, listRailTenantIds, type TenantRail } from '../tenants/rail';
+import { getTenantRail, listRailTenantIds, type TenantRail } from '../tenants/rail';
 import { sendAlert } from '../alerts';
 import { receiptKind } from '../receipts/sid';
 import { publishIntentChange } from '../intents/stream';
@@ -640,7 +640,7 @@ export function owedFromRow(row: MoneriumForwardRow): OwedForward {
 /// tick after the owners confirm the proposal. Cheap when nothing is owed:
 /// one SELECT per rail, an eth_call per owed row.
 export async function routeAllOwedForwards(env: Env): Promise<{ tried: number; submitted: number }> {
-  const rails: TenantRail[] = [legacyRail(env)];
+  const rails: TenantRail[] = [];
   for (const id of await listRailTenantIds(env)) {
     const r = await getTenantRail(env, id);
     if (r) rails.push(r);

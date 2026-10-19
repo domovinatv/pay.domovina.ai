@@ -84,14 +84,6 @@ describe('GET /api/intents — who may list', () => {
     expect((b.data as Array<{ sid: string }>).map((i) => i.sid)).toEqual(['bbbbbb01']);
   });
 
-  it('the default tenant also owns the pre-tenant rows (tenant_id NULL)', async () => {
-    const { env, intent } = await setup();
-    intent('italk001', 'italk', 200);
-    intent('legacy01', null, 100);
-    intent('aaaaaa01', 'tenant-a', 300);
-    const r = await json(await get(env, '/api/intents', SK_ITALK));
-    expect((r.data as Array<{ sid: string }>).map((i) => i.sid)).toEqual(['italk001', 'legacy01']);
-  });
 });
 
 describe('GET /api/intents — paging and filters', () => {

@@ -17,7 +17,7 @@ vi.mock('../src/router/safe', () => ({
 }));
 
 import { handleForward, makeForwardDeps } from '../src/monerium/forward';
-import { legacyRail, type TenantRail } from '../src/tenants/rail';
+import type { TenantRail } from '../src/tenants/rail';
 import type { MoneriumOrder } from '../src/monerium/types';
 import type { Env } from '../src/types';
 
@@ -102,7 +102,7 @@ function tenantRail(id: 'zupa-a' | 'zupa-b'): TenantRail {
   const main = id === 'zupa-a' ? A_MAIN : B_MAIN;
   return {
     tenantId: id,
-    legacy: false,
+    mode: 'forward',
     monerium: { baseUrl: '', clientId: '', clientSecret: '', profileId: `prof-${id}`, tokenCacheKey: '' },
     webhookSecret: 'whsec_x',
     receivingSafe: main,
@@ -119,6 +119,17 @@ function tenantRail(id: 'zupa-a' | 'zupa-b'): TenantRail {
     },
     maxForwardCents: null,
     outboundWebhook: null,
+  };
+}
+
+/// ITalk is an ordinary tenant_rail row now (migration 0030).
+function italkRail(): TenantRail {
+  const r = tenantRail('zupa-a');
+  return {
+    ...r,
+    tenantId: 'italk',
+    receivingSafe: ITALK_SAFE.toLowerCase(),
+    signer: { ...r.signer, safe: ITALK_SAFE, privateKey: '0xitalk-router-key' },
   };
 }
 
@@ -168,7 +179,7 @@ describe('tenant isolation through the real forward wiring', () => {
   it("a payment to ITalk's IBAN carrying A's sid is parked — ITalk never pays A's Safe", async () => {
     const db = freshDb();
     const e = env(db);
-    await handleForward(deps(e, legacyRail(e)), order(`mpt:${A_PURPOSE}?sid=sid-of-a`, ITALK_SAFE));
+    await handleForward(deps(e, italkRail()), order(`mpt:${A_PURPOSE}?sid=sid-of-a`, ITALK_SAFE));
     expect(signed).toHaveLength(0);
     expect(db.forwards[0]).toMatchObject({ status: 'blocked', error: 'not_whitelisted:tenant_mismatch', tenant_id: 'italk' });
   });
@@ -181,10 +192,10 @@ describe('tenant isolation through the real forward wiring', () => {
     expect(signed[0].signer.safe).toBe(B_MAIN);
   });
 
-  it('ITalk keeps signing with the env router, as before', async () => {
+  it('ITalk signs with its own rail router', async () => {
     const db = freshDb();
     const e = env(db);
-    await handleForward(deps(e, legacyRail(e)), order(`mpt:${ITALK_PAYEE}?sid=sid-italk`, ITALK_SAFE));
+    await handleForward(deps(e, italkRail()), order(`mpt:${ITALK_PAYEE}?sid=sid-italk`, ITALK_SAFE));
     expect(signed).toHaveLength(1);
     expect(signed[0].signer).toMatchObject({ safe: ITALK_SAFE, privateKey: '0xitalk-router-key' });
     expect(signed[0].target).toBe(ITALK_PAYEE);

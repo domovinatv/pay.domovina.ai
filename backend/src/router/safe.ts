@@ -19,7 +19,8 @@ import { privateKeyToAccount } from 'viem/accounts';
 import { gnosis, gnosisChiado } from 'viem/chains';
 
 import type { Env } from '../types';
-import { getTenantRail, isLegacyTenant, legacyRail, type RailChain, type RailSigner } from '../tenants/rail';
+import { getTenantRail, type RailChain, type RailSigner } from '../tenants/rail';
+import { defaultTenantId } from '../tenants/whitelist';
 
 /// EURe (Monerium EUR e-money token on Gnosis) — ERC-20 with `transfer`.
 const EURE_ABI = [
@@ -269,7 +270,7 @@ export async function getForwardStatus(
   txHash: Hex,
   tenantId: string | null = null,
 ): Promise<ForwardTxStatus> {
-  const rail = !tenantId || isLegacyTenant(env, tenantId) ? legacyRail(env) : await getTenantRail(env, tenantId);
+  const rail = await getTenantRail(env, tenantId ?? defaultTenantId(env));
   if (!rail) return 'unknown';
   const client = createPublicClient({ chain: viemChain(rail.signer.chain), transport: http(rail.signer.rpcUrl) });
   try {

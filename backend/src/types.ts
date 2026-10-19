@@ -28,9 +28,6 @@ export interface Env {
   // Monerium (Private app — fiat↔EURe bridge for ITalk's own account)
   MONERIUM_BASE_URL: string; // https://api.monerium.dev (sandbox) or https://api.monerium.app
   MONERIUM_CLIENT_ID: string;
-  MONERIUM_CLIENT_SECRET: string;
-  MONERIUM_WEBHOOK_SECRET: string; // HMAC secret configured in Monerium dashboard
-  MONERIUM_PROFILE_ID: string; // optional; if empty client picks the first profile
 
   // MPT routing — Safe + Zodiac Roles forward path. EURe minted by Monerium
   // lands in SAFE_ADDRESS (Monerium default wallet), then this backend submits
@@ -40,9 +37,6 @@ export interface Env {
   GNOSIS_RPC_URL: string;          // default https://rpc.gnosischain.com
   EURE_CONTRACT: string;           // 0x420CA0f9B9b604cE0fd9C18EF134C705e5Fa3430
   SAFE_ADDRESS: string;            // MPT main-rail Safe (Monerium default wallet)
-  ROLES_MODIFIER_ADDRESS: string;  // Zodiac Roles Modifier v2 instance bound to SAFE_ADDRESS
-  ROLE_KEY: string;                // bytes32 hex (0x… 64 chars) — "EUReForwarder" role
-  ROUTER_PRIVATE_KEY: string;      // EOA private key (secret); member of ROLE_KEY
 
   // PaymentRegistry onchain memo — optional. When both PAYMENT_REGISTRY_ADDRESS
   // and MULTISEND_ADDRESS are set, the rail forwards via a Safe MultiSend
@@ -87,12 +81,8 @@ export interface Env {
   STRAY_RESOLVER?: string;            // "1" → reference-less payments are matched to an intent by amount + time (src/monerium/strayResolver.ts)
   WATCH_HEARTBEAT_URL?: string;        // secret: dead-man ping after every healthy theft-detector tick (TD-02), e.g. healthchecks.io
   RECONCILE_FORWARDS?: string;         // "1" → the reconcile cron runs the forward path on a processed order with no forward row (SR-05)
-  LEGACY_RAIL_MODE?: string;           // ADR 0025: "direct" → ITalk mints straight into project Safes, router key never loaded; unset = forward
-  PROJECT_ROUTER_PRIVATE_KEY?: string; // ADR 0026 secret: member of the ProjectRouter role (EURe.transfer only to approved project Safes); ITalk direct rail only
   CHIADO_DEPLOYER_PRIVATE_KEY?: string; // ADR 0027 secret: pays gas for project Safe deploys on Chiado (sandbox rails); calls only SafeProxyFactory.createProxyWithNonce
   GNOSIS_DEPLOYER_PRIVATE_KEY?: string; // same on Gnosis (prod); unset = the setup page deploys from MetaMask
-  PROJECT_ROUTER_ROLE_KEY?: string;    // ADR 0026: bytes32 of "ProjectRouter" on ROLES_MODIFIER_ADDRESS; empty = D4 stays a manual 2/3 transfer
-  LEGACY_REQUIRE_MINT_AT?: string;     // "1" → ITalk forwards only orders minted at SAFE_ADDRESS (MT-03), like every tenant rail
   MAX_OPEN_INTENTS_PER_TARGET?: string; // SR-01 cap on open intents per non-trusted destination (default 20); sk_ callers exempt
   /// Durable Object namespace holding one SSE hub per sid (src/intents/stream.ts).
   /// Optional so environments without the binding (tests, old deploys) keep

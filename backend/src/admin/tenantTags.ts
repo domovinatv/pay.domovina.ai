@@ -4,10 +4,7 @@ import { defaultTenantId } from '../tenants/whitelist';
 /// Display-only tags for admin lists: which tenant a row belongs to and which
 /// Monerium environment (production / sandbox) that tenant's rail talks to.
 ///
-/// Rows written before migration 0017 carry tenant_id NULL — those are the
-/// default tenant (ITalk). The default tenant has no `tenant_rail` row; its
-/// environment comes from env.MONERIUM_BASE_URL. Never used for money
-/// decisions — that stays in tenants/rail.ts.
+/// Never used for money decisions — that stays in tenants/rail.ts.
 export interface TenantTag {
   tenant_id: string;
   tenant_name: string | null;
@@ -19,13 +16,6 @@ export interface TenantTags {
   defaultId: string;
   list: TenantTag[];
   resolve(tenantId: string | null | undefined): TenantTag;
-}
-
-export function envFromBaseUrl(baseUrl: string | undefined): TenantTag['monerium_env'] {
-  const u = (baseUrl ?? '').toLowerCase();
-  if (u.includes('monerium.dev')) return 'sandbox';
-  if (u.includes('monerium.app')) return 'production';
-  return 'unknown';
 }
 
 function normEnv(v: string | null | undefined): TenantTag['monerium_env'] {
@@ -44,20 +34,11 @@ export async function loadTenantTags(env: Env): Promise<TenantTags> {
 
   const byId = new Map<string, TenantTag>();
   for (const r of res.results) {
-    const legacy = r.id === defaultId;
     byId.set(r.id, {
       tenant_id: r.id,
       tenant_name: r.name,
-      monerium_env: legacy ? envFromBaseUrl(env.MONERIUM_BASE_URL) : normEnv(r.monerium_env),
-      chain: legacy ? 'gnosis' : r.chain ?? 'gnosis',
-    });
-  }
-  if (!byId.has(defaultId)) {
-    byId.set(defaultId, {
-      tenant_id: defaultId,
-      tenant_name: null,
-      monerium_env: envFromBaseUrl(env.MONERIUM_BASE_URL),
-      chain: 'gnosis',
+      monerium_env: normEnv(r.monerium_env),
+      chain: r.chain ?? 'gnosis',
     });
   }
 

@@ -19,7 +19,7 @@ import {
   recordMoneriumWebhookEvent,
 } from './monerium/db';
 import { handleMoneriumWebhook, makeWebhookDeps } from './monerium/webhookHandler';
-import { getReferenceStyle, getTenantRail, isLegacyTenant, legacyRail, multiTenantEnabled } from './tenants/rail';
+import { getReferenceStyle, getTenantRail, multiTenantEnabled } from './tenants/rail';
 import { mountAdminUi } from './admin/app';
 import { buildHpbOps, buildMoneriumOps } from './admin/opsRoutes';
 import { buildIntentApi, buildIntentStatus } from './intents/api';
@@ -163,30 +163,15 @@ async function readWebhookBody(req: Request): Promise<string | null> {
   return new TextEncoder().encode(text).length > MAX_WEBHOOK_BODY_BYTES ? null : text;
 }
 
-app.post('/api/monerium/webhook', async (c) => {
-  // ITalk (default tenant): env secret, env rail — unchanged since ADR 0016.
-  const rail = legacyRail(c.env);
-  const rawBody = await readWebhookBody(c.req.raw);
-  if (rawBody === null) return c.json({ error: 'payload_too_large' }, 413);
-  const res = await handleMoneriumWebhook(
-    makeWebhookDeps(c.env, rail, c.executionCtx),
-    rail,
-    rawBody,
-    c.req.raw.headers,
-  );
-  return c.json(res.body, res.status);
-});
-
 // Per-tenant webhook (ADR 0017). The tenant in the URL decides whose secret
 // verifies the signature and whose rail handles the order — never a
-// fallback to ITalk. Off (404) unless MULTI_TENANT_RAIL=1.
+// fallback to another tenant. Off (404) unless MULTI_TENANT_RAIL=1.
 app.post('/api/monerium/webhook/t/:tenantId', async (c) => {
   if (!multiTenantEnabled(c.env)) return c.json({ error: 'not_found' }, 404);
   const tenantId = c.req.param('tenantId');
   const rawBody = await readWebhookBody(c.req.raw);
   if (rawBody === null) return c.json({ error: 'payload_too_large' }, 413);
-  // The default tenant has exactly one entry point (the legacy URL above).
-  const rail = isLegacyTenant(c.env, tenantId) ? null : await getTenantRail(c.env, tenantId);
+  const rail = await getTenantRail(c.env, tenantId);
   if (!rail) {
     await recordMoneriumWebhookEvent(c.env, {
       orderId: null,

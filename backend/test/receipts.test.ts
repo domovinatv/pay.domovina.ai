@@ -21,6 +21,7 @@ import {
 } from '../src/receipts/sid';
 import type { Env } from '../src/types';
 import { migratedD1 } from './helpers/sqliteD1';
+import { seedItalkRailSync } from './helpers/italkRail';
 
 /// ADR 0022 — payment receipts bound to the payer's key.
 
@@ -338,7 +339,7 @@ describe('receipt API', () => {
       s.raw.prepare(`INSERT INTO payment_intents (sid, target_address, amount_cents, currency, state, label, created_at, expires_at, tenant_id)
                      VALUES (?, ?, 500, 'eur', ?, 'Članarina', 0, ?, 'italk')`)
         .run(sid, PAYEE, state, Math.floor(Date.now() / 1000) + 600);
-    const env = { ...s.env, DEFAULT_TENANT_ID: 'italk', PAYMENT_REGISTRY_ADDRESS: '', GNOSIS_RPC_URL: 'http://127.0.0.1:1' } as unknown as Env;
+    const env = { ...s.env, ...seedItalkRailSync(s.raw, { mode: 'forward' }), DEFAULT_TENANT_ID: 'italk', PAYMENT_REGISTRY_ADDRESS: '', GNOSIS_RPC_URL: 'http://127.0.0.1:1' } as unknown as Env;
     const api = buildIntentApi();
     const call = (path: string, init?: RequestInit) => api.request(path, init, env);
     return { ...s, env, addIntent, call };

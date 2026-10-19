@@ -10,7 +10,7 @@ import {
 } from '../src/monerium/forward';
 import { listOwedForwards, transitionForward, type MoneriumForwardRow } from '../src/monerium/db';
 import type { MoneriumOrder } from '../src/monerium/types';
-import { legacyRail, railFromRow, type TenantRailRow } from '../src/tenants/rail';
+import { railFromRow, type TenantRailRow } from '../src/tenants/rail';
 import type { Env } from '../src/types';
 import { migratedD1 } from './helpers/sqliteD1';
 
@@ -243,32 +243,6 @@ describe('router_claim on the real schema', () => {
 });
 
 describe('rail config: a ProjectRouter only when fully configured, only in direct mode', () => {
-  const base = {
-    DEFAULT_TENANT_ID: 'italk',
-    MONERIUM_BASE_URL: 'https://api.monerium.app',
-    SAFE_ADDRESS: '0x449aBCEf4e29a7Dd8d98dB451AF2c463561BAf2e',
-    ROLES_MODIFIER_ADDRESS: '0x330347d656b1a5DF972f758DE1E25E99ec36762c',
-    ROLE_KEY: '0xold-eureforwarder',
-    ROUTER_PRIVATE_KEY: '0xold-router',
-    EURE_CONTRACT: '0x420CA0f9B9b604cE0fd9C18EF134C705e5Fa3430',
-    GNOSIS_RPC_URL: '',
-  };
-  const full = { PROJECT_ROUTER_PRIVATE_KEY: '0xproject-router', PROJECT_ROUTER_ROLE_KEY: '0xprojectrouter' };
-
-  it('legacy direct + all pieces → signer with the ProjectRouter key and role, never the old ones', () => {
-    const r = legacyRail({ ...base, ...full, LEGACY_RAIL_MODE: 'direct' } as unknown as Env);
-    expect(r.projectRouter).toMatchObject({
-      privateKey: '0xproject-router', roleKey: '0xprojectrouter', rolesModifier: base.ROLES_MODIFIER_ADDRESS,
-      safe: base.SAFE_ADDRESS, paymentRegistry: '', multiSend: '',
-    });
-    expect(r.signer.privateKey).toBe('');
-  });
-
-  it('legacy direct without the role key, or in forward mode → no ProjectRouter', () => {
-    expect(legacyRail({ ...base, PROJECT_ROUTER_PRIVATE_KEY: '0xk', LEGACY_RAIL_MODE: 'direct' } as unknown as Env).projectRouter).toBeUndefined();
-    expect(legacyRail({ ...base, ...full } as unknown as Env).projectRouter).toBeUndefined();
-  });
-
   const row = (over: Partial<TenantRailRow>): TenantRailRow => ({
     tenant_id: TENANT, monerium_env: 'sandbox', chain: 'chiado', auth_kind: 'client_credentials',
     client_id: 'c', client_secret_enc: 'enc', refresh_token_enc: null, profile_id: 'p',

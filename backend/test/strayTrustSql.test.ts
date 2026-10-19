@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { findStrayCandidates, isTrustedTarget, listRerouteCandidates } from '../src/intents/db';
 import type { Env } from '../src/types';
 import { migratedD1 } from './helpers/sqliteD1';
+import { seedItalkRail } from './helpers/italkRail';
 
 /// SR-01 against real SQLite + every migration (incl. 0014 seed and 0022).
 const LUKAVEC = '0x4f7f1950b2cb6713ccb47b869f30c0ebc01d0173';
@@ -75,12 +76,14 @@ describe('POST /api/intents — SR-01 trust flag and open-intent cap', async () 
   const { hashApiKey } = await import('../src/tenants/db');
   const ctx = { waitUntil: () => {}, passThroughOnException: () => {} } as unknown as ExecutionContext;
 
-  function api() {
+  async function api() {
     const { db, raw } = migratedD1();
+    const rail = await seedItalkRail(raw, { mode: 'forward' });
     raw.prepare(`INSERT INTO tenant_payout_addresses (tenant_id, address, label, source, created_at, created_by)
                  VALUES ('italk', ?, 'campaign Lukavec', 'admin', 0, 'test')`).run(LUKAVEC);
     const env = {
       DB: db,
+      ...rail,
       ALLOWED_ORIGINS: 'https://mpt.domovina.ai',
       DEFAULT_TENANT_ID: 'italk',
       INTENT_REQUIRE_TENANT_KEY: '0',
@@ -98,7 +101,7 @@ describe('POST /api/intents — SR-01 trust flag and open-intent cap', async () 
   }
 
   it('caps open intents on an untrusted destination, never on a trusted one', async () => {
-    const { post } = api();
+    const { post } = await api();
     for (let i = 0; i < 3; i++) expect((await post(WALLET)).status).toBe(200);
     const res = await post(WALLET);
     expect(res.status).toBe(429);
@@ -107,7 +110,7 @@ describe('POST /api/intents — SR-01 trust flag and open-intent cap', async () 
   });
 
   it('a secret key marks the intent trusted and skips the cap', async () => {
-    const { raw, post } = api();
+    const { raw, post } = await api();
     const sk = 'sk_' + 'cd'.repeat(16);
     raw.prepare(`INSERT INTO tenant_api_keys (key_hash, tenant_id, kind, created_at) VALUES (?, 'italk', 'secret', 0)`)
       .run(await hashApiKey(sk));
@@ -117,7 +120,7 @@ describe('POST /api/intents — SR-01 trust flag and open-intent cap', async () 
   });
 
   it('no key → not trusted', async () => {
-    const { raw, post } = api();
+    const { raw, post } = await api();
     expect((await post(LUKAVEC)).status).toBe(200);
     expect((raw.prepare(`SELECT created_with_key AS k FROM payment_intents`).get() as { k: number }).k).toBe(0);
   });
@@ -128,11 +131,12 @@ describe('small guards (BW-11, BW-20, BW-24)', async () => {
   const { addCampaign, revokeApiKey, revokeCampaign } = await import('../src/tenants/db');
   const ctx = { waitUntil: () => {}, passThroughOnException: () => {} } as unknown as ExecutionContext;
 
-  function api() {
+  async function api() {
     const { db, raw } = migratedD1();
+    const rail = await seedItalkRail(raw, { mode: 'forward' });
     raw.prepare(`INSERT INTO tenant_payout_addresses (tenant_id, address, label, source, created_at, created_by)
                  VALUES ('italk', ?, 'campaign Lukavec', 'admin', 0, 'test')`).run(LUKAVEC);
-    const env = { DB: db, ALLOWED_ORIGINS: 'https://mpt.domovina.ai', DEFAULT_TENANT_ID: 'italk', INTENT_REQUIRE_TENANT_KEY: '0' } as unknown as Env;
+    const env = { DB: db, ...rail, ALLOWED_ORIGINS: 'https://mpt.domovina.ai', DEFAULT_TENANT_ID: 'italk', INTENT_REQUIRE_TENANT_KEY: '0' } as unknown as Env;
     const post = (body: Record<string, unknown>) => worker.fetch(new Request('https://mpt.domovina.ai/api/intents', {
       method: 'POST', headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ target_address: LUKAVEC, amount_eur: '1.00', ...body }),
@@ -141,20 +145,20 @@ describe('small guards (BW-11, BW-20, BW-24)', async () => {
   }
 
   it('a sid longer than 32 (would not fit bytes32 on-chain) → 400', async () => {
-    const { post } = api();
+    const { post } = await api();
     expect((await post({ sid: 'a'.repeat(33) })).status).toBe(400);
     expect((await post({ sid: 'a'.repeat(32) })).status).toBe(200);
   });
 
   it('a non-numeric expires_in_seconds → 400, not a 500', async () => {
-    const { post } = api();
+    const { post } = await api();
     const res = await post({ expires_in_seconds: 'soon' });
     expect(res.status).toBe(400);
     expect(await res.json()).toEqual({ error: 'invalid_expires_in_seconds' });
   });
 
   it("revoking/re-adding another tenant's campaign or key changes nothing", async () => {
-    const { raw, env } = api();
+    const { raw, env } = await api();
     raw.prepare(`INSERT INTO tenants (id, name, status, allow_sources, beneficiary_name, iban, created_at, updated_at)
                  VALUES ('zupa-b', 'B', 'active', '[]', 'B', 'HR0', 0, 0)`).run();
     await addCampaign(env, { tenantId: 'zupa-b', campaignId: 'camp-b', safeAddress: LUKAVEC, label: null, actor: 't' });

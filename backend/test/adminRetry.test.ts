@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest';
 import worker from '../src/index';
 import type { Env } from '../src/types';
 import { migratedD1 } from './helpers/sqliteD1';
+import { seedItalkRailSync } from './helpers/italkRail';
 
 /// POST /admin/api/forwards/:id/retry (MT-10) on real SQLite.
 const HOST = 'https://mpt.domovina.ai';
@@ -21,6 +22,7 @@ function setup() {
   const waits: Promise<unknown>[] = [];
   const env = {
     DB: db,
+    ...seedItalkRailSync(raw, { mode: 'forward', withRouter: true }),
     ADMIN_EMAILS: 'ops@domovina.ai',
     ADMIN_HOST: 'mpt.domovina.ai',
     ALLOWED_ORIGINS: HOST,

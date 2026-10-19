@@ -4,7 +4,7 @@ import { gnosis, gnosisChiado } from 'viem/chains';
 import type { Env } from '../types';
 import { sendAlert } from '../alerts';
 import { writeAudit } from '../tenants/db';
-import { getTenantRail, legacyRail, listRailTenantIds, type TenantRail } from '../tenants/rail';
+import { getTenantRail, listRailTenantIds, type TenantRail } from '../tenants/rail';
 import { makeConfirmDeps, settleConfirmedForward } from '../intents/confirm';
 import { transitionForward, type MoneriumForwardRow } from './db';
 import { stateSql } from './forwardStates';
@@ -392,7 +392,7 @@ async function kvClaimOnce(env: Env, key: string, ttlSeconds: number): Promise<b
 /// it also leaves an `outflow.tick` audit row. A rail that fails
 /// FAIL_ALERT_TICKS ticks in a row raises "detector is blind".
 export async function watchAllRailOutflows(env: Env, nowMs = Date.now()): Promise<number> {
-  const rails: TenantRail[] = [legacyRail(env)];
+  const rails: TenantRail[] = [];
   for (const id of await listRailTenantIds(env)) {
     const r = await getTenantRail(env, id);
     if (r) rails.push(r);

@@ -28,7 +28,6 @@ import {
   getTenantRail,
   getTenantRailRow,
   intentReference,
-  isLegacyTenant,
   multiTenantEnabled,
   type ReferenceStyle,
 } from '../tenants/rail';
@@ -262,7 +261,6 @@ export function buildIntentApi(): Hono<{ Bindings: Env }> {
     if (cursorRaw && !cursor) return c.json({ error: 'invalid_cursor' }, 400);
     const { items, nextCursor } = await listTenantIntents(c.env, {
       tenantId: who.tenantId,
-      includeLegacyNull: isLegacyTenant(c.env, who.tenantId),
       state: (stateRaw as IntentStateFilter | undefined) ?? null,
       createdFrom: range.from,
       createdTo: range.to,
@@ -290,7 +288,6 @@ export function buildIntentApi(): Hono<{ Bindings: Env }> {
     if (!range.ok) return c.json({ error: range.error }, 400);
     const stats = await tenantIntentStats(c.env, {
       tenantId: who.tenantId,
-      includeLegacyNull: isLegacyTenant(c.env, who.tenantId),
       createdFrom: range.from,
       createdTo: range.to,
     });
@@ -506,13 +503,10 @@ export function validateReturnUrl(raw: unknown, allowLoopback: boolean): string 
 }
 
 /// Why a tenant may not issue payment QRs right now, or null when it may.
-/// The default tenant (ITalk) is never refused here — its behaviour is
-/// unchanged by ADR 0017.
 async function tenantRailRefusal(
   env: Env,
   tenantId: string,
 ): Promise<'tenant_rail_disabled' | 'tenant_rail_not_configured' | null> {
-  if (isLegacyTenant(env, tenantId)) return null;
   if (!multiTenantEnabled(env)) return 'tenant_rail_disabled';
   const rail = await getTenantRail(env, tenantId);
   if (!rail || !rail.webhookSecret) return 'tenant_rail_not_configured';

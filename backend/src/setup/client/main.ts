@@ -50,7 +50,6 @@ import * as ps from '../../../safe-tx/lib/project-safe.mjs';
 interface Ctx {
   tenantId: string;
   tenantName: string;
-  legacy: boolean;
   chain: 'gnosis' | 'chiado';
   chainId: number;
   rpcUrl: string;

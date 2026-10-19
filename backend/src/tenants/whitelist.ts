@@ -133,11 +133,9 @@ export function makeAuthorizeDeps(env: Env, rail: TenantRail): AuthorizeDeps {
     safeAddress: rail.receivingSafe,
     defaultTenantId: defaultTenantId(env),
     railTenantId: rail.tenantId,
-    // MT-03: ITalk too, behind a flag for one deploy cycle (pre-check
-    // 2026-10-10: every ITalk issue order since the Safe exists minted there).
-    requireMintAt: rail.legacy && env.LEGACY_REQUIRE_MINT_AT !== '1' ? null : rail.receivingSafe,
+    requireMintAt: rail.receivingSafe,
     maxForwardCents: rail.maxForwardCents,
-    mode: rail.mode ?? 'forward',
+    mode: rail.mode,
     getCampaignBySafe: async (tenantId, safe) => {
       const row = await findCampaignBySafe(env, tenantId, safe);
       return row ? { campaign_id: row.campaign_id } : null;
