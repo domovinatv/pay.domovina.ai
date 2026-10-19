@@ -1,6 +1,6 @@
 # ADR 0028 — Kratka referenca intenta (3 znamenke) kao zamjena za dugi opis plaćanja
 
-- **Status:** Predloženo (2026-10-19), čeka implementaciju
+- **Status:** Accepted (2026-10-20), čeka implementaciju. Predloženo 2026-10-19
 - **Kontekst:** MPT rail (`backend/`), uparivanje SEPA naloga s intentom
 - **Gradi na:** [0018](0018-stray-payment-resolver.md) (stray resolver) ·
   [0022](0022-potvrda-o-uplati-vezana-uz-kljuc-uplatitelja.md) (potvrda o uplati) ·
@@ -32,9 +32,16 @@ ni bilo koju drugu varijantu u kojoj iznos nosi identitet uplate. Iznos je ono �
 
 ## Odluka
 
-Svaki intent uz dugi `memo` dobiva **kratku referencu**: niz od 3 znamenke (`007`), jedinstven
+Svaki intent uz dugi `memo` dobiva **kratku referencu**: 3 znamenke + 1 kontrolna (`0071`), jedinstvenu
 među **živim** intentima istog tenanta (isti primateljev IBAN). Kad Revolut ispusti opis,
-uplatitelj u *Reference* upiše samo `007`.
+uplatitelj u *Reference* upiše samo taj kod.
+
+**Kontrolna znamenka (odluka 2026-10-20).** Kod je uvijek tijelo + 1 kontrolna znamenka:
+**3 + 1**, a kad se bazen od 1000 tijela potroši, **4 + 1**, pa 5 + 1 itd. Kontrolna znamenka
+hvata svaku pojedinačnu krivu znamenku i zamjenu susjednih. Damm to hvata potpuno; Luhn ne
+hvata zamjenu 09↔90, pa je preporuka Damm. Kod s krivom kontrolnom znamenkom se **nikad** ne
+uparuje: ide na stray put (0018) kao da opisa nema. Uz rotaciju je prelazak na 4 + 1
+malo vjerojatan.
 
 - **Dodjela.** Rail dodjeljuje kratku referencu pri `POST /api/intents` iz bazena `000`–`999`
   po tenantu. Jedinstvenost drži D1, a ne aplikacijski kod: djelomični `UNIQUE (tenant_id,
@@ -43,7 +50,7 @@ uplatitelj u *Reference* upiše samo `007`.
 - **Kruženje.** Kod se oslobađa kad je intent plaćen ili kad prođe prozor u kojem uplata još
   može stići. Banka zna kasniti: 7. 10. su dvije uplate stigle 7 i 23 min nakon isteka, a
   `STRAY_LOOKBACK_SECONDS` je 48 h. Kod se zato **ne** oslobađa na `expires_at`, nego na
-  `expires_at` + prozor zadržavanja. Kad se bazen napuni, dužina raste na 4 znamenke. To je
+  `expires_at` + prozor zadržavanja. Kad se bazen napuni, tijelo raste na 4 znamenke (4 + 1). To je
   ista ideja kao gitov kratki hash: kratko dok je jedinstveno, dulje samo kad mora.
 - **Uparivanje.** U webhooku, kad memo nema `mpt:`/`gnosis:`/`cmp:` prefiks: ako opis,
   nakon normalizacije (trim, bez razmaka i interpunkcije), nosi točno jedan kod koji odgovara
@@ -52,15 +59,13 @@ uplatitelj u *Reference* upiše samo `007`.
   kao kod stray resolvera, i prolazi `authorizeForward`. Kod koji ne pogodi živi intent →
   uobičajeni stray put (0018).
 - **Prikaz.** Uz QR veliko i odvojeno: „Ako Revolut ostavi Reference prazno, upiši **007**”.
+  Prikazuje se kao jedan niz (`0071`), a uplatitelj ne mora znati koja je znamenka kontrolna.
   Kod je čitljiv i sa screenshota i s ekrana računala, bez kopiranja. EPC QR i dalje nosi puni
   memo; kratka referenca je rezerva, ne zamjena.
 
 ## Otvoreno
 
-1. **Tipfeler.** Jedna kriva znamenka može pogoditi tuđi živi intent. Iznos to djelomično
-   hvata (mora biti jednak), ali kod istog iznosa ne. Opcija je kontrolna znamenka (3 + 1,
-   mod 10 ili Damm), koja hvata svaku pojedinačnu krivu znamenku i zamjenu susjednih. Odluka
-   pri implementaciji: 3 znamenke ili 3 + kontrolna.
+1. ~~Tipfeler~~ — riješeno kontrolnom znamenkom (3 + 1, Damm), odluka 2026-10-20.
 2. **Potvrda o uplati (0022).** Potvrda danas traži da opis nosi `sid` izveden iz ključa
    uplatitelja. Treba odlučiti smije li kratka referenca usidriti potvrdu. Rizik: tko zna tuđi
    kod, može ga upisati u svoju uplatu. Time pokloni uplatu tuđem intentu, ali ne dobiva
