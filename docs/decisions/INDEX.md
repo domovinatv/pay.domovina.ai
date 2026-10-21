@@ -68,6 +68,7 @@ history.
 | [0026](0026-project-router-ogranicen-na-projektne-safeove.md) | ProjectRouter: rola na MPT Safe-u smije samo `EURe.transfer` prema projektnim Safe-ovima koje su 2/3 vlasnika odobrili (on-chain `Or(EqualTo…)`, bez kapice); D4 uplate bez reference proslijede se same, novi projekt = prijedlog delegatea u redu Safe-a | 2026-10-16 | ✅ Accepted | 🟢 Chiado E2E 17. 10. (#96, #97 proslijeđeni); produkcija `italk` slijedi |
 | [0027](0027-on-chain-setup-dapp-za-tenante.md) | On-chain setup dApp: plan iz lanca, simulacija, prijedlog/potpis/izvršenje vlasnika kroz MetaMask (lokalni ključ samo sandbox), red u Safe Transaction Serviceu; bez Safe Pro i delegatea | 2026-10-17 | ✅ Accepted | 🟢 MVP deployan (#114, #115), Chiado E2E prošao; produkcija, adresar vlasnika i MPT gas slijede |
 | [0028](0028-kratka-referenca-intenta.md) | Kratka referenca intenta (3 + 1 kontrolna znamenka, pa 4 + 1; jedinstvena među živim intentima tenanta, kruži) kao rezerva kad Revolut ispusti dugi opis; mijenjanje iznosa odbačeno | 2026-10-20 | ✅ Accepted | ✅ implementirano (migracija 0031) |
+| [0029](0029-javna-oznaka-uplatitelja.md) | Javna oznaka uplatitelja (inicijali + zadnja 4 znaka IBAN-a, `ref` = SHA-256(sid)[:16]) na `GET /api/payers/:address`; opt-in po tenantu, ime/IBAN/sid ne izlaze | 2026-10-21 | ✅ Accepted | ✅ implementirano (migracija 0032) |
 
 ---
 
