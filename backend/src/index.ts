@@ -49,6 +49,7 @@ import { isSandboxTenant, sweepExpiredSandboxTenants } from './sandbox/db';
 import { sendAlert } from './alerts';
 import { anchorPendingLeaves, pullUpgradedOts } from './receipts/anchor';
 import { buildReceiptAnchorApi, receiptsEnabled } from './receipts/routes';
+import { buildPayersApi } from './payers/api';
 import { linkReceipts } from './receipts/link';
 import { mountReceiptPages } from './receipts/page';
 import { getSepaDetails } from './tenants/db';
@@ -237,6 +238,9 @@ app.route('/api/sandbox', buildSandboxApi());
 
 // Payment receipts (ADR 0022): anchor proofs + the payer-side receipt pages.
 app.route('/api/receipts', buildReceiptAnchorApi());
+
+// Anonymised payer tags per payout address (migration 0032), opt-in per tenant.
+app.route('/api/payers', buildPayersApi());
 mountReceiptPages(app);
 
 // Self-custody wallet registry (Phase 3) + OTP-gated phone binding (Phase 4a).
