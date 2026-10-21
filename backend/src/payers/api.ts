@@ -33,6 +33,11 @@ export function ibanLast4(iban: string | null | undefined): string | null {
   return s && s.length >= 8 ? s.slice(-4) : null;
 }
 
+export async function payerRef(sid: string): Promise<string> {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(sid));
+  return [...new Uint8Array(digest).slice(0, 8)].map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+
 export interface PayerTag {
   initials: string | null;
   iban_last4: string | null;
@@ -44,9 +49,13 @@ export interface PayerTag {
   /// Every on-chain hash of this payment (mint and forward), lowercase — the
   /// client matches its chain rows by any of them.
   tx_hashes: string[];
+  /// First 16 hex of SHA-256(sid): lets the payer's own browser, which knows
+  /// the sid, recognise this row as its own without the sid being published.
+  ref: string | null;
 }
 
 interface Row {
+  sid: string | null;
   state: string;
   amount: string;
   placed_at: string | null;
@@ -72,7 +81,9 @@ export async function listPayerTags(env: Env, address: string): Promise<PayerTag
   // An order belongs to the address through its intent, a rail forward, or a
   // direct mint. Tenant = the order's (NULL rows are the default tenant).
   const res = await env.DB.prepare(
-    `SELECT o.state, o.amount, o.placed_at, o.counterpart_iban, o.counterpart_name, o.tx_hashes,
+    `SELECT (SELECT i.sid FROM payment_intents i WHERE i.monerium_order_id = o.id
+              ORDER BY i.paid_at DESC LIMIT 1) AS sid,
+            o.state, o.amount, o.placed_at, o.counterpart_iban, o.counterpart_name, o.tx_hashes,
             (SELECT i.forward_tx_hash FROM payment_intents i WHERE i.monerium_order_id = o.id
               ORDER BY i.paid_at DESC LIMIT 1) AS intent_tx,
             (SELECT json_group_array(f.tx_hash) FROM monerium_forwards f
@@ -92,7 +103,7 @@ export async function listPayerTags(env: Env, address: string): Promise<PayerTag
   )
     .bind(addr, env.DEFAULT_TENANT_ID, PAYERS_LIMIT)
     .all<Row>();
-  return res.results.map((r) => {
+  return Promise.all(res.results.map(async (r) => {
     const hashes = [...parseHashes(r.tx_hashes), ...parseHashes(r.forward_txs), ...(r.intent_tx ? [r.intent_tx] : [])];
     return {
       initials: initials(r.counterpart_name),
@@ -101,8 +112,9 @@ export async function listPayerTags(env: Env, address: string): Promise<PayerTag
       received_at: r.placed_at,
       state: r.state === 'processed' ? 'minted' : 'received',
       tx_hashes: [...new Set(hashes.map((h) => h.toLowerCase()))],
+      ref: r.sid ? await payerRef(r.sid) : null,
     };
-  });
+  }));
 }
 
 export function buildPayersApi() {

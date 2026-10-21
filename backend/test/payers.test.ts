@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import worker from '../src/index';
-import { ibanLast4, initials } from '../src/payers/api';
+import { ibanLast4, initials, payerRef } from '../src/payers/api';
 import type { Env } from '../src/types';
 import { migratedD1 } from './helpers/sqliteD1';
 
@@ -71,8 +71,9 @@ describe('GET /api/payers/:address', () => {
     expect(status).toBe(200);
     expect(body.data).toEqual([{
       initials: 'M. S.', iban_last4: '0160', amount_cents: 2500, received_at: '2026-10-21T10:00:00Z',
-      state: 'minted', tx_hashes: ['0xaaa', '0xbbb'],
+      state: 'minted', tx_hashes: ['0xaaa', '0xbbb'], ref: await payerRef('sid-secret-1'),
     }]);
+    expect(await payerRef('sid-secret-1')).toMatch(/^[0-9a-f]{16}$/);
     const text = JSON.stringify(body);
     for (const leak of ['Stepani', 'HR12', '1001', 'sid-secret-1']) expect(text).not.toContain(leak);
   });
@@ -94,7 +95,7 @@ describe('GET /api/payers/:address', () => {
     raw.prepare(`INSERT INTO monerium_forwards (order_id, target_address, amount_wei, status, tx_hash, created_at, updated_at)
                  VALUES ('fwd', ?, '0', 'confirmed', '0xCCC', 0, 0)`).run(SAFE);
     const { body } = await list(env, '0x' + SAFE.slice(2).toUpperCase());
-    expect(body.data?.map((d) => d.tx_hashes)).toEqual([[], ['0xccc']]);
+    expect(body.data?.map((d) => [d.tx_hashes, d.ref])).toEqual([[[], null], [['0xccc'], null]]);
   });
 
   it('skips rejected orders, other addresses and tenants that did not opt in', async () => {
