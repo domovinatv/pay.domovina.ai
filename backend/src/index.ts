@@ -50,6 +50,7 @@ import { sendAlert } from './alerts';
 import { anchorPendingLeaves, pullUpgradedOts } from './receipts/anchor';
 import { buildReceiptAnchorApi, receiptsEnabled } from './receipts/routes';
 import { buildPayersApi } from './payers/api';
+import { buildActivityApi } from './publicRead/activity';
 import { linkReceipts } from './receipts/link';
 import { mountReceiptPages } from './receipts/page';
 import { getSepaDetails } from './tenants/db';
@@ -241,6 +242,8 @@ app.route('/api/receipts', buildReceiptAnchorApi());
 
 // Anonymised payer tags per payout address (migration 0032), opt-in per tenant.
 app.route('/api/payers', buildPayersApi());
+// Incoming EURe per address, read from the chain and edge-cached (ADR 0030).
+app.route('/api/activity', buildActivityApi());
 mountReceiptPages(app);
 
 // Self-custody wallet registry (Phase 3) + OTP-gated phone binding (Phase 4a).
