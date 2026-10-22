@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import worker from '../src/index';
-import { ibanLast4, initials, payerRef } from '../src/payers/api';
+import { ibanLast4, initials, payerRef, payersBody, PAYERS_FRESH_S, type EdgeCache, type PayersDeps } from '../src/payers/api';
 import type { Env } from '../src/types';
 import { migratedD1 } from './helpers/sqliteD1';
 
@@ -112,5 +112,79 @@ describe('GET /api/payers/:address', () => {
   it('rejects a malformed address', async () => {
     const { env } = setup();
     expect((await list(env, '0x123')).status).toBe(400);
+  });
+});
+
+describe('payersBody edge cache (ADR 0030)', () => {
+  const ORIGIN = 'https://mpt.domovina.ai';
+
+  function memoryCache() {
+    const store = new Map<string, Response>();
+    const cache: EdgeCache = {
+      match: async (req) => store.get(req.url)?.clone(),
+      put: async (req, res) => void store.set(req.url, res),
+    };
+    return { cache, store };
+  }
+
+  function deps(over: Partial<PayersDeps> = {}) {
+    const pending: Promise<unknown>[] = [];
+    let clock = 1_000_000;
+    let loads = 0;
+    const d: PayersDeps = {
+      cache: null,
+      waitUntil: (p) => void pending.push(p),
+      now: () => clock,
+      load: async () => {
+        loads += 1;
+        return [{ initials: `L${loads}`, iban_last4: null, amount_cents: 100, received_at: null, state: 'received', tx_hashes: [], ref: null }];
+      },
+      ...over,
+    };
+    return {
+      d,
+      tick: (ms: number) => void (clock += ms),
+      loads: () => loads,
+      settle: () => Promise.all(pending.splice(0)),
+    };
+  }
+
+  const first = (body: string) => (JSON.parse(body) as { data: Array<{ initials: string }> }).data[0].initials;
+
+  it('serves from the cache while fresh, keyed by the lowercased address', async () => {
+    const { cache, store } = memoryCache();
+    const t = deps({ cache });
+    const mixed = '0xAbCdEf0000000000000000000000000000000001';
+    expect(first(await payersBody(t.d, ORIGIN, mixed))).toBe('L1');
+    t.tick(PAYERS_FRESH_S * 1000 - 1);
+    expect(first(await payersBody(t.d, ORIGIN, mixed.toLowerCase()))).toBe('L1');
+    expect(t.loads()).toBe(1);
+    expect([...store.keys()]).toEqual([`${ORIGIN}/api/payers/${mixed.toLowerCase()}`]);
+  });
+
+  it('serves a stale entry once and refreshes it in the background', async () => {
+    const { cache } = memoryCache();
+    const t = deps({ cache });
+    await payersBody(t.d, ORIGIN, SAFE);
+    t.tick(PAYERS_FRESH_S * 1000);
+    expect(first(await payersBody(t.d, ORIGIN, SAFE))).toBe('L1');
+    await t.settle();
+    expect(first(await payersBody(t.d, ORIGIN, SAFE))).toBe('L2');
+    expect(t.loads()).toBe(2);
+  });
+
+  it('coalesces concurrent cold misses into one D1 query', async () => {
+    const { cache } = memoryCache();
+    const t = deps({ cache });
+    const bodies = await Promise.all(Array.from({ length: 20 }, () => payersBody(t.d, ORIGIN, SAFE)));
+    expect(new Set(bodies).size).toBe(1);
+    expect(t.loads()).toBe(1);
+  });
+
+  it('works without a cache (local dev, tests)', async () => {
+    const t = deps();
+    await payersBody(t.d, ORIGIN, SAFE);
+    await payersBody(t.d, ORIGIN, SAFE);
+    expect(t.loads()).toBe(2);
   });
 });

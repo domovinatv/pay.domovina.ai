@@ -117,15 +117,91 @@ export async function listPayerTags(env: Env, address: string): Promise<PayerTag
   }));
 }
 
+/// Edge cache (ADR 0030). Every open project page polls this endpoint, and
+/// without a cache every poll is a query on the one D1 database that also
+/// settles payments — a crowd watching a campaign would starve the webhook.
+/// A Worker response is not cached by the CDN on its own (the Worker runs in
+/// front of the cache), so the body goes through the Cache API: fresh for
+/// PAYERS_FRESH_S, then served stale up to PAYERS_STALE_S while one refresh
+/// per isolate runs in the background.
+export const PAYERS_FRESH_S = 10;
+export const PAYERS_STALE_S = 60;
+const AT_HEADER = 'x-payers-at';
+
+export interface EdgeCache {
+  match(request: Request): Promise<Response | undefined>;
+  put(request: Request, response: Response): Promise<void>;
+}
+
+export interface PayersDeps {
+  cache: EdgeCache | null;
+  waitUntil(p: Promise<unknown>): void;
+  now(): number;
+  load(address: string): Promise<PayerTag[]>;
+}
+
+/// In-flight refreshes per isolate: a cold miss under load runs one D1 query,
+/// not one per concurrent request.
+const inflight = new Map<string, Promise<string>>();
+
+function refresh(deps: PayersDeps, address: string, key: Request): Promise<string> {
+  let p = inflight.get(address);
+  if (!p) {
+    p = (async () => {
+      const body = JSON.stringify({ data: await deps.load(address) });
+      if (deps.cache) {
+        await deps.cache.put(key, new Response(body, {
+          headers: {
+            'content-type': 'application/json',
+            'cache-control': `public, max-age=${PAYERS_STALE_S}`,
+            [AT_HEADER]: String(deps.now()),
+          },
+        }));
+      }
+      return body;
+    })().finally(() => inflight.delete(address));
+    inflight.set(address, p);
+  }
+  return p;
+}
+
+/// JSON body for one address. `origin` only builds the cache key; the cached
+/// entry is a bare body, so CORS headers are always those of this request.
+export async function payersBody(deps: PayersDeps, origin: string, address: string): Promise<string> {
+  const addr = address.toLowerCase();
+  const key = new Request(`${origin}/api/payers/${addr}`);
+  const hit = deps.cache ? await deps.cache.match(key) : undefined;
+  if (!hit) return refresh(deps, addr, key);
+  const at = Number(hit.headers.get(AT_HEADER));
+  if (!(deps.now() - at < PAYERS_FRESH_S * 1000)) {
+    deps.waitUntil(refresh(deps, addr, key).catch(() => undefined));
+  }
+  return hit.text();
+}
+
+function edgeCache(): EdgeCache | null {
+  return typeof caches === 'undefined' ? null : caches.default;
+}
+
 export function buildPayersApi() {
   const api = new Hono<{ Bindings: Env }>();
   api.get('/:address', async (c) => {
     const address = c.req.param('address');
     if (!ADDR_RE.test(address)) return c.json({ error: 'invalid_address' }, 400);
-    const data = await listPayerTags(c.env, address);
-    // Polled every few seconds by every open project page.
+    const body = await payersBody(
+      {
+        cache: edgeCache(),
+        waitUntil: (p) => c.executionCtx.waitUntil(p),
+        now: () => Date.now(),
+        load: (addr) => listPayerTags(c.env, addr),
+      },
+      new URL(c.req.url).origin,
+      address,
+    );
+    // Pages poll every ~20 s; the edge cache above is what protects D1.
     c.header('Cache-Control', 'public, max-age=5');
-    return c.json({ data });
+    c.header('Content-Type', 'application/json');
+    return c.body(body);
   });
   return api;
 }
