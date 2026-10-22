@@ -1,6 +1,7 @@
 # ADR 0030 — Edge cache za javno čitanje (`/api/payers`): D1 ne smije nositi publiku
 
-- **Status:** Accepted, implementirano 2026-10-22 (`backend/src/payers/api.ts`, `payersBody`)
+- **Status:** Accepted, implementirano 2026-10-22 — cache (`backend/src/publicRead/edgeCache.ts`, PR #141),
+  zatim `/api/activity`, ograničenje promašaja i indeksi (migracija 0033, PR #142)
 - **Kontekst:** MPT rail (`backend/`), javni popis uplata projekta na energy.domovina.ai
 - **Gradi na:** [0029](0029-javna-oznaka-uplatitelja.md)
 - **Analiza:** energy.domovina.ai `docs/18-skalabilnost-javnog-citanja.md` (proračun, cjenik, korak 2)
@@ -36,8 +37,19 @@ broju gledatelja.
 - Worker zahtjevi se i dalje naplaćuju. Ako javna kampanja to zatraži, sljedeći korak je
   snimka `payers/<safe>.json` u R2, pisana pri promjeni i posluživana kroz CDN s vlastite
   domene. Za to treba Cache Rule, jer CDN po zadanom ne sprema JSON (energy `docs/18` §5).
-- Nasumične valjane adrese su uvijek promašaj, pa ostaju put do D1. Lijek je Rate Limiting
-  pravilo na javnom `/api/*`, koje je još otvoreno.
+- Nasumične valjane adrese su uvijek promašaj. Zato se **hladni promašaj** broji po IP-u
+  (`PUBLIC_READ_LIMITER`, 60/min, vezivanje `ratelimit`). Pogodak i osvježavanje u pozadini
+  se ne broje, pa stvarni gledatelji iza jednog NAT-a (sajam) ostaju daleko ispod granice.
+- Upit uplatitelja ide kroz tri indeksirana puta (`UNION`, migracija 0033), a ne kroz `OR`
+  nad skeniranjem svih naloga, pa je i promašaj jeftin.
+
+## Dopuna: `GET /api/activity/:address`
+
+Dolazni EURe prijenosi (Blockscout, isti redovi kao na Gnosisscanu) i `balanceOf` s RPC-a,
+kroz isti cache. Preglednik prije je to čitao izravno, pa bi na sajmu stotine mobitela iza
+jednog NAT-a udarile u Blockscoutovo ograničenje po IP-u. Lanac ostaje izvor istine: svaki
+redak nosi hash i stranica ga povezuje na explorer. Kad rail ne odgovori, stranica čita
+lanac izravno kao prije. Samo Gnosis (100); sandbox čita Chiado izravno.
 
 ## Odbačeno
 

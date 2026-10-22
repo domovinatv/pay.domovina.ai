@@ -2,6 +2,7 @@ import { Hono } from 'hono';
 
 import type { Env } from '../types';
 import { normalizeIban, parseAmountCents } from '../monerium/orderState';
+import { edgeCached, MissLimited, workerEdgeDeps } from '../publicRead/edgeCache';
 
 /// Public payer tags for one payout address: who paid, anonymised to initials
 /// and the last 4 IBAN characters, so a payer watching any screen recognises
@@ -80,24 +81,27 @@ export async function listPayerTags(env: Env, address: string): Promise<PayerTag
   const addr = address.toLowerCase();
   // An order belongs to the address through its intent, a rail forward, or a
   // direct mint. Tenant = the order's (NULL rows are the default tenant).
+  // Three indexed lookups (migration 0033) instead of one OR over a scan of
+  // every issue order.
   const res = await env.DB.prepare(
-    `SELECT (SELECT i.sid FROM payment_intents i WHERE i.monerium_order_id = o.id
+    `WITH ids AS (
+       SELECT id FROM monerium_orders WHERE lower(address) = ?1
+       UNION SELECT monerium_order_id FROM payment_intents
+              WHERE target_address = ?1 AND monerium_order_id IS NOT NULL
+       UNION SELECT order_id FROM monerium_forwards
+              WHERE target_address = ?1 AND status IN ('pending', 'submitted', 'confirmed'))
+     SELECT (SELECT i.sid FROM payment_intents i WHERE i.monerium_order_id = o.id
               ORDER BY i.paid_at DESC LIMIT 1) AS sid,
             o.state, o.amount, o.placed_at, o.counterpart_iban, o.counterpart_name, o.tx_hashes,
             (SELECT i.forward_tx_hash FROM payment_intents i WHERE i.monerium_order_id = o.id
               ORDER BY i.paid_at DESC LIMIT 1) AS intent_tx,
             (SELECT json_group_array(f.tx_hash) FROM monerium_forwards f
               WHERE f.order_id = o.id AND f.tx_hash IS NOT NULL) AS forward_txs
-       FROM monerium_orders o
+       FROM ids
+       JOIN monerium_orders o ON o.id = ids.id
        JOIN tenants t ON t.id = COALESCE(o.tenant_id, ?2)
       WHERE o.kind = 'issue' AND o.state IN ('placed', 'pending', 'processed')
         AND t.public_payer_tags = 1
-        AND (lower(o.address) = ?1
-             OR EXISTS (SELECT 1 FROM payment_intents i
-                         WHERE i.monerium_order_id = o.id AND i.target_address = ?1)
-             OR EXISTS (SELECT 1 FROM monerium_forwards f
-                         WHERE f.order_id = o.id AND f.target_address = ?1
-                           AND f.status IN ('pending', 'submitted', 'confirmed')))
       ORDER BY o.placed_at DESC
       LIMIT ?3`,
   )
@@ -117,91 +121,27 @@ export async function listPayerTags(env: Env, address: string): Promise<PayerTag
   }));
 }
 
-/// Edge cache (ADR 0030). Every open project page polls this endpoint, and
-/// without a cache every poll is a query on the one D1 database that also
-/// settles payments — a crowd watching a campaign would starve the webhook.
-/// A Worker response is not cached by the CDN on its own (the Worker runs in
-/// front of the cache), so the body goes through the Cache API: fresh for
-/// PAYERS_FRESH_S, then served stale up to PAYERS_STALE_S while one refresh
-/// per isolate runs in the background.
-export const PAYERS_FRESH_S = 10;
-export const PAYERS_STALE_S = 60;
-const AT_HEADER = 'x-payers-at';
-
-export interface EdgeCache {
-  match(request: Request): Promise<Response | undefined>;
-  put(request: Request, response: Response): Promise<void>;
-}
-
-export interface PayersDeps {
-  cache: EdgeCache | null;
-  waitUntil(p: Promise<unknown>): void;
-  now(): number;
-  load(address: string): Promise<PayerTag[]>;
-}
-
-/// In-flight refreshes per isolate: a cold miss under load runs one D1 query,
-/// not one per concurrent request.
-const inflight = new Map<string, Promise<string>>();
-
-function refresh(deps: PayersDeps, address: string, key: Request): Promise<string> {
-  let p = inflight.get(address);
-  if (!p) {
-    p = (async () => {
-      const body = JSON.stringify({ data: await deps.load(address) });
-      if (deps.cache) {
-        await deps.cache.put(key, new Response(body, {
-          headers: {
-            'content-type': 'application/json',
-            'cache-control': `public, max-age=${PAYERS_STALE_S}`,
-            [AT_HEADER]: String(deps.now()),
-          },
-        }));
-      }
-      return body;
-    })().finally(() => inflight.delete(address));
-    inflight.set(address, p);
-  }
-  return p;
-}
-
-/// JSON body for one address. `origin` only builds the cache key; the cached
-/// entry is a bare body, so CORS headers are always those of this request.
-export async function payersBody(deps: PayersDeps, origin: string, address: string): Promise<string> {
-  const addr = address.toLowerCase();
-  const key = new Request(`${origin}/api/payers/${addr}`);
-  const hit = deps.cache ? await deps.cache.match(key) : undefined;
-  if (!hit) return refresh(deps, addr, key);
-  const at = Number(hit.headers.get(AT_HEADER));
-  if (!(deps.now() - at < PAYERS_FRESH_S * 1000)) {
-    deps.waitUntil(refresh(deps, addr, key).catch(() => undefined));
-  }
-  return hit.text();
-}
-
-function edgeCache(): EdgeCache | null {
-  return typeof caches === 'undefined' ? null : caches.default;
-}
-
 export function buildPayersApi() {
   const api = new Hono<{ Bindings: Env }>();
   api.get('/:address', async (c) => {
     const address = c.req.param('address');
     if (!ADDR_RE.test(address)) return c.json({ error: 'invalid_address' }, 400);
-    const body = await payersBody(
-      {
-        cache: edgeCache(),
-        waitUntil: (p) => c.executionCtx.waitUntil(p),
-        now: () => Date.now(),
-        load: (addr) => listPayerTags(c.env, addr),
-      },
-      new URL(c.req.url).origin,
-      address,
-    );
-    // Pages poll every ~20 s; the edge cache above is what protects D1.
-    c.header('Cache-Control', 'public, max-age=5');
-    c.header('Content-Type', 'application/json');
-    return c.body(body);
+    const addr = address.toLowerCase();
+    try {
+      // Edge-cached (ADR 0030): every open project page polls this, and D1
+      // also settles payments.
+      const body = await edgeCached(
+        workerEdgeDeps(c.env, c.req.raw, c.executionCtx),
+        `${new URL(c.req.url).origin}/api/payers/${addr}`,
+        async () => JSON.stringify({ data: await listPayerTags(c.env, addr) }),
+      );
+      c.header('Cache-Control', 'public, max-age=5');
+      c.header('Content-Type', 'application/json');
+      return c.body(body);
+    } catch (e) {
+      if (e instanceof MissLimited) return c.json({ error: 'rate_limited' }, 429);
+      throw e;
+    }
   });
   return api;
 }

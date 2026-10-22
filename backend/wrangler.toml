@@ -140,6 +140,8 @@ ACCESS_AUD = "c1e0493deb2d777529744e4ff5d74cebae4fe070a0dae77fdda73e81d01a6bb2"
 # Gnosis chain (100). ITalk's Safe, modifier and router live in tenant_rail.
 GNOSIS_RPC_URL = "https://rpc.gnosischain.com"
 EURE_CONTRACT = "0x420CA0f9B9b604cE0fd9C18EF134C705e5Fa3430"
+# Blockscout behind /api/activity (ADR 0030): same rows Gnosisscan shows people.
+BLOCKSCOUT_API = "https://gnosisscan.io/api/v2"
 # MPT main-rail Safe (Monerium default wallet); read only by the on-chain
 # donation indexer. Verified on-chain 2026-05-21:
 # Safe v1.4.1, threshold 2/3, owners ms-/ds-/md-mpt-mr-signer.
@@ -164,3 +166,12 @@ MULTISEND_ADDRESS = "0x9641d764fc13c8B624c04430C7356C1C7C8102e2"
 #   TELEGRAM_BOT_TOKEN              # optional — @BotFather token for blocked-forward alerts
 #   TELEGRAM_CHAT_ID                # optional — ops chat id; both unset = alerts degrade to console warnings
 #   TENANT_SECRETS_KEK              # base64 of 32 random bytes (openssl rand -base64 32) — AES-GCM key for tenant_rail *_enc (ADR 0017). Losing it = re-onboard every tenant's secrets.
+
+# Public reads (/api/payers, /api/activity): cold cache misses per client IP
+# (ADR 0030). Hits and stale refreshes are not counted, so real viewers behind
+# one NAT (a fair) stay well under it; random addresses do not reach D1.
+[[unsafe.bindings]]
+name = "PUBLIC_READ_LIMITER"
+type = "ratelimit"
+namespace_id = "1030"
+simple = { limit = 60, period = 60 }

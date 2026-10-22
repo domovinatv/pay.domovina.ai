@@ -35,7 +35,9 @@ export interface Env {
   // ROUTER_PRIVATE_KEY (an EOA registered as a member of ROLE_KEY, which is
   // scoped on-chain to only allow EURe.transfer). Empty = routing disabled.
   GNOSIS_RPC_URL: string;          // default https://rpc.gnosischain.com
-  EURE_CONTRACT: string;           // 0x420CA0f9B9b604cE0fd9C18EF134C705e5Fa3430
+  EURE_CONTRACT: string;
+  BLOCKSCOUT_API?: string;         // default https://gnosisscan.io/api/v2 (ADR 0030)
+  PUBLIC_READ_LIMITER?: RateLimit; // cold misses of public reads, per IP (ADR 0030)           // 0x420CA0f9B9b604cE0fd9C18EF134C705e5Fa3430
   SAFE_ADDRESS: string;            // MPT main-rail Safe (Monerium default wallet)
 
   // PaymentRegistry onchain memo — optional. When both PAYMENT_REGISTRY_ADDRESS
