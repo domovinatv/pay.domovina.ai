@@ -2,7 +2,7 @@ import { Hono } from 'hono';
 
 import type { Env } from '../types';
 import { normalizeIban, parseAmountCents } from '../monerium/orderState';
-import { edgeCached, MissLimited, workerEdgeDeps } from '../publicRead/edgeCache';
+import { edgeCached, FRESH_S, MissLimited, workerEdgeDeps, type EdgeCache, type EdgeCacheDeps } from '../publicRead/edgeCache';
 
 /// Public payer tags for one payout address: who paid, anonymised to initials
 /// and the last 4 IBAN characters, so a payer watching any screen recognises
@@ -121,6 +121,25 @@ export async function listPayerTags(env: Env, address: string): Promise<PayerTag
   }));
 }
 
+export type { EdgeCache };
+export const PAYERS_FRESH_S = FRESH_S;
+
+export interface PayersDeps extends Omit<EdgeCacheDeps, 'allowMiss'> {
+  allowMiss?(): Promise<boolean>;
+  load(address: string): Promise<PayerTag[]>;
+}
+
+/// Edge-cached JSON body for one address (ADR 0030): every open project page
+/// polls this, and D1 also settles payments.
+export function payersBody(deps: PayersDeps, origin: string, address: string): Promise<string> {
+  const addr = address.toLowerCase();
+  return edgeCached(
+    { ...deps, allowMiss: deps.allowMiss ?? (async () => true) },
+    `${origin}/api/payers/${addr}`,
+    async () => JSON.stringify({ data: await deps.load(addr) }),
+  );
+}
+
 export function buildPayersApi() {
   const api = new Hono<{ Bindings: Env }>();
   api.get('/:address', async (c) => {
@@ -128,12 +147,10 @@ export function buildPayersApi() {
     if (!ADDR_RE.test(address)) return c.json({ error: 'invalid_address' }, 400);
     const addr = address.toLowerCase();
     try {
-      // Edge-cached (ADR 0030): every open project page polls this, and D1
-      // also settles payments.
-      const body = await edgeCached(
-        workerEdgeDeps(c.env, c.req.raw, c.executionCtx),
-        `${new URL(c.req.url).origin}/api/payers/${addr}`,
-        async () => JSON.stringify({ data: await listPayerTags(c.env, addr) }),
+      const body = await payersBody(
+        { ...workerEdgeDeps(c.env, c.req.raw, c.executionCtx), load: (a) => listPayerTags(c.env, a) },
+        new URL(c.req.url).origin,
+        addr,
       );
       c.header('Cache-Control', 'public, max-age=5');
       c.header('Content-Type', 'application/json');
