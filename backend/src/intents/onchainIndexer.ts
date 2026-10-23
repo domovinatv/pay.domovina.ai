@@ -1,6 +1,7 @@
-import { createPublicClient, http, getAddress, parseAbiItem, type Address } from 'viem';
+import { createPublicClient, getAddress, parseAbiItem, type Address } from 'viem';
 import { gnosis } from 'viem/chains';
 import type { Env } from '../types';
+import { readTransport } from '../chain/gnosisRpc';
 
 /// On-chain EURe donation indexer.
 ///
@@ -61,7 +62,7 @@ export async function scanOnchainDonations(
 
   // 2. Client + cursor.
   const rpcUrl = env.GNOSIS_RPC_URL || 'https://rpc.gnosischain.com';
-  const client = createPublicClient({ chain: gnosis, transport: http(rpcUrl) });
+  const client = createPublicClient({ chain: gnosis, transport: readTransport(env, 'gnosis', rpcUrl) });
   const latest = await client.getBlockNumber();
   const stored = await env.TOKEN_CACHE.get(CURSOR_KEY);
   let from = stored ? BigInt(stored) + 1n : latest - FIRST_RUN_LOOKBACK;

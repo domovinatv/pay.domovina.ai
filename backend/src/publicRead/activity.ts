@@ -1,5 +1,6 @@
 import { Hono } from 'hono';
 
+import { gnosisRpc, type RpcRequest } from '../chain/gnosisRpc';
 import type { Env } from '../types';
 import { edgeCached, MissLimited, workerEdgeDeps } from './edgeCache';
 
@@ -39,8 +40,15 @@ interface TransferPage {
 
 type Fetch = (input: string, init?: RequestInit) => Promise<Response>;
 
-async function balanceOf(rpcUrl: string, token: string, owner: string, fetchFn: Fetch): Promise<string | null> {
+function hexBalance(result: unknown): string | null {
+  return typeof result === 'string' && /^0x[0-9a-fA-F]*$/.test(result)
+    ? BigInt(result === '0x' ? 0 : result).toString()
+    : null;
+}
+
+async function balanceOf(rpcUrl: string, token: string, owner: string, fetchFn: Fetch, rpc?: RpcRequest): Promise<string | null> {
   const data = `0x70a08231${owner.slice(2).toLowerCase().padStart(64, '0')}`;
+  if (rpc) return hexBalance(await rpc('eth_call', [{ to: token, data }, 'latest']));
   const res = await fetchFn(rpcUrl, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
@@ -48,13 +56,12 @@ async function balanceOf(rpcUrl: string, token: string, owner: string, fetchFn: 
   });
   if (!res.ok) return null;
   const body = (await res.json()) as { result?: unknown };
-  return typeof body.result === 'string' && /^0x[0-9a-fA-F]*$/.test(body.result)
-    ? BigInt(body.result === '0x' ? 0 : body.result).toString()
-    : null;
+  return hexBalance(body.result);
 }
 
 export async function loadActivity(
-  cfg: { blockscoutApi: string; rpcUrl: string; eure: string },
+  /// `rpc`, when given, carries `balanceOf` (own node first, ADR 0031).
+  cfg: { blockscoutApi: string; rpcUrl: string; eure: string; rpc?: RpcRequest },
   address: string,
   fetchFn: Fetch = fetch,
 ): Promise<Activity> {
@@ -75,7 +82,7 @@ export async function loadActivity(
     next = page.next_page_params;
     pages += 1;
   } while (next && pages < ACTIVITY_MAX_PAGES);
-  const balance_wei = await balanceOf(cfg.rpcUrl, cfg.eure, address, fetchFn).catch(() => null);
+  const balance_wei = await balanceOf(cfg.rpcUrl, cfg.eure, address, fetchFn, cfg.rpc).catch(() => null);
   return { transfers, balance_wei, truncated: next !== null };
 }
 
@@ -89,6 +96,7 @@ export function buildActivityApi() {
       blockscoutApi: c.env.BLOCKSCOUT_API || DEFAULT_BLOCKSCOUT,
       rpcUrl: c.env.GNOSIS_RPC_URL,
       eure: c.env.EURE_CONTRACT,
+      rpc: gnosisRpc(c.env, c.env.GNOSIS_RPC_URL),
     };
     try {
       const body = await edgeCached(

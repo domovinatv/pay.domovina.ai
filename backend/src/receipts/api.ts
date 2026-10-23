@@ -1,5 +1,5 @@
 import type { Context, Hono } from 'hono';
-import { createPublicClient, hexToBytes, http, isAddress, verifyMessage, type Hex } from 'viem';
+import { createPublicClient, hexToBytes, isAddress, verifyMessage, type Hex } from 'viem';
 import { gnosis } from 'viem/chains';
 
 import type { Env } from '../types';
@@ -8,6 +8,7 @@ import { getIntent } from '../intents/db';
 import { getAnchor, latestAnchor, listAnchors, otsHasBitcoin, proofsForAnchor, type AnchorRow, type LeafProof } from './anchor';
 import { linkReceipts } from './link';
 import { isReceiptSid, receiptSidMatches } from './sid';
+import { readTransport } from '../chain/gnosisRpc';
 
 /// Receipt API (ADR 0022 §4, §3a).
 ///
@@ -143,7 +144,7 @@ async function ownerSigned(env: Env, owner: Hex, message: string, signature: Hex
     /* not an EOA signature — fall through to the contract check */
   }
   try {
-    const client = createPublicClient({ chain: gnosis, transport: http(env.GNOSIS_RPC_URL) });
+    const client = createPublicClient({ chain: gnosis, transport: readTransport(env, 'gnosis', env.GNOSIS_RPC_URL) });
     return await client.verifyMessage({ address: owner, message, signature });
   } catch {
     return false;

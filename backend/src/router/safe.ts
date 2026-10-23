@@ -21,6 +21,7 @@ import { gnosis, gnosisChiado } from 'viem/chains';
 import type { Env } from '../types';
 import { getTenantRail, type RailChain, type RailSigner } from '../tenants/rail';
 import { defaultTenantId } from '../tenants/whitelist';
+import { readTransport } from '../chain/gnosisRpc';
 
 /// EURe (Monerium EUR e-money token on Gnosis) — ERC-20 with `transfer`.
 const EURE_ABI = [
@@ -272,7 +273,7 @@ export async function getForwardStatus(
 ): Promise<ForwardTxStatus> {
   const rail = await getTenantRail(env, tenantId ?? defaultTenantId(env));
   if (!rail) return 'unknown';
-  const client = createPublicClient({ chain: viemChain(rail.signer.chain), transport: http(rail.signer.rpcUrl) });
+  const client = createPublicClient({ chain: viemChain(rail.signer.chain), transport: readTransport(env, rail.signer.chain, rail.signer.rpcUrl) });
   try {
     const receipt = await client.getTransactionReceipt({ hash: txHash });
     if (!receipt) return 'pending';

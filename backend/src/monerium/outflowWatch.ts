@@ -1,4 +1,4 @@
-import { createPublicClient, http, parseAbiItem, toEventSelector, type Address, type Hex } from 'viem';
+import { createPublicClient, parseAbiItem, toEventSelector, type Address, type Hex } from 'viem';
 import { gnosis, gnosisChiado } from 'viem/chains';
 
 import type { Env } from '../types';
@@ -8,6 +8,7 @@ import { getTenantRail, listRailTenantIds, type TenantRail } from '../tenants/ra
 import { makeConfirmDeps, settleConfirmedForward } from '../intents/confirm';
 import { transitionForward, type MoneriumForwardRow } from './db';
 import { stateSql } from './forwardStates';
+import { readTransport } from '../chain/gnosisRpc';
 
 /// Theft detector (ADR 0019, phase 0). Every EURe that leaves a rail's
 /// receiving Safe must correspond to a forward we broadcast ourselves
@@ -274,7 +275,7 @@ export function makeOutflowWatchDeps(env: Env, rail: TenantRail): OutflowWatchDe
   const s = rail.signer;
   const client = createPublicClient({
     chain: s.chain === 'chiado' ? gnosisChiado : gnosis,
-    transport: http(s.rpcUrl),
+    transport: readTransport(env, s.chain, s.rpcUrl),
   });
   const safe = s.safe.toLowerCase();
   const key = `${s.chain}:${safe}`;

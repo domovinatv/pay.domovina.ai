@@ -1,4 +1,4 @@
-import { createPublicClient, http, parseEventLogs, parseAbiItem, type Hex } from 'viem';
+import { createPublicClient, parseEventLogs, parseAbiItem, type Hex } from 'viem';
 import { gnosis, gnosisChiado } from 'viem/chains';
 
 import type { Env } from '../types';
@@ -9,6 +9,7 @@ import { getForwardByOrder, insertForward } from './db';
 import { extractRoutingFromOrder } from './sid';
 import { eurToWei, parseAmountCents } from './forward';
 import type { MoneriumOrder } from './types';
+import { readTransport } from '../chain/gnosisRpc';
 
 /// A parked order whose money an operator already moved by hand (2/3 Safe
 /// owners, outside the rail — e.g. safe-tx/003 orphan recovery). Recording it
@@ -159,7 +160,7 @@ export function makeOffRailDeps(env: Env, rail: TenantRail): OffRailDeps {
   const s = rail.signer;
   const client = createPublicClient({
     chain: s.chain === 'chiado' ? gnosisChiado : gnosis,
-    transport: http(s.rpcUrl),
+    transport: readTransport(env, s.chain, s.rpcUrl),
   });
   const safe = s.safe.toLowerCase();
   const eure = s.eureContract.toLowerCase();
