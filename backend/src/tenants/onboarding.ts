@@ -1,4 +1,4 @@
-import { createPublicClient, getAddress, http, isAddress, parseAbi, type Address, type Hex } from 'viem';
+import { createPublicClient, getAddress, isAddress, parseAbi, type Address, type Hex } from 'viem';
 import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts';
 import { gnosis, gnosisChiado } from 'viem/chains';
 
@@ -20,6 +20,7 @@ import {
   type TenantRail,
   type TenantRailRow,
 } from './rail';
+import { readTransport } from '../chain/gnosisRpc';
 
 /// Tenant onboarding for the multi-tenant rail (ADR 0017 §Admin). A tenant
 /// is created `onboarding`, gets its Monerium credentials, a router EOA and a
@@ -423,7 +424,7 @@ export function makeVerifyDeps(env: Env, tenantId: string, rail: Pick<TenantRail
   const client = new MoneriumClient(env, rail.monerium);
   const chain = createPublicClient({
     chain: rail.signer.chain === 'chiado' ? gnosisChiado : gnosis,
-    transport: http(rail.signer.rpcUrl),
+    transport: readTransport(env, rail.signer.chain, rail.signer.rpcUrl),
   });
   return {
     authProfiles: async () => {
@@ -636,7 +637,7 @@ export async function checkRouterGas(env: Env): Promise<number> {
       const address = privateKeyToAccount(signer.privateKey as Hex).address;
       const chain = createPublicClient({
         chain: signer.chain === 'chiado' ? gnosisChiado : gnosis,
-        transport: http(signer.rpcUrl),
+        transport: readTransport(env, signer.chain, signer.rpcUrl),
       });
       const bal = await chain.getBalance({ address });
       const min = minRouterGasWei(signer.chain);
