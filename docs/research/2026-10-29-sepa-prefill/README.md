@@ -66,3 +66,17 @@ barkodom ni linkom. Od svih nađenih mehanizama samo PSD2 PIS zaobilazi to ogran
 - GoCardless Bank Account Data navodno ne prima nove integracije (REPORTED ⚠️). Enable Banking
   ostaje jedini AIS/PIS pružatelj koji već imamo.
 - Wise `balances#credit` je deprecated, zamjena je `balances#update`.
+
+## Česta pitanja
+
+**Znači li ovo da MPT treba podržavati samo Monerium?** Ne. Monerium je jedini izvor koji
+uz dojavu i **minta** EURe. Za HR IBAN postoji drugi način namire, bez minta (ADR 0020).
+
+**Možemo li uplatu na HR IBAN detektirati trenutno, kao Monerium webhookom?** Da, ali ne
+preko banke. Nijedna HR banka nema javni webhook za dolazne uplate. Detekcija u sekundama ide
+preko **bank-push-gatewaya** (push obavijest banke → potpisani `account.credit`), koji je u
+produkciji u fazi 0 (PBZ, HPB, samo bilježi). Push nema pravnu snagu, pa daje `received`.
+`paid` dolazi tek iz AIS-a ili izvoda (AIS bez prisutnog korisnika ~4×/dan, dakle sati). Push bez
+potvrde u roku diže alarm. Slabe točke: namjenski telefon, parser po banci, i prenosi li push
+poziv na broj (provjera po banci). Wise, Revolut Business i bunq imaju prave webhookove, ali na
+svoje BE/LT/NL IBAN-e, ne na HR.
