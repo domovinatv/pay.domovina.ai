@@ -110,3 +110,8 @@ isplate merchantu; izdaje li Monerium HR/SI/AT IBAN-e.
 Aircashov WooCommerce plugin isključuje provjeru TLS certifikata (`sslverify => false`) i
 nosi zajednički „platform" privatni ključ s lozinkom pored njega. Ako radimo varijantu B,
 **ne kopirati** te obrasce: vlastiti RSA par po tenantu, ključ u secretu, TLS verifikacija uključena.
+
+## Vezani dokumenti
+
+- [`../2026-10-29-sepa-prefill/`](../2026-10-29-sepa-prefill/README.md): širi pregled prefilla
+  (EPC/HUB3/`payto:`/Wero/PIS) i izvora dojave uplate, s test planom na uređajima.

@@ -133,3 +133,7 @@ flowchart LR
 - bank-push-gateway: `README.md`, `docs/plan.md`, `docs/architecture.md`,
   `docs/2026-10-06-faza-0-postav-i-zamke.md`
 - [ADR 0018](0018-stray-payment-resolver.md) — uparivanje po iznosu i vremenu
+- [`docs/research/2026-10-29-sepa-prefill/`](../research/2026-10-29-sepa-prefill/README.md): prefill
+  i izvori dojave uplate (2026-10-29). Alternativa za HR platitelje je [ADR 0031](0031-psd2-pis-popunjen-nalog.md)
+  (PSD2 PIS). **Napomena:** točka 4.3 (jedinstveni iznos po intentu) je u sukobu s odlukom od 19. 10. 2026.
+  i treba je izbaciti prije prihvaćanja ovog ADR-a.
