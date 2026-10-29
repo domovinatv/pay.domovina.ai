@@ -70,6 +70,7 @@ history.
 | [0028](0028-kratka-referenca-intenta.md) | Kratka referenca intenta (3 + 1 kontrolna znamenka, pa 4 + 1; jedinstvena među živim intentima tenanta, kruži) kao rezerva kad Revolut ispusti dugi opis; mijenjanje iznosa odbačeno | 2026-10-20 | ✅ Accepted | ✅ implementirano (migracija 0031) |
 | [0029](0029-javna-oznaka-uplatitelja.md) | Javna oznaka uplatitelja (inicijali + zadnja 4 znaka IBAN-a, `ref` = SHA-256(sid)[:16]) na `GET /api/payers/:address`; opt-in po tenantu, ime/IBAN/sid ne izlaze | 2026-10-21 | ✅ Accepted | ✅ implementirano (migracija 0032) |
 | [0030](0030-edge-cache-javnog-citanja.md) | Edge cache (Cache API) na `GET /api/payers/:address`: svježe 10 s, staro do 60 s uz osvježavanje u pozadini, spajanje promašaja; D1 s novcem ne nosi publiku | 2026-10-22 | ✅ Accepted | ✅ implementirano |
+| [0031](0031-psd2-pis-popunjen-nalog.md) | PSD2 PIS (Enable Banking): HR banka prikazuje popunjen nalog na tenantov Monerium IBAN; beneficiar samo registrirani IBAN, Monerium webhook ostaje izvor istine | 2026-10-29 | 📝 Proposed | ⏳ čeka Enable Banking + test T2 |
 
 ---
 
