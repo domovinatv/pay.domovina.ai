@@ -74,6 +74,23 @@ Provjereno u Monerium dokumentaciji (lokalna kopija u
 | **Zbirni MPT IBAN** | — | — | MPT bi držao tuđi novac (PSD2 platna usluga) | odbačeno, vidi docs/compliance |
 | **HR IBAN listener** (ADR 0020 / 0031) | firmina banka | gateway / AIS | firma već ima račun u HR banci | odmah, ali bez minta EURe |
 
+### Gnosis Pay ne zaobilazi Monerium partnerstvo
+
+Provjereno 30. 10. u `docs.gnosispay.com/guides/kyc-sharing/monerium.md`:
+1. GP izda Sumsub share token (`POST /user-api/kyc/import-partner-applicant`, `forClientId` =
+   Moneriumov Sumsub klijent).
+2. Integrator ga **svojim Monerium partner credentialsima** pošalje na
+   `POST /profiles/{profile}/share` (`personal.token`).
+3. Monerium pregleda podatke, a IBAN se traži Moneriumovim API-jem.
+
+Dakle i kroz GP treba vlastiti Monerium whitelabel ugovor. Payload je `personal`, a KYC
+Sharing je po Monerium docsima samo za fizičke osobe. KYB firmi GP ne radi. GP webhookovi
+(`deposit.*`, `account.balance.changed`, `KYC.*`, `card.*`) nemaju događaj za IBAN uplatu
+ni za Monerium order.
+
+Bitna razlika: **KYC Sharing ne traži licencu ni Reliance ugovor**, nego samo SumSub.
+Whitelabel za fizičke osobe bez EMI licence je zato moguć. Za firme nije.
+
 Zaključak:
 1. Whitelabel KYB za firme traži da MPT bude regulirani obveznik po AML-u s Reliance
    ugovorom. Pitanje za Monerium: prihvaćaju li reliance na drugog obveznika (npr.
