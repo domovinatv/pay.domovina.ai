@@ -60,6 +60,30 @@ Monerium planovi:
 - **OAuth:** korisnik se prijavi na co-branded Monerium portal i ovlasti partnerovu aplikaciju.
 - **Private:** API samo za vlastiti račun. To je naš sadašnji plan.
 
+## Može li MPT sam otvarati Monerium račune drugim firmama?
+
+Provjereno u Monerium dokumentaciji (lokalna kopija u
+`~/git/domovinatv/monerium-wallet-ios/docs/monerium-docs/`: `whitelabel.md`, `oauth.md`,
+`kyb-guide-corporates.md`).
+
+| Opcija | Tko radi KYB | Webhookovi | Uvjet | Brzina onboardinga |
+|---|---|---|---|---|
+| **Whitelabel + KYC Reliance** | MPT, podaci idu preko API-ja (`POST /profiles` s `kind` = corporate, `PATCH /profiles/{id}/details`, `/form`, `/verifications`, `POST /files`, `POST /ibans`) | da (`profile.updated`, `iban.updated`, `order.*`) | „appropriate licences” + KYC Reliance ugovor s Moneriumom. Za corporate je Reliance jedini put, SumSub sharing radi samo za fizičke osobe. | najbrže, ali MPT/ITalk nema licencu |
+| **OAuth** | Monerium, na co-branded portalu | ne; samo polling ili on-chain praćenje | OAuth app + ručni review u produkciji | Monerium KYB ostaje spor; otpada ručna developer app i webhook kod svakog tenanta |
+| **Gnosis Pay API** | Gnosis Pay (SumSub) | — | samo fizičke osobe | nije za firme |
+| **Zbirni MPT IBAN** | — | — | MPT bi držao tuđi novac (PSD2 platna usluga) | odbačeno, vidi docs/compliance |
+| **HR IBAN listener** (ADR 0020 / 0031) | firmina banka | gateway / AIS | firma već ima račun u HR banci | odmah, ali bez minta EURe |
+
+Zaključak:
+1. Whitelabel KYB za firme traži da MPT bude regulirani obveznik po AML-u s Reliance
+   ugovorom. Pitanje za Monerium: prihvaćaju li reliance na drugog obveznika (npr.
+   licenciranog partnera), i pod kojim uvjetima.
+2. OAuth je izvediv odmah i bez licence. Firma i dalje prolazi Moneriumov KYB, ali MPT
+   nakon autorizacije sam povezuje wallet, otvara IBAN i prati uplate. Webhookove
+   zamjenjuju polling `GET /orders` i on-chain mint.
+3. Za firme koje ne smiju čekati Monerium: HR IBAN listener (ADR 0020), uz prefill i
+   PIS iz [SEPA prefill istraživanja](2026-10-29-sepa-prefill/).
+
 ## Otvoreno
 
 1. Požuriti partnership upit kod Moneriuma. Argument: Monerium sad sam šalje
