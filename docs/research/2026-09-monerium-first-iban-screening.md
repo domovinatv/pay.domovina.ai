@@ -82,3 +82,7 @@ Kad odgovor stigne, na temelju njega odlučiti:
 - ako `order.created` NIJE pouzdan signal, vratiti uspjeh na `minted`/`settled` (`isReceived` u page.ts i payment_status.dart);
 - ako screening vrijedi po profilu, merchant-direct model treba pre-screening prije plaćanja;
 - ako Monerium ponudi flag na `order.created`, zamijeniti vlastito predviđanje `review_expected` njihovim signalom.
+
+## Vezani dokumenti
+
+- [Monerium individual računi kroz partnere (2026-10-30)](2026-10-30-monerium-individual-via-partners.md)
