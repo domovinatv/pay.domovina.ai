@@ -33,7 +33,7 @@ stajati na **tenantovom** računu kod treće institucije. Svaki izvor ispod je p
 | **Swan** (BaaS, FR EMI) | webhookovi ⚠️ (imena eventova nismo potvrdili) | SCT Inst ⚠️ | **virtualni IBAN = identitet** | FR/DE/ES/NL/IT/BE; **neograničeno virtualnih IBAN-a** po računu | tenantov Swan račun (ako ga MPT otvara kao partner: **provjeriti skrbništvo**) | ⚠️ | Swan KYB tenanta; neverificirani: ulaz >50 € odbijen, saldo ≤150 € | docs.swan.io ibans, changelog 29.1.2026 (VERIFIED) |
 | **Stripe** bank transfer (`customer_balance`, `eu_bank_transfer`) | webhook `payment_intent.*` / `cash_balance` | SCT ⚠️ | virtualni IBAN po kupcu | DE/FR/IE/NL/(BE); **ES ukinut** | tenantov Stripe saldo → payout | ⚠️ | Stripe KYB tenanta | docs.stripe.com bank-transfers, spanish-virtual-account-discontinuation (VERIFIED) |
 | Mollie / Adyen bank transfer | ⚠️ nije istraženo detaljno | | | | tenant (merchant) | | | — |
-| **AIS** (Enable Banking; GoCardless zatvoren za nove) | polling | ~4×/dan → sati | puni izvod: ime, IBAN, opis | **HR** ✅ (Zaba, PBZ, Erste, RBA; OTP ❌) | tenant (HR banka) | ⚠️ | — | ADR 0020; enablebanking HR (VERIFIED) |
+| **AIS** (Enable Banking; GoCardless zatvoren za nove) | polling | ~4×/dan → sati | puni izvod: ime, IBAN, opis | **HR** ✅ (Zaba, PBZ, Erste, RBA, Addiko; OTP i HPB samo osobni, HPB u kvaru — [stanje 2.11.](#enable-banking-hr-pokrivenost-provjereno-2026-11-02)) | tenant (HR banka) | ⚠️ | — | ADR 0020; enablebanking HR (VERIFIED) |
 | **bank-push-gateway** | push obavijest banke → potpisani webhook `account.credit` | sekunde | ovisi o banci (poziv na broj ⚠️ po banci) | **HR** ✅ | tenant | namjenski telefon | — | ADR 0020; faza 0 PBZ, HPB |
 | HR banke, vlastiti API | ❌ javno ne postoji | — | — | HR | — | — | — | ADR 0020; Erste Group portal (REPORTED) |
 
@@ -56,6 +56,39 @@ flowchart LR
   računa i prolazi Swanov KYB), novac je tenantov. Ako bi vIBAN-i visjeli na **ITalkovom**
   Swan računu, to je pooling i skrbništvo → **zabranjeno u Modu 1**.
 
+## Enable Banking HR pokrivenost (provjereno 2026-11-02)
+
+Izvor: Enable Banking control panel (prijavljen račun), kartica **ASPSP status**
+(`/cp/aspsps`, Croatia) i `GET https://enablebanking.com/api/aspsps` koji panel učitava.
+Vrijedi za **AIS** (računi/salda/promet). Popis ne kaže po banci radi li PIS.
+
+Popis navodi 32 HR ASPSP-a, za HPB `psu_types: [business, personal]` (BETA), ali
+**status prati samo 10**, i HPB samo za osobne:
+
+| Banka | business (status) | personal (status) | BETA u popisu |
+|---|---|---|---|
+| Addiko | OK | OK | da |
+| Erste | moguće smetnje | OK | da |
+| **HPB** | **ne prati se** | **major issues** | da |
+| OTP banka | ne prati se | OK | da |
+| PBZ | OK | OK | ne |
+| Raiffeisen | OK | OK | da |
+| Zagrebačka banka | OK | OK | da |
+| Revolut | OK | OK | ne |
+| Wise | OK | OK | ne |
+| iBanFirst | OK | — | ne |
+
+Nepraćeni (svi BETA osim N26, bunq i PayPal): Agram, BKS, Croatia
+banka, IKB, Podravska, Samoborska, Slatinska, DiPocket, SumUp, Finom, Wamo, Swan,
+Viva.com, Ferratum, Finductive, Airwallex, Juni, Genome, Payoneer.
+
+Posljedica za ADR 0020 (HR IBAN listener): **HPB inBusiness preko AIS-a nije
+potvrđen** — vlasnikov dojam „radi za HPB privatno, ne za inBusiness“ odgovara
+podacima (a i privatni je 2.11. u kvaru). Za tenanta s HPB poslovnim računom AIS
+nije pouzdan izvor `paid`; ostaje bank-push-gateway ili druga banka (PBZ/Zaba/RBA/Addiko
+imaju praćen business). „Data insights“ (`/cp/data-insights`) prikazuje samo promet
+vlastite aplikacije — bez nje je prazan / „Unable to retrieve data“.
+
 ## Izvori (provjereno 2026-10-29)
 
 - Wise: https://docs.wise.com/guides/developer/webhooks/essential-webhooks.md ; https://docs.wise.com/api-reference/webhook-event/eventbalancescredit ; https://www.wise.com/help/articles/2956754/what-are-sepa-transfers
@@ -64,6 +97,6 @@ flowchart LR
 - Swan: https://docs.swan.io/topics/accounts/ibans ; https://docs.swan.io/changelog/29-january-2026
 - Stripe: https://docs.stripe.com/payments/bank-transfers ; https://docs.stripe.com/payments/customer-balance/virtual-bank-account-numbers/spanish-virtual-account-discontinuation
 - Monerium: https://monerium.com/partners/
-- Enable Banking HR: https://enablebanking.com/docs/markets/hr/
+- Enable Banking HR: https://enablebanking.com/docs/markets/hr/ ; control panel ASPSP status https://enablebanking.com/cp/aspsps (2026-11-02)
 - Erste Group API katalog: https://openbankingtracker.com/provider/erste-group/apis
 - Interno: ADR 0016, 0017, 0018, 0020, 0025, 0028; `docs/research/2026-09-monerium-first-iban-screening.md`
