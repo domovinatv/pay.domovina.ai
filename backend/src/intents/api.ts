@@ -23,6 +23,7 @@ import { computeStage, confirmForwardIfMined, loadStageContext } from './stage';
 import type { StageResult } from './stage';
 import { openIntentStream, sseEnabled } from './stream';
 import { resolveRequestTenant } from '../tenants/auth';
+import { linkBases, toLinkBases, type LinkBases } from '../hosts';
 import { defaultTenantId } from '../tenants/whitelist';
 import {
   getReferenceStyle,
@@ -164,7 +165,7 @@ export function buildIntentApi(): Hono<{ Bindings: Env }> {
     const intent = await getIntent(c.env, sid);
     if (!intent) return c.json({ error: 'intent_not_persisted' }, 500);
 
-    const origin = new URL(c.req.url).origin;
+    const origin = linkBases(c.env, c.req.url);
     const sepa = await getSepaDetails(c.env, tenant.tenantId);
     const status = computeStage({
       intent, order: null, forward: null,
@@ -268,7 +269,7 @@ export function buildIntentApi(): Hono<{ Bindings: Env }> {
       limit,
       cursor,
     });
-    const origin = new URL(c.req.url).origin;
+    const origin = linkBases(c.env, c.req.url);
     const sepa = await getSepaDetails(c.env, who.tenantId);
     const style = await getReferenceStyle(c.env, who.tenantId);
     const data = items.map((intent) => {
@@ -305,7 +306,7 @@ export function buildIntentApi(): Hono<{ Bindings: Env }> {
     const sid = c.req.param('sid');
     const intent = await getIntent(c.env, sid);
     if (!intent) return c.json({ error: 'intent_not_found' }, 404);
-    const origin = new URL(c.req.url).origin;
+    const origin = linkBases(c.env, c.req.url);
     const sepa = await getSepaDetails(c.env, intent.tenant_id ?? defaultTenantId(c.env));
     const style = await getReferenceStyle(c.env, intent.tenant_id);
     const status = await buildIntentStatus(c.env, intent, c.executionCtx);
@@ -375,7 +376,7 @@ export function buildIntentApi(): Hono<{ Bindings: Env }> {
     if (!sid) return c.json({ error: 'sid_collision_after_retries' }, 500);
     const intent = await getIntent(c.env, sid);
     if (!intent) return c.json({ error: 'intent_not_persisted' }, 500);
-    const origin = new URL(c.req.url).origin;
+    const origin = linkBases(c.env, c.req.url);
     const sepa = await getSepaDetails(c.env, tenantId);
     const status = computeStage({ intent, order: null, forward: null, now });
     return c.json({ ...intentResponseJson(intent, origin, sepa, style), status }, 201);
@@ -419,7 +420,7 @@ async function createSandboxIntent(
   const intent = await getIntent(c.env, sid);
   if (!intent) return c.json({ error: 'intent_not_persisted' }, 500);
   await touchSandboxTenant(c.env, tenantId);
-  const origin = new URL(c.req.url).origin;
+  const origin = linkBases(c.env, c.req.url);
   const sepa = await getSepaDetails(c.env, tenantId);
   const status = computeStage({ intent, order: null, forward: null, now: Math.floor(Date.now() / 1000) });
   return c.json({ ...sandboxView(intentResponseJson(intent, origin, sepa, null), origin), status });
@@ -427,7 +428,8 @@ async function createSandboxIntent(
 
 /// A sandbox intent must never be payable with real money: no IBAN, no QR,
 /// no HUB3 (ADR 0024 D5). Everything else keeps the production shape.
-export function sandboxView(json: Record<string, unknown>, origin: string): Record<string, unknown> {
+export function sandboxView(json: Record<string, unknown>, origin: string | LinkBases): Record<string, unknown> {
+  const bases = toLinkBases(origin);
   return {
     ...json,
     iban: null,
@@ -436,7 +438,7 @@ export function sandboxView(json: Record<string, unknown>, origin: string): Reco
     epc_qr_data: null,
     hub3_data: null,
     sandbox: true,
-    simulate_url: `${origin}/api/intents/${json.sid as string}/simulate`,
+    simulate_url: `${bases.api}/intents/${json.sid as string}/simulate`,
   };
 }
 
@@ -519,11 +521,13 @@ async function tenantRailRefusal(
 /// between create + status endpoints.
 export function intentResponseJson(
   intent: import('./db').PaymentIntentRow,
-  origin: string,
+  /// Origin (legacy oblik: `/api` linkovi na istom hostu) ili baze iz linkBases (ADR 0021 P3).
+  origin: string | LinkBases,
   sepa: SepaDetails,
   /// Tenant's rail style; null/absent = the `mpt:` reference (default tenant).
   style: ReferenceStyle | null = null,
 ): Record<string, unknown> {
+  const bases = toLinkBases(origin);
   const memo = intentReference(style, intent);
   const amountEur = (intent.amount_cents / 100).toFixed(2);
   const epcText = buildEpcText({
@@ -552,9 +556,9 @@ export function intentResponseJson(
     epc_qr_data: epcText,
     hub3_data: hub3Text,
     tenant_id: intent.tenant_id,
-    checkout_url: `${origin}/checkout/${intent.sid}`,
-    status_url: `${origin}/api/intents/${intent.sid}`,
-    status_stream_url: `${origin}/api/intents/${intent.sid}/stream`,
+    checkout_url: `${bases.checkout}/checkout/${intent.sid}`,
+    status_url: `${bases.api}/intents/${intent.sid}`,
+    status_stream_url: `${bases.api}/intents/${intent.sid}/stream`,
     created_at: isoFromUnix(intent.created_at),
     expires_at: isoFromUnix(intent.expires_at),
     paid_at: intent.paid_at ? isoFromUnix(intent.paid_at) : null,

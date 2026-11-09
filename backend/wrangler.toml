@@ -26,6 +26,21 @@ zone_name = "domovina.ai"
 pattern = "mpt.domovina.ai/*"
 zone_name = "domovina.ai"
 
+# ADR 0021: javni hostovi pod mpt.hr (zona u istom D.O.M. računu). Custom
+# Domain umjesto routea: wrangler sam kreira DNS zapis i certifikat. Landing
+# (mpt.hr) je zaseban Worker `mpt-landing` na svom Custom Domainu.
+#   api.mpt.hr  → javni API /v1/* (+ /api/*), Monerium webhookovi po tenantu
+#   pay.mpt.hr  → kupčev checkout /checkout/:sid i /potvrda/:sid
+# Što koji host smije servirati: src/hosts.ts (HOST_POLICY). Legacy hostovi
+# gore ostaju trajni alias, bez redirecta.
+[[routes]]
+pattern = "api.mpt.hr"
+custom_domain = true
+
+[[routes]]
+pattern = "pay.mpt.hr"
+custom_domain = true
+
 [observability]
 enabled = true
 
@@ -134,6 +149,11 @@ RECEIPTS = "1"
 #   ACCESS_AUD         — AUD Access aplikacije koja štiti ADMIN_HOST/admin/sso
 ADMIN_EMAILS = "stepanic.matija@gmail.com,ms@ff.hr"
 ADMIN_HOST = "mpt.domovina.ai"
+
+# ADR 0021 P3/P6: baza za Monerium webhook pretplate tenanata i checkout host
+# za linkove u odgovorima s api.mpt.hr. Legacy hostovi ih ignoriraju.
+PUBLIC_API_BASE = "https://api.mpt.hr"
+PUBLIC_CHECKOUT_BASE = "https://pay.mpt.hr"
 ACCESS_TEAM_DOMAIN = "domovina.cloudflareaccess.com"
 ACCESS_AUD = "c1e0493deb2d777529744e4ff5d74cebae4fe070a0dae77fdda73e81d01a6bb2"
 

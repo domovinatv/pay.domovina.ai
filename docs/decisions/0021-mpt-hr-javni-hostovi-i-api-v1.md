@@ -1,6 +1,7 @@
 # ADR 0021 — Javni hostovi pod `*.mpt.hr` i API `/v1`; `*.domovina.ai` ostaje trajni alias
 
-- **Status:** Proposed (2026-10-11). Plan je prihvaćen kao smjer, ništa još nije implementirano.
+- **Status:** Accepted (2026-11-09). Faza 0 provjerena, faze 1 i 2 implementirane (vidi
+  „Provedba" na dnu). Faze 3–6 otvorene.
 - **Kontekst:** MPT rail Worker `pay-domovina-backend` (`backend/`), admin (`/admin`, Cloudflare
   Access + passkey), checkout (`/checkout/:sid`), Monerium webhookovi po tenantu, klijenti
   (Shopify app, wallet, Flutter `pay.domovina.ai`, pinka), landing `mpt.hr`
@@ -346,6 +347,36 @@ Faze 1 i 2 su neovisne o fazi 3. Faza 4 traži fazu 1 i `PUBLIC_API_BASE`, a ne 
 - Treba li `mpt-shopify.domovina.ai` preseliti na `shopify.mpt.hr`? Shopify app URL je u
   `shopify.app.toml` i kod Shopifyja, pa to znači novu verziju appa za svakog trgovca. Za sada ne.
 - Gdje hostati `status.mpt.hr` (vanjski servis), i treba li uopće prije prvog većeg trgovca?
+
+## Provedba
+
+### Faza 0 (2026-11-09)
+
+- Zona `mpt.hr` je u računu D.O.M. (`7dc7167b…`), zone id `6716397b…`, plan **Free**. Potvrđeno
+  preko CF API-ja.
+- Landing je Worker `mpt-landing` na **Custom Domainu** `mpt.hr` (i `open-ledger.mpt.hr` →
+  `open-ledger-site`). U zoni nema Workers routeova, pa nema wildcarda koji bi progutao poddomene.
+- `_dmarc.mpt.hr` već postoji (`v=DMARC1; p=none;`, bez `rua` izvještaja). CAA ne postoji.
+- Otvoreno, ručno u dashboardu (wrangler OAuth token nema DNS/WAF prava): DNSSEC na `mpt.hr`,
+  rate-limit pravila za zonu `mpt.hr` (Free plan, `docs/runbook/rate-limits.md`). Ne blokira fazu 1,
+  jer kapice u kodu vrijede i bez WAF-a.
+- Otvorena pitanja o Moneriumovom limitu pretplata i rate-limit pravilima vlasnik je ocijenio
+  neblokirajućima.
+
+### Faze 1 i 2 (kod)
+
+- `api.mpt.hr` i `pay.mpt.hr` su **Workers Custom Domain** (`custom_domain = true`), ne route:
+  wrangler sam kreira DNS zapis i certifikat, a ponašanje Workera je isto.
+- `backend/src/hosts.ts`: `HOST_POLICY` (P4), `linkBases` (P3), `publicApiBase` (P6), log polje
+  `req_host` (P12). Ograničen je samo host naveden u `HOST_POLICY`; svi ostali (legacy, localhost,
+  testovi) rade kao prije.
+- `pay.mpt.hr` uz `/checkout/*` servira i `/potvrda/*` (stranica potvrde o uplati, ADR 0022) i
+  `/api|v1/intents/:sid/*` (checkout i potvrda zovu relativne putanje).
+- `/v1/intents` je isti router kao `/api/intents`, uključujući `/simulate` za sandbox. `simulate_url`
+  nosi `/v1` kad je zahtjev na `/v1`.
+- `OWN_WEBHOOK_URL_RE` iz P6 više ne postoji (legacy rail obrisan, #130/#131), pa nema što proširiti.
+- `ALLOWED_ORIGINS` nije mijenjan: nijedan `mpt.hr` origin još ne zove API iz preglednika (P12).
+- Testovi: `backend/test/mptHrHosts.test.ts`. `scripts/compat-check.sh` zelen.
 
 ## Izvori
 
