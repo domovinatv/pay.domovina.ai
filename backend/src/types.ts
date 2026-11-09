@@ -10,6 +10,11 @@ export interface Env {
   ACCESS_TEAM_DOMAIN?: string;
   ACCESS_AUD?: string;
   ADMIN_HOST?: string;
+  /// ADR 0021: javni API host za Monerium webhook pretplate (https://api.mpt.hr)
+  /// i checkout host za linkove odgovora s novih hostova (https://pay.mpt.hr).
+  /// Prazno = origin zahtjeva, kao prije.
+  PUBLIC_API_BASE?: string;
+  PUBLIC_CHECKOUT_BASE?: string;
   ALLOWED_ORIGINS: string;
   BANKING_PROVIDER: string; // "enable_banking" | "gocardless"
 

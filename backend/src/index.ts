@@ -53,6 +53,7 @@ import { buildPayersApi } from './payers/api';
 import { buildActivityApi } from './publicRead/activity';
 import { linkReceipts } from './receipts/link';
 import { mountReceiptPages } from './receipts/page';
+import { hostPolicyMiddleware } from './hosts';
 import { getSepaDetails } from './tenants/db';
 import { defaultTenantId } from './tenants/whitelist';
 
@@ -69,6 +70,9 @@ app.use('*', async (c, next) => {
     allowHeaders: ['Content-Type', 'Authorization', 'x-mpt-key'],
   })(c, next);
 });
+
+// ADR 0021 P4: novi *.mpt.hr hostovi serviraju samo svoje putanje.
+app.use('*', hostPolicyMiddleware);
 
 app.get('/', (c) =>
   c.json({
@@ -233,6 +237,9 @@ app.route('/api/monerium/admin', legacyMonerium);
 
 // Public payment-intents API (unauthenticated; rate-limit in Phase 2).
 app.route('/api/intents', buildIntentApi());
+// ADR 0021 P2: javni ugovor s trgovcima. Isti handleri, linkovi nose /v1 (P3).
+app.route('/v1/intents', buildIntentApi());
+app.all('/v1/*', (c) => c.json({ error: 'not_found' }, 404));
 
 // Self-serve sandbox tenants (ADR 0024). 404 unless SANDBOX_SELF_SERVE=1.
 app.route('/api/sandbox', buildSandboxApi());

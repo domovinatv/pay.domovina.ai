@@ -1,6 +1,7 @@
 import type { Hono } from 'hono';
 
 import type { Env } from '../types';
+import { publicApiBase } from '../hosts';
 import { writeAudit } from './db';
 import { actorOf } from '../admin/auth/mount';
 import { railFromStoredRow } from './rail';
@@ -146,7 +147,7 @@ export function mountRailAdmin(app: Hono<{ Bindings: Env }>): void {
     if (!tenant || !row) return c.json({ error: 'rail_not_found' }, 404);
     if (tenant.status === 'active') return c.json({ error: 'suspend_first' }, 409);
     try {
-      const r = await registerTenantWebhook(c.env, id, new URL(c.req.url).origin);
+      const r = await registerTenantWebhook(c.env, id, publicApiBase(c.env, new URL(c.req.url).origin));
       await writeAudit(c.env, {
         tenantId: id,
         action: 'rail.webhook_register',
