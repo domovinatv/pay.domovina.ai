@@ -35,7 +35,13 @@ lokalni dio e-maila Monerium računa, ime Private appa i MPT tenant id (npr. `op
 Za kupce `<kupac>-sandbox` i `<kupac>`. `italk_domovina_projekti_sandbox` je stariji izuzetak.
 Unutar tenanta: glavni Safe `<tenant>-main` nosi IBAN i prima uplate bez reference, ali **nije
 kampanja**; projekti 2…N su zasebni Safeovi `<tenant>-<projekt>` i jedini su kampanje (cilj intenta).
-Isti naziv ide u ime walleta u Moneriumu.
+**Ime adrese (walleta) u Moneriumu je točno taj slug**, identičan `campaign_id` u D1
+(`tenant_campaigns`) i saltu `project:<id>`; za glavni Safe `<tenant>-main`. Slug: mala slova,
+brojke i pojedinačne crtice (`SLUG_RE` u `backend/src/tenants/campaigns.ts`), bez razmaka,
+dijakritika i velikih slova. Čitljivi naziv („Razvoj MPT-a") je samo `label` u D1 i na stranici
+projekta, nikad ime u Moneriumu (Matija, 10. 11. 2026.). Ime se postavlja iz konzole web
+sučelja (`PATCH /api/addresses/<safe>/config {name}`, samo pod web sesijom); naredbu ispiše
+„Dodaj projekt" ili `funding-init`.
 
 Na istom računu smije postojati više appova (Private app = par
 `client_id`/`client_secret`), npr. za drugi sustav. Svi dijele isti profil, isti

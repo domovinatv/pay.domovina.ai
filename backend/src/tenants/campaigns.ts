@@ -7,6 +7,10 @@ import { addCampaign, addPayoutAddress, getCampaign, writeAudit } from './db';
 
 export const ADDR_RE = /^0x[0-9a-fA-F]{40}$/;
 export const ID_RE = /^[A-Za-z0-9_-]{2,64}$/;
+/// Novi projekti (setup „Dodaj projekt", funding-init): slug — mala slova, brojke i
+/// pojedinačne crtice. Isti niz je campaign_id u D1, salt `project:<id>` i ime adrese u
+/// Moneriumu (docs/monerium-private.md). ID_RE ostaje širi samo za stare zapise kroz admin API.
+export const SLUG_RE = /^(?=.{2,64}$)[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
 export type CampaignResult =
   | { ok: true; campaignId: string; safeAddress: string }
