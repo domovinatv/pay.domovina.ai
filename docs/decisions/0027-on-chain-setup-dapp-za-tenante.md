@@ -34,8 +34,11 @@ Vlastiti dApp koji iz stanja na lancu programski izgradi korake, a vlasnici samo
 4. **Red = Safe Transaction Service.** Ostali vlasnici otvore istu stranicu i kliknu „Potpiši".
    Kad je prag skupljen, bilo koji račun s xDAI-jem izvrši `execTransaction`. Vlasnik koji još nije
    potpisao „Potpiši i izvrši" napravi jednim slanjem (pre-validated potpis, v=1).
-5. **Provjera nakon izvršenja.** `eth_call` kao router: 1 wei prema svakom projektu mora proći, a
-   prema `0x…dEaD` modifier ga mora odbiti.
+5. **Provjera nakon izvršenja.** `eth_call` kao router: transfer od 0 EURe prema svakom projektu
+   mora proći, a prema `0x…dEaD` modifier ga mora odbiti. (Do 10. 11. 2026. bio je 1 wei, ali
+   glavni Safe je od ADR 0025 u pravilu prazan, pa je 1 wei padao već u EURe zbog salda, a
+   kontrola s `dEaD` prolazila je iz pogrešnog razloga. EURe prima transfer od 0, a rola nema
+   kapicu na iznos, pa 0 provjerava samo scope.)
 6. **Lokalni ključ samo za sandbox.** Na Chiadu se može učitati generirani testni ključ vlasnika
    (samo memorija kartice). Na Gnosisu je ta opcija isključena i vrijedi samo MetaMask (uz Ledger).
    Produkcijski ključ vlasnika nikad ne ulazi u web stranicu (ADR 0025).
