@@ -25,7 +25,6 @@ import { addProjectToRouter, describeRouterResult } from './router-scope.mjs';
 const HERE = dirname(fileURLToPath(import.meta.url));
 const TENANT = { sandbox: 'italk-sandbox', prod: 'italk' };
 const MONERIUM_UI = { sandbox: 'https://sandbox.monerium.dev', prod: 'https://monerium.app' };
-const NAME_PREFIX = { sandbox: 'Projekt (sandbox) ', prod: 'Projekt ' };
 
 const { values: a } = parseArgs({
   options: {
@@ -38,8 +37,9 @@ const { values: a } = parseArgs({
   },
 });
 
-if (!a.project || !/^[A-Za-z0-9_-]{2,64}$/.test(a.project)) {
-  console.error('--project <id> (slova, brojke, - i _, 2–64 znaka; isti je i campaign_id na railu)');
+// Slug (= campaign_id u D1 = ime adrese u Moneriumu), isto kao SLUG_RE u backend/src/tenants/campaigns.ts.
+if (!a.project || !/^(?=.{2,64}$)[a-z0-9]+(?:-[a-z0-9]+)*$/.test(a.project)) {
+  console.error('--project <slug> (mala slova, brojke i crtice, 2–64 znaka; isti je campaign_id na railu i ime adrese u Moneriumu)');
   process.exit(2);
 }
 const env = a.env;
@@ -99,7 +99,8 @@ writeFileSync(regFile, JSON.stringify(Object.fromEntries(Object.entries(reg).sor
 step(4, `upisano u ${regFile.split('/').slice(-1)[0]}`);
 
 // 5. naredbe za preglednik
-const name = `${NAME_PREFIX[env]}${title} · ${a.project}`;
+// Ime adrese u Moneriumu = slug projekta, identično campaign_id u D1 (docs/monerium-private.md).
+const name = a.project;
 console.log(`\n[5a] Ime u Moneriumu — konzola na ${MONERIUM_UI[env]} (prijavljen):`);
 console.log(`console.log((await fetch('/api/addresses/${safe.address}/config', { method: 'PATCH', headers: { Accept: 'application/json', 'Content-Type': 'application/json' }, body: JSON.stringify({ name: ${JSON.stringify(name)} }) })).status)`);
 console.log(`\n[5b] Kampanja + whitelista na MPT railu — konzola na https://mpt.domovina.ai/admin (prijavljen):`);

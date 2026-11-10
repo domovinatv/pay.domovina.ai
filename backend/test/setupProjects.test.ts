@@ -122,7 +122,7 @@ describe('POST …/projects (addProject)', () => {
     expect(ch.calls).toHaveLength(1);
     expect(ch.calls[0].factory).toBe(ps.SAFE_CONTRACTS['1.3.0'].factory);
     expect(mo.links).toEqual([{ profile: 'prof-sb', a: DOMOVINA_AI, chain: 'chiado' }]);
-    expect(String((r.body as { monerium_name: { snippet: string } }).monerium_name.snippet)).toContain('Projekt (sandbox) domovina.ai · domovinatv-domovina-ai');
+    expect(String((r.body as { monerium_name: { snippet: string } }).monerium_name.snippet)).toContain('JSON.stringify({ name: "domovinatv-domovina-ai" })');
     const camp = raw.prepare(`SELECT tenant_id, safe_address, label FROM tenant_campaigns WHERE campaign_id = ?`).get(input.campaign_id);
     expect(camp).toEqual({ tenant_id: TENANT, safe_address: DOMOVINA_AI.toLowerCase(), label: 'domovina.ai' });
     const wl = raw.prepare(`SELECT COUNT(*) AS n FROM tenant_payout_addresses WHERE tenant_id = ? AND address = ?`).get(TENANT, DOMOVINA_AI.toLowerCase()) as { n: number };
@@ -176,6 +176,9 @@ describe('POST …/projects (addProject)', () => {
     const deps = { chain: chain().c, monerium: monerium().m };
     const call = (i: object) => addProject(e, { tenantId: TENANT, mainSafe: MAIN, input: i, actor: 'a' }, deps);
     expect((await call({ campaign_id: 'x y' })).body.error).toBe('invalid_campaign_id');
+    for (const bad of ['Mpt-Crowdfunding', 'mpt_crowdfunding', 'mpt--x', '-mpt', 'mpt-', 'mpt.hr']) {
+      expect((await call({ campaign_id: bad })).body.error).toBe('invalid_campaign_id');
+    }
     expect((await call({ campaign_id: 'abc', owners: [ps.DEFAULT_OWNERS[0]] })).body.error).toBe('invalid_owners'); // owners without threshold
     expect((await call({ campaign_id: 'abc', owners: ps.DEFAULT_OWNERS, threshold: 5 })).body.error).toBe('invalid_owners');
     raw.prepare(`INSERT INTO tenants (id, name, status, allow_sources, beneficiary_name, iban, bic, created_at, updated_at)

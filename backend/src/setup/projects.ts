@@ -5,7 +5,7 @@ import { gnosis, gnosisChiado } from 'viem/chains';
 import type { Env } from '../types';
 import { MoneriumClient } from '../monerium/client';
 import { getTenantRail, type RailChain } from '../tenants/rail';
-import { ADDR_RE, ID_RE, campaignIdFree, registerCampaign } from '../tenants/campaigns';
+import { ADDR_RE, SLUG_RE, campaignIdFree, registerCampaign } from '../tenants/campaigns';
 // @ts-expect-error — plain .mjs shared with the setup dApp and tools/funding
 import * as ps from '../../safe-tx/lib/project-safe.mjs';
 
@@ -138,7 +138,7 @@ export async function addProject(
   const label = (input.label ?? '').trim() || null;
   const owners = input.owners?.length ? input.owners.map((o) => String(o).trim()) : (ps.DEFAULT_OWNERS as string[]);
   const threshold = input.threshold ?? (input.owners?.length ? NaN : (ps.DEFAULT_THRESHOLD as number));
-  if (!ID_RE.test(campaignId)) return fail(400, 'invalid_campaign_id');
+  if (!SLUG_RE.test(campaignId)) return fail(400, 'invalid_campaign_id');
   try {
     ps.checkOwners(owners, threshold);
   } catch (err) {
@@ -201,7 +201,8 @@ export async function addProject(
   });
   if (!r.ok) return fail(r.error === 'campaign_owned_by_other_tenant' ? 409 : 400, r.error);
 
-  const name = `${deps.monerium.sandbox ? 'Projekt (sandbox) ' : 'Projekt '}${label ?? campaignId} · ${campaignId}`;
+  // Ime adrese u Moneriumu = campaign_id (slug), identično D1; čitljivi naziv je `label`.
+  const name = campaignId;
   return {
     status: 200,
     body: {
