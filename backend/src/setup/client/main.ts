@@ -225,16 +225,20 @@ async function findPending(tx: SafeTx): Promise<Pending | null> {
   };
 }
 
-/// What the router can do RIGHT NOW: one wei to every project must pass, one
-/// wei to 0x…dEaD must be refused by the modifier. Plain eth_call from the
-/// router address — nothing is sent.
+/// What the router can do RIGHT NOW: a zero-amount transfer to every project
+/// must pass, the same to 0x…dEaD must be refused by the modifier. Plain
+/// eth_call from the router address — nothing is sent. Zero, not 1 wei: the
+/// main Safe is normally empty since ADR 0025 (Monerium mints straight into
+/// project Safes), and 1 wei from an empty Safe reverts inside EURe, so every
+/// project failed and the dEaD control passed for the wrong reason. EURe accepts
+/// 0 transfers and the role has no amount cap, so 0 tests only the scope.
 async function runChecks(): Promise<void> {
   S.checks = [];
   const router = S.router && isAddress(S.router) ? getAddress(S.router) : null;
   if (!ctx.roles || !router || !S.plan || S.plan.before.length === 0) return;
   const roleKey = roleKeyOf(ROLE);
   const probe = async (to: string, label: string, expect: boolean) => {
-    const data = encodeFunctionData({ abi: ERC20, functionName: 'transfer', args: [getAddress(to), 1n] });
+    const data = encodeFunctionData({ abi: ERC20, functionName: 'transfer', args: [getAddress(to), 0n] });
     const call = encodeFunctionData({
       abi: ROLES_ABI, functionName: 'execTransactionWithRole',
       args: [getAddress(ctx.eure), 0n, data, 0, roleKey, true],
@@ -672,7 +676,7 @@ ${ctx.deployer ? `<button id="mptExec" ${dis || !canMptExec ? 'disabled' : ''}>I
     : `<button id="propose" ${dis || !s || !owner || !S.sim?.success ? 'disabled' : ''}>Predloži i potpiši</button>
 ${!s ? '<span class="muted">prvo spoji MetaMask (Potpisnik gore)</span>' : !owner ? '<span class="bad">spojeni račun nije vlasnik Safe-a — odaberi vlasnika u MetaMasku</span>' : S.sim && !S.sim.success ? '<span class="bad">simulacija pada</span>' : ''}`}`}
 
-${S.checks.length ? `<h2>Provjera role (eth_call kao router, 1 wei)</h2><table><tbody>${S.checks.map((c) =>
+${S.checks.length ? `<h2>Provjera role (eth_call kao router, 0 EURe)</h2><table><tbody>${S.checks.map((c) =>
     `<tr><td>${e(c.label)}</td><td class="mono">${e(short(c.address))}</td><td>${c.expect ? 'mora proći' : 'mora pasti'}</td><td>${c.ok ? '<span class="ok">✓</span>' : `<span class="bad">✗</span> <span class="muted">${e(c.why ?? '')}</span>`}</td></tr>`).join('')}</tbody></table>` : ''}
 
 ${S.error ? `<p class="bad">${e(S.error)}</p>` : ''}
