@@ -378,6 +378,23 @@ Faze 1 i 2 su neovisne o fazi 3. Faza 4 traži fazu 1 i `PUBLIC_API_BASE`, a ne 
 - `ALLOWED_ORIGINS` nije mijenjan: nijedan `mpt.hr` origin još ne zove API iz preglednika (P12).
 - Testovi: `backend/test/mptHrHosts.test.ts`. `scripts/compat-check.sh` zelen.
 
+### Deploy i provjera (2026-11-09, #145, c1fdb28)
+
+- Odmah nakon `wrangler deploy` oba nova hosta vraćaju **522/523** nekoliko minuta, dok Custom
+  Domain ne dobije certifikat. To nije kvar; `GET /workers/domains` pokazuje host vezan na
+  `pay-domovina-backend` i prije nego proradi. Čekati 200 na `GET /`, ne redeployati.
+- Smoke test na produkciji: sandbox tenant na `api.mpt.hr/api/sandbox/tenants` → `POST
+  /v1/intents` → `checkout_url` `https://pay.mpt.hr/checkout/…` (200) → `simulate_url` na `/v1` →
+  `state: paid`. Krivi host vraća `wrong_host`, nepostojeća `/v1` putanja JSON 404.
+
+### Otvoreno
+
+- Odgovor `POST …/simulate` (sandbox) vraća `status_url` na `/api/intents/…` i kad je poziv bio na
+  `/v1` (`backend/src/sandbox/`). Radi, ali nije usklađeno s P3.
+- DNSSEC i rate-limit pravilo za zonu `mpt.hr` (ručno u dashboardu; Free plan = 1 pravilo po zoni).
+- Faza 3 (`dashboard.mpt.hr`), faza 4 (selidba postojećih Monerium pretplata), faza 5 (klijenti,
+  OpenAPI, `docs.mpt.hr`), faza 6 (sandbox host).
+
 ## Izvori
 
 - Stripe: https://docs.stripe.com/api/versioning · https://docs.stripe.com/ips ·
