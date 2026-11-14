@@ -71,6 +71,7 @@ history.
 | [0029](0029-javna-oznaka-uplatitelja.md) | Javna oznaka uplatitelja (inicijali + zadnja 4 znaka IBAN-a, `ref` = SHA-256(sid)[:16]) na `GET /api/payers/:address`; opt-in po tenantu, ime/IBAN/sid ne izlaze | 2026-10-21 | ✅ Accepted | ✅ implementirano (migracija 0032) |
 | [0030](0030-edge-cache-javnog-citanja.md) | Edge cache (Cache API) na `GET /api/payers/:address`: svježe 10 s, staro do 60 s uz osvježavanje u pozadini, spajanje promašaja; D1 s novcem ne nosi publiku | 2026-10-22 | ✅ Accepted | ✅ implementirano |
 | [0031](0031-psd2-pis-popunjen-nalog.md) | PSD2 PIS (Enable Banking): HR banka prikazuje popunjen nalog na tenantov Monerium IBAN; beneficiar samo registrirani IBAN, Monerium webhook ostaje izvor istine | 2026-10-29 | 📝 Proposed | ⏳ čeka Enable Banking + test T2 |
+| [0032](0032-visestruki-izvori-priljeva.md) | Više izvora priljeva: `CreditEvent` + inbox s jednim dedupom, zajednički matcher, adapter po provideru (Monerium, sandbox, bank-push-gateway, Wise, LHV Connect), `receiving_accounts` s načinom `onchain_mint` / `fiat_notify` | 2026-11-14 | 📝 Proposed | ⏳ korak 1 (refactor bez promjene ponašanja) nije počeo; Wise pitanja otvorena |
 
 ---
 
