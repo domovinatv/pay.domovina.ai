@@ -26,6 +26,10 @@ Posljedice za MPT:
 - **`EE..7777` ne kaže koji je provider**, samo da je VIBAN pod nekim LHV Connect klijentom.
   Vlasnika VIBAN-a zna samo LHV (i taj klijent). Za naše tenante vlasnik je poznat jer IBAN dolazi
   iz `receiving_accounts` / Monerium `listIbans`, ne iz otiska.
+- **Hipoteza: znakovi 9–12 (`0001`) označavaju LHV Connect klijenta.** Oba poznata Monerium IBAN-a
+  (ITalk KYB i Bleap osobni, dva različita Monerium profila) imaju `7777 0001`, a primjer iz LHV
+  dokumentacije `7777 0002`. Ako vrijedi, `EE..7777 0001` = Monerium i otisak bi otkrivao providera.
+  Dvije točke nisu dokaz: potvrditi IBAN-om drugog providera (TransferGo, Lightyear) ili pitati LHV.
 - **`BE..967` je Wise**, i ne ide kroz LHV. Wise adapter (ADR 0032, korak 5) ne ovisi o LHV-u.
 - Monerium **sandbox** IBAN-i (`EE11 7863…`, `EE51 4996…`, primjer iz docs `EE52 1273…`) nisu u
   LHV rasponu; otisak vrijedi samo za produkciju.
@@ -37,7 +41,8 @@ treća strana; **nepoznato** = nema javnog izvora (IBAN se vidi samo u prijavlje
 
 | Provider | IBAN koji korisnik dobije (EUR) | BIC | Institucija | Na LHV-u danas? | Po korisniku? | Pouzdanost |
 |---|---|---|---|---|---|---|
-| **Monerium** (EURe) | `EE..7777 000x…` | `LHVBEE22` | LHV Pank | da | da, IBAN po adresi/profilu | potvrđeno (naš prod tenant) |
+| **Monerium** (EURe) | `EE..7777 0001…` | `LHVBEE22` | LHV Pank | da | da, IBAN po adresi/profilu | potvrđeno: ITalk KYB `EE70 7777 0001 6292 1128` i Bleap osobni račun `EE85 7777 0001 68…` (2026-11-16) |
+| Bleap (preko Moneriuma) | isto kao Monerium, `EE..7777 0001…` | `LHVBEE22` | LHV Pank (Monerium VIBAN) | da | da | potvrđeno (stvarni račun, 2026-11-16) |
 | **Wise** | `BE..967…` | `TRWIBEB1XXX` | Wise Europe SA, Bruxelles | **ne** | da | potvrđeno |
 | Wise, vlastiti račun | `EE80 7700 7710 0402…` | `LHVBEE22` | LHV Pank | da | ne, Wiseov ulazni račun | potvrđeno da postoji; namjena nije navedena |
 | Wise (GBP) | sort code `23-14-xx`, ne IBAN | – | Wise (UK) | ne | da | potvrđeno |
