@@ -36,7 +36,9 @@ od 2026-10-23 navodi javno potvrđene klijente LHV Connecta: **Wise** (prvi klij
 usluga, pristupio 2011., uključen 2014.), **Coinbase** (od 2014., virtualni IBAN-i, TIPS),
 **Blockchain.com**, Bitstamp, Airwallex, Currencycloud, TrueLayer, Paysafe, Trustly, Monese,
 TransferGo, Railsr, Lightyear i drugi. **Monerium** ne spominje nijedan javni izvor, ali njegovi
-`EE…` IBAN-i nose LHV-ov BIC.
+`EE…` IBAN-i nose LHV-ov BIC. Koji IBAN koji provider izdaje (i kako ga prepoznati: `EE..7777` =
+LHV VIBAN, `BE..967` = Wise Europe SA) vodi katalog
+[`docs/reference/lhv-connect-provideri-iban.md`](../reference/lhv-connect-provideri-iban.md).
 
 Ipak, to ne znači da postoji jedan adapter za sve njih:
 
