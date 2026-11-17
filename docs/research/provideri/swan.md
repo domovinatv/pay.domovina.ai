@@ -108,3 +108,27 @@ po tenantu). Opis se tada koristi samo kao provjera.
   i GraphQL `https://api.swan.io/sandbox-partner/graphql` (live: `live-partner`).
 - Model s jednim Swan projektom za više tenanata: Swan pretplata je po projektu, pa svaki tenant
   dobije svoju pretplatu na svoj URL; tuđe transakcije završe kao `not_this_tenant_account`.
+
+## Produkcijski E2E (sandbox Swan → api.mpt.hr), stanje 2026-11-17
+
+Deployano: PR #148 (`7b89bf4`), migracija 0034 na produkciji, ruta živa
+(`POST https://api.mpt.hr/api/swan/webhook/t/<tenant>` → `{"error":"no_swan_account"}` dok tenant
+nema Swan račun).
+
+Koraci (tajne upisuje vlasnik, ne agent):
+
+1. **Tenant:** samoposlužni sandbox tenant (ADR 0024):
+   `curl -s -X POST https://api.mpt.hr/api/sandbox/tenants -H 'content-type: application/json' -d '{"name":"Swan probe"}'`
+   → `tenant_id` (`sbx-…`) i `secret_key` (`sk_test_…`, prikazuje se jednom).
+2. **Swan:** dashboard → Developers → API → Generate a new client secret (Client ID + secret).
+3. **Registracija** (prijavljen u `/admin` na `mpt.domovina.ai`, konzola preglednika):
+   ```js
+   await (await fetch('/admin/api/tenants/<sbx-id>/receiving-accounts', { method: 'POST',
+     headers: { 'content-type': 'application/json' },
+     body: JSON.stringify({ provider: 'swan', environment: 'sandbox',
+       external_account_id: 'b31aae63-2a8f-42ad-a537-542899518fb8',
+       client_id: '<Client ID>', client_secret: '<secret>', label: 'Swan sandbox probe' }) })).json()
+   ```
+4. **Intent:** `POST /api/intents` sa `sk_test_` ključem tenanta, iznos npr. 12,34 €.
+5. **Swan pretplata** `05b475ba-…`: endpoint → `https://api.mpt.hr/api/swan/webhook/t/<sbx-id>`;
+   simulirati dolaznu uplatu na vIBAN s opisom `sid:<sid>` → intent `paid`, red u `credit_events`.
