@@ -2085,6 +2085,27 @@ export function renderTenantsPage(): string {
   <span id="actResult" class="mono"></span>
 </div>
 
+<h2 style="margin-top:1.5rem">Računi primatelja (ADR 0032)</h2>
+<p class="dim" style="margin-top:-.5rem;font-size:.9rem">
+  Tenantov račun kod drugog providera (danas Swan, <span class="mono">fiat_notify</span>): uplata ostaje na
+  tenantovom računu, MPT samo upari intent. Webhook URL iz tablice upiši u pretplatu kod providera.
+</p>
+<div class="table-wrap"><table>
+  <thead><tr><th>#</th><th>Provider</th><th>Okruženje</th><th>Račun</th><th>Tajne</th><th>Webhook URL</th><th></th></tr></thead>
+  <tbody id="raRows"><tr><td colspan="7" class="empty">—</td></tr></tbody>
+</table></div>
+<div class="controls" style="flex-wrap:wrap;gap:.5rem;margin-top:.75rem">
+  <select id="raProvider"><option value="swan">Swan</option></select>
+  <select id="raEnv"><option value="sandbox">sandbox</option><option value="live">live</option></select>
+  <input id="raAccount" placeholder="Swan accountId" size="38" class="mono" />
+  <input id="raClient" placeholder="client_id" size="30" class="mono" />
+  <input id="raSecret" placeholder="client_secret" size="26" type="password" autocomplete="off" />
+  <input id="raHook" placeholder="webhook secret (opc.)" size="22" type="password" autocomplete="off" />
+  <input id="raIban" placeholder="IBAN (opc.)" size="28" class="mono" />
+  <input id="raLabel" placeholder="oznaka (opc.)" size="18" />
+  <button type="button" id="raAdd">+ Dodaj račun</button>
+</div>
+
 <h2 style="margin-top:1.5rem">Verify izvještaj</h2>
 <div class="table-wrap"><table>
   <thead><tr><th>Provjera</th><th>OK</th><th>Detalj</th></tr></thead>
@@ -2114,6 +2135,7 @@ async function loadTenants(select) {
     '<option value="' + escT(t.id) + '">' + escT(t.id) + ' — ' + escT(t.name) + ' · ' + escT(envLabel(t.id)) + ' [' + escT(t.status) + ']</option>').join('');
   if (select) $t('tSel').value = select;
   await loadRail();
+  await loadAccounts();
 }
 
 function row(k, v) { return '<tr><th style="text-align:left;width:14rem">' + escT(k) + '</th><td class="mono">' + v + '</td></tr>'; }
@@ -2151,6 +2173,38 @@ function renderVerify(checks) {
   $t('verifyRows').innerHTML = checks.map(c => '<tr><td class="mono">' + escT(c.key) + '</td><td>' + (c.ok ? '✅' : '❌') + '</td><td class="mono">' + escT(c.detail) + '</td></tr>').join('');
 }
 
+async function loadAccounts() {
+  const id = $t('tSel').value;
+  if (!id) return;
+  const { ok, d } = await api('GET', '/admin/api/tenants/' + encodeURIComponent(id) + '/receiving-accounts');
+  const list = ok ? (d.accounts || []) : [];
+  $t('raRows').innerHTML = list.length === 0 ? '<tr><td colspan="7" class="empty">Nema računa.</td></tr>' : list.map(a =>
+    '<tr' + (a.active ? '' : ' style="opacity:.5"') + '><td>' + a.id + '</td><td>' + escT(a.provider) + ' · ' + escT(a.mode) + '</td><td>' + escT(a.environment) +
+    '</td><td class="mono">' + escT(a.external_account_id) + (a.iban ? '<br>' + escT(a.iban) : '') + (a.label ? '<br><span class="dim">' + escT(a.label) + '</span>' : '') +
+    '</td><td>client ' + (a.has_client_secret ? '✅' : '❌') + ' · webhook ' + (a.has_webhook_secret ? '✅' : '—') +
+    '</td><td class="mono">' + escT(a.webhook_url) + '</td><td>' + (a.active ? '<button type="button" data-ra-off="' + a.id + '">Deaktiviraj</button>' : 'neaktivan') + '</td></tr>').join('');
+  document.querySelectorAll('[data-ra-off]').forEach((b) => b.addEventListener('click', async () => {
+    if (!confirm('Deaktivirati račun #' + b.getAttribute('data-ra-off') + '? Webhookovi za njega više neće namirivati intente.')) return;
+    const r = await api('POST', '/admin/api/tenants/' + encodeURIComponent(id) + '/receiving-accounts/' + b.getAttribute('data-ra-off') + '/deactivate');
+    say(r.ok ? 'Račun deaktiviran.' : 'Greška: ' + r.d.error, r.ok);
+    await loadAccounts();
+  }));
+}
+
+$t('raAdd').addEventListener('click', async () => {
+  const id = $t('tSel').value;
+  const body = {
+    provider: $t('raProvider').value, environment: $t('raEnv').value, external_account_id: $t('raAccount').value,
+    client_id: $t('raClient').value, client_secret: $t('raSecret').value, webhook_secret: $t('raHook').value,
+    iban: $t('raIban').value, label: $t('raLabel').value,
+  };
+  const { ok, d } = await api('POST', '/admin/api/tenants/' + encodeURIComponent(id) + '/receiving-accounts', body);
+  $t('raSecret').value = ''; $t('raHook').value = '';
+  say(ok ? 'Račun #' + d.id + ' dodan. Webhook: ' + d.webhook_path : 'Greška: ' + d.error + (d.required ? ' (' + d.required.join(', ') + ')' : ''), ok);
+  await loadAccounts();
+});
+
+$t('tSel').addEventListener('change', loadAccounts);
 $t('tSel').addEventListener('change', loadRail);
 
 $t('createBtn').addEventListener('click', async () => {
