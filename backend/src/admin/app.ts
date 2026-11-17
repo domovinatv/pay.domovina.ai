@@ -17,7 +17,8 @@ import { STRAY_LOOKBACK_SECONDS } from '../monerium/strayResolver';
 import type { MoneriumOrder } from '../monerium/types';
 import { getTenantRail, type TenantRail } from '../tenants/rail';
 import { defaultTenantId } from '../tenants/whitelist';
-import { writeAudit } from '../tenants/db';
+import { getTenant, writeAudit } from '../tenants/db';
+import { createIntentWith } from '../intents/api';
 import { getIntent, isTrustedTarget } from '../intents/db';
 import { getForwardStatus } from '../router/safe';
 import {
@@ -251,6 +252,30 @@ export function mountAdminUi(
     return c.json({ result: r }, r === 'not_found' ? 404 : 200);
   });
   app.get('/admin/intents', (c) => c.html(renderIntentsPage()));
+  /// New intent ON BEHALF OF a tenant picked in the admin modal. Same code
+  /// path as POST /api/intents (createIntentWith); the logged-in admin stands
+  /// in for the tenant's secret key, so the intent counts as trusted (SR-01)
+  /// and a sandbox tenant gets a sandbox intent.
+  app.post('/admin/api/intents', async (c) => {
+    let tenantId = '';
+    try {
+      tenantId = String(((await c.req.raw.clone().json()) as { tenant_id?: unknown }).tenant_id ?? '').trim();
+    } catch {
+      return c.json({ error: 'invalid_json' }, 400);
+    }
+    if (!tenantId) return c.json({ error: 'missing_tenant_id' }, 400);
+    const res = await createIntentWith(c, async (cc) => {
+      const t = await getTenant(cc.env, tenantId);
+      if (!t) return { ok: false, error: 'invalid_tenant_key' };
+      if (t.status !== 'active') return { ok: false, error: 'tenant_suspended' };
+      return { ok: true, tenantId: t.id, keyKind: 'secret', sandbox: t.sandbox === 1 };
+    });
+    if (res.ok) {
+      const d = (await res.clone().json()) as { sid?: string };
+      await writeAudit(c.env, { tenantId, action: 'intent.create_admin', actor: actorOf(c), detail: JSON.stringify({ sid: d.sid ?? null }) });
+    }
+    return res;
+  });
   app.get('/admin/api/intents', async (c) => {
     const stateParam = c.req.query('state');
     const validStates = ['pending', 'paid', 'expired'] as const;

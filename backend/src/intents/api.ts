@@ -22,7 +22,7 @@ import { buildIntentHub3Text } from './hub3';
 import { computeStage, confirmForwardIfMined, loadStageContext } from './stage';
 import type { StageResult } from './stage';
 import { openIntentStream, sseEnabled } from './stream';
-import { resolveRequestTenant } from '../tenants/auth';
+import { resolveRequestTenant, type TenantResolution } from '../tenants/auth';
 import { linkBases, toLinkBases, type LinkBases } from '../hosts';
 import { defaultTenantId } from '../tenants/whitelist';
 import {
@@ -72,107 +72,7 @@ const MAX_AMOUNT_CENTS = 1_000_000; // €10,000 — bigger needs Phase 2 multis
 export function buildIntentApi(): Hono<{ Bindings: Env }> {
   const api = new Hono<{ Bindings: Env }>();
 
-  api.post('/', async (c) => {
-    let body: CreateIntentBody;
-    try {
-      body = await c.req.json<CreateIntentBody>();
-    } catch {
-      return c.json({ error: 'invalid_json' }, 400);
-    }
-    const target = (body.target_address ?? '').trim();
-    if (!ADDR_RE.test(target)) {
-      return c.json({ error: 'invalid_target_address' }, 400);
-    }
-    // Which tenant is asking. Soft by default (no key → default tenant); flip
-    // INTENT_REQUIRE_TENANT_KEY=1 once every client ships a key.
-    const tenant = await resolveRequestTenant(c.env, c.req.raw.headers);
-    if (!tenant.ok) {
-      return c.json({ error: tenant.error }, tenant.error === 'tenant_suspended' ? 403 : 401);
-    }
-    // ADR 0024 D6: a public key (or none) could otherwise turn our checkout
-    // into a redirect to anywhere — pk_ keys are public by design.
-    let returnUrl: string | null = null;
-    if (body.return_url !== undefined && body.return_url !== null && body.return_url !== '') {
-      if (tenant.keyKind !== 'secret') return c.json({ error: 'return_url_requires_secret_key' }, 400);
-      returnUrl = validateReturnUrl(body.return_url, await returnUrlAllowsLoopback(c.env, tenant));
-      if (!returnUrl) return c.json({ error: 'invalid_return_url' }, 400);
-    }
-    // ADR 0024: a sandbox tenant has no rail, no IBAN and no money. Nothing
-    // can be paid or forwarded, so the whitelist and the SR-01 cap have
-    // nothing to protect; its payments are simulated (/:sid/simulate).
-    if (tenant.sandbox === true) {
-      return createSandboxIntent(c, body, tenant.tenantId, tenant.keyKind === 'secret', returnUrl);
-    }
-    // A non-default tenant collects on ITS OWN IBAN. Issuing a QR for that
-    // IBAN while the rail cannot see the tenant's Monerium webhook would take
-    // money we can never report or route — refuse instead (ADR 0017).
-    const railRefusal = await tenantRailRefusal(c.env, tenant.tenantId);
-    if (railRefusal) return c.json({ error: railRefusal, tenant_id: tenant.tenantId }, 403);
-    // Direct mode: Monerium mints straight into the target, so the target must
-    // be one of the tenant's registered project Safes (campaigns). Nothing is
-    // ever forwarded, so the payout whitelist does not apply.
-    const style = await getReferenceStyle(c.env, tenant.tenantId);
-    const direct = style?.mode === 'direct';
-    if (direct && !(await findCampaignBySafe(c.env, tenant.tenantId, target))) {
-      return c.json(
-        { error: 'target_not_campaign', tenant_id: tenant.tenantId, target_address: target.toLowerCase() },
-        403,
-      );
-    }
-    // Fail fast on a destination the forward gate would refuse anyway. This is
-    // UX, not the security boundary — `authorizeForward` re-checks at forward
-    // time, because an address can be revoked between intent and payment.
-    if (!direct && !(await isAddressWhitelisted(c.env, tenant.tenantId, target))) {
-      return c.json(
-        { error: 'target_not_whitelisted', tenant_id: tenant.tenantId, target_address: target.toLowerCase() },
-        403,
-      );
-    }
-    const amountEur = parseAmount(body.amount_eur);
-    if (amountEur === null) {
-      return c.json({ error: 'invalid_amount_eur' }, 400);
-    }
-    const amountCents = Math.round(amountEur * 100);
-    if (amountCents <= 0 || amountCents > MAX_AMOUNT_CENTS) {
-      return c.json({ error: 'amount_out_of_range', max: MAX_AMOUNT_CENTS }, 400);
-    }
-    if (body.expires_in_seconds !== undefined && !Number.isFinite(body.expires_in_seconds)) {
-      return c.json({ error: 'invalid_expires_in_seconds' }, 400);
-    }
-    const ttl = Math.min(
-      Math.max(Math.floor(body.expires_in_seconds ?? DEFAULT_TTL_SECONDS), 60),
-      MAX_TTL_SECONDS,
-    );
-    if (body.sid !== undefined && !SID_RE.test(body.sid)) {
-      return c.json({ error: 'invalid_sid' }, 400);
-    }
-    // SR-01 cap: anyone can open intents without a key, so bound how many
-    // can sit open on one destination. Only for destinations that are not
-    // statically trusted — a cap on a popular campaign Safe would let a
-    // spammer lock its real donors out. Secret-key callers are exempt.
-    const secretKey = tenant.keyKind === 'secret';
-    // A registered campaign is admin-entered, i.e. trusted like a static
-    // whitelist entry.
-    if (!secretKey && !direct && !(await isTrustedTarget(c.env, tenant.tenantId, target))) {
-      const open = await countOpenIntentsForTarget(c.env, tenant.tenantId, target, Math.floor(Date.now() / 1000));
-      if (open >= maxOpenIntentsPerTarget(c.env)) {
-        return c.json({ error: 'too_many_open_intents', target_address: target.toLowerCase() }, 429);
-      }
-    }
-    const sid = await insertWithRetry(c.env, target, amountCents, ttl, body, tenant.tenantId, secretKey, returnUrl);
-    if (sid === 'conflict') return c.json({ error: 'sid_already_exists' }, 409);
-    if (!sid) return c.json({ error: 'sid_collision_after_retries' }, 500);
-    const intent = await getIntent(c.env, sid);
-    if (!intent) return c.json({ error: 'intent_not_persisted' }, 500);
-
-    const origin = linkBases(c.env, c.req.url);
-    const sepa = await getSepaDetails(c.env, tenant.tenantId);
-    const status = computeStage({
-      intent, order: null, forward: null,
-      now: Math.floor(Date.now() / 1000),
-    });
-    return c.json({ ...intentResponseJson(intent, origin, sepa, style), status });
-  });
+  api.post('/', (c) => createIntentWith(c, (cc) => resolveRequestTenant(cc.env, cc.req.raw.headers)));
 
   // Permanent campaign QR (`cmp:` protocol). Stateless: returns a REUSABLE
   // SEPA EPC payload (blank amount → payer enters it) whose remittance encodes
@@ -686,4 +586,115 @@ function parseAmount(input: string | number | undefined): number | null {
 
 function isoFromUnix(s: number): string {
   return new Date(s * 1000).toISOString();
+}
+
+
+/// POST /api/intents, with the tenant resolution injected: the public route
+/// resolves it from the API key, the admin route (`/admin/api/intents`) from
+/// the tenant the logged-in admin picked. Everything after that is the same
+/// code path, so admin-made intents obey the same whitelist / rail / sandbox
+/// rules as API-made ones.
+export async function createIntentWith(
+  c: Context<{ Bindings: Env }>,
+  resolve: (c: Context<{ Bindings: Env }>) => Promise<TenantResolution>,
+): Promise<Response> {
+  let body: CreateIntentBody;
+  try {
+    body = await c.req.json<CreateIntentBody>();
+  } catch {
+    return c.json({ error: 'invalid_json' }, 400);
+  }
+  const target = (body.target_address ?? '').trim();
+  if (!ADDR_RE.test(target)) {
+    return c.json({ error: 'invalid_target_address' }, 400);
+  }
+  // Which tenant is asking. Soft by default (no key → default tenant); flip
+  // INTENT_REQUIRE_TENANT_KEY=1 once every client ships a key.
+  const tenant = await resolve(c);
+  if (!tenant.ok) {
+    return c.json({ error: tenant.error }, tenant.error === 'tenant_suspended' ? 403 : 401);
+  }
+  // ADR 0024 D6: a public key (or none) could otherwise turn our checkout
+  // into a redirect to anywhere — pk_ keys are public by design.
+  let returnUrl: string | null = null;
+  if (body.return_url !== undefined && body.return_url !== null && body.return_url !== '') {
+    if (tenant.keyKind !== 'secret') return c.json({ error: 'return_url_requires_secret_key' }, 400);
+    returnUrl = validateReturnUrl(body.return_url, await returnUrlAllowsLoopback(c.env, tenant));
+    if (!returnUrl) return c.json({ error: 'invalid_return_url' }, 400);
+  }
+  // ADR 0024: a sandbox tenant has no rail, no IBAN and no money. Nothing
+  // can be paid or forwarded, so the whitelist and the SR-01 cap have
+  // nothing to protect; its payments are simulated (/:sid/simulate).
+  if (tenant.sandbox === true) {
+    return createSandboxIntent(c, body, tenant.tenantId, tenant.keyKind === 'secret', returnUrl);
+  }
+  // A non-default tenant collects on ITS OWN IBAN. Issuing a QR for that
+  // IBAN while the rail cannot see the tenant's Monerium webhook would take
+  // money we can never report or route — refuse instead (ADR 0017).
+  const railRefusal = await tenantRailRefusal(c.env, tenant.tenantId);
+  if (railRefusal) return c.json({ error: railRefusal, tenant_id: tenant.tenantId }, 403);
+  // Direct mode: Monerium mints straight into the target, so the target must
+  // be one of the tenant's registered project Safes (campaigns). Nothing is
+  // ever forwarded, so the payout whitelist does not apply.
+  const style = await getReferenceStyle(c.env, tenant.tenantId);
+  const direct = style?.mode === 'direct';
+  if (direct && !(await findCampaignBySafe(c.env, tenant.tenantId, target))) {
+    return c.json(
+      { error: 'target_not_campaign', tenant_id: tenant.tenantId, target_address: target.toLowerCase() },
+      403,
+    );
+  }
+  // Fail fast on a destination the forward gate would refuse anyway. This is
+  // UX, not the security boundary — `authorizeForward` re-checks at forward
+  // time, because an address can be revoked between intent and payment.
+  if (!direct && !(await isAddressWhitelisted(c.env, tenant.tenantId, target))) {
+    return c.json(
+      { error: 'target_not_whitelisted', tenant_id: tenant.tenantId, target_address: target.toLowerCase() },
+      403,
+    );
+  }
+  const amountEur = parseAmount(body.amount_eur);
+  if (amountEur === null) {
+    return c.json({ error: 'invalid_amount_eur' }, 400);
+  }
+  const amountCents = Math.round(amountEur * 100);
+  if (amountCents <= 0 || amountCents > MAX_AMOUNT_CENTS) {
+    return c.json({ error: 'amount_out_of_range', max: MAX_AMOUNT_CENTS }, 400);
+  }
+  if (body.expires_in_seconds !== undefined && !Number.isFinite(body.expires_in_seconds)) {
+    return c.json({ error: 'invalid_expires_in_seconds' }, 400);
+  }
+  const ttl = Math.min(
+    Math.max(Math.floor(body.expires_in_seconds ?? DEFAULT_TTL_SECONDS), 60),
+    MAX_TTL_SECONDS,
+  );
+  if (body.sid !== undefined && !SID_RE.test(body.sid)) {
+    return c.json({ error: 'invalid_sid' }, 400);
+  }
+  // SR-01 cap: anyone can open intents without a key, so bound how many
+  // can sit open on one destination. Only for destinations that are not
+  // statically trusted — a cap on a popular campaign Safe would let a
+  // spammer lock its real donors out. Secret-key callers are exempt.
+  const secretKey = tenant.keyKind === 'secret';
+  // A registered campaign is admin-entered, i.e. trusted like a static
+  // whitelist entry.
+  if (!secretKey && !direct && !(await isTrustedTarget(c.env, tenant.tenantId, target))) {
+    const open = await countOpenIntentsForTarget(c.env, tenant.tenantId, target, Math.floor(Date.now() / 1000));
+    if (open >= maxOpenIntentsPerTarget(c.env)) {
+      return c.json({ error: 'too_many_open_intents', target_address: target.toLowerCase() }, 429);
+    }
+  }
+  const sid = await insertWithRetry(c.env, target, amountCents, ttl, body, tenant.tenantId, secretKey, returnUrl);
+  if (sid === 'conflict') return c.json({ error: 'sid_already_exists' }, 409);
+  if (!sid) return c.json({ error: 'sid_collision_after_retries' }, 500);
+  const intent = await getIntent(c.env, sid);
+  if (!intent) return c.json({ error: 'intent_not_persisted' }, 500);
+
+  const origin = linkBases(c.env, c.req.url);
+  const sepa = await getSepaDetails(c.env, tenant.tenantId);
+  const status = computeStage({
+    intent, order: null, forward: null,
+    now: Math.floor(Date.now() / 1000),
+  });
+  return c.json({ ...intentResponseJson(intent, origin, sepa, style), status });
 }
