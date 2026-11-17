@@ -121,14 +121,9 @@ Koraci (tajne upisuje vlasnik, ne agent):
    `curl -s -X POST https://api.mpt.hr/api/sandbox/tenants -H 'content-type: application/json' -d '{"name":"Swan probe"}'`
    → `tenant_id` (`sbx-…`) i `secret_key` (`sk_test_…`, prikazuje se jednom).
 2. **Swan:** dashboard → Developers → API → Generate a new client secret (Client ID + secret).
-3. **Registracija** (prijavljen u `/admin` na `mpt.domovina.ai`, konzola preglednika):
-   ```js
-   await (await fetch('/admin/api/tenants/<sbx-id>/receiving-accounts', { method: 'POST',
-     headers: { 'content-type': 'application/json' },
-     body: JSON.stringify({ provider: 'swan', environment: 'sandbox',
-       external_account_id: 'b31aae63-2a8f-42ad-a537-542899518fb8',
-       client_id: '<Client ID>', client_secret: '<secret>', label: 'Swan sandbox probe' }) })).json()
-   ```
+3. **Registracija:** `/admin/tenants` → odaberi tenanta → „Računi primatelja (ADR 0032)” → Swan,
+   sandbox, accountId `b31aae63-2a8f-42ad-a537-542899518fb8`, client_id, client_secret → „+ Dodaj račun”
+   (PR #149). Tablica pokazuje webhook URL za Swan pretplatu.
 4. **Intent:** `POST /api/intents` sa `sk_test_` ključem tenanta, iznos npr. 12,34 €.
 5. **Swan pretplata** `05b475ba-…`: endpoint → `https://api.mpt.hr/api/swan/webhook/t/<sbx-id>`;
    simulirati dolaznu uplatu na vIBAN s opisom `sid:<sid>` → intent `paid`, red u `credit_events`.
