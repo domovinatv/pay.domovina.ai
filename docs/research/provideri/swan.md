@@ -1,0 +1,88 @@
+# Swan — sandbox probe
+
+- **Datum:** 2026-11-17. Matija je otvorio Swan račun (prijava brojem mobitela), Claude je radio
+  probe u dashboardu i API Exploreru.
+- **Sandbox projekt:** „ITalk”, `caa91a63-c91a-473d-b880-c76b838bac20` (sandbox; tajne nisu u repou,
+  client secret nije generiran).
+- **Presuda: GO za sandbox razvoj adaptera**, uz dva otvorena pitanja (webhook uživo nije uhvaćen,
+  G3 · partnerski ugovor i skrbništvo, G8). Plan: [provideri-priljeva-sandbox-prvo](../../plans/provideri-priljeva-sandbox-prvo.md).
+
+| Vrata | Rezultat | Dokaz |
+|---|---|---|
+| G1 samoposlužni sandbox | ✅ | prijava brojem mobitela, sandbox projekt odmah; bez prodaje |
+| G2 simulacija dolazne SEPA s opisom | ✅ | Testing API `simulateIncomingSepaCreditTransferReception` (polja `label`, `endToEndId`, `isInstant`, `debtorIban`, `debtorName`); isto u dashboardu, Event Simulator → SEPA Credit Transfers |
+| G3 webhook + provjera | ⚠️ nije uhvaćen uživo | vidi „Webhook” dolje: tanka obavijest + `x-swan-secret`, detalji se dohvaćaju po `resourceId` |
+| G4 opis ili vIBAN | ✅ oboje | `label` = naš tekst doslovno (`sid:swanprobe01`); `paymentMethodIdentifier` i `creditor.IBAN` = vIBAN na koji je stiglo |
+| G5 platitelj | ✅ | `debtor.name`, `debtor.IBAN` (HR IBAN prolazi), `counterparty` |
+| G6 SEPA Instant | ✅ | `type: SepaInstantCreditTransferIn` vs `SepaCreditTransferIn`; `Booked` ~75 ms nakon `createdAt` (sandbox) |
+| G7 HR tvrtka | ✅ u sandboxu | onboarding s `residencyAddress.country: HRV` prošao validaciju i verifikaciju; IBAN računa može biti samo FRA/DEU/ESP/NLD/ITA/BEL. Produkcija: Swan kaže „prvi live račun ima francuski IBAN bez obzira na lokaciju” |
+| G8 račun je tenantov | ⚠️ | model je ispravan (tenant = account holder, MPT = partner/projekt), ali produkcija traži „Talk to an expert” → standardni ugovori → compliance odobrenje projekta. Cijena i obveze partnera nepoznati |
+
+## Kako je napravljeno (ponovljivo)
+
+Sve preko GraphQL-a. U dashboardu (prijavljen) Explorer zove tri endpointa sa session cookiejem,
+`https://dashboard.swan.io/api/projects/<projectId>/…`:
+
+| Uloga | Put | Za što |
+|---|---|---|
+| projekt (partner) | `sandbox-partner` | onboarding, čitanje računa i transakcija |
+| korisnik (account member) | `account-member/sandbox-partner` | `finalizeOnboarding`, `addVirtualIbanEntry` |
+| Testing API | `project-member/sandbox-partner-admin` | simulacije (verifikacija, dolazna uplata) |
+
+Za server-side kod isto ide s OAuth2 client credentials (Developers → API). Simulacije su samo u
+sandboxu.
+
+1. `onboardCompanyAccountHolder` (`accountCountry: FRA`, HR adresa, `email` ne smije biti
+   besplatni provider, npr. `example.com` je odbijen) → `updateCompanyOnboarding`
+   (`businessActivity`, `businessActivityDescription`, `monthlyPaymentVolume`, `language`,
+   `taxIdentificationNumber`) → status `Valid`.
+2. `finalizeOnboarding` (samo kao korisnik; kao projekt: `ForbiddenRejection`) → račun `Opened`,
+   IBAN još `null`.
+3. Event Simulator → Account holders → Update verification status = `Verified` → račun dobije IBAN
+   `FR76 9999 9001 …`, BIC `SWNBFR22`, `paymentLevel: Unlimited`.
+4. `addVirtualIbanEntry(accountId)` → vIBAN `FR76 9999 9002 …`, `Enabled`. Jedan poziv, bez
+   odobrenja. vIBAN je samo za primanje.
+5. `simulateIncomingSepaCreditTransferReception` (Testing API; fragment `... on Rejection` nije
+   dopušten u tom servisu) → `transactionId: bosci_…`.
+6. `transaction(id)` → fixture u `backend/test/fixtures/swan/`.
+
+## Mapiranje u `CreditEvent` (ADR 0032)
+
+| `CreditEvent` | Swan |
+|---|---|
+| `provider` | `'swan'` (dodati u union) |
+| `providerRef` | `transaction.id` (`bosci_…`) |
+| `receivingIban` | `paymentMethodIdentifier` (= vIBAN ili glavni IBAN) |
+| `amountCents` | `amount.value` (string, decimalni) × 100 |
+| `remittance` | `label` (`labelType: Unstructured`; strukturirani RF bi bio `Structured`, nije testirano) |
+| `endToEndId` | `reference` |
+| `debtorName` / `debtorAccount` | `debtor.name` / `debtor.IBAN` |
+| `scheme` | `type === 'SepaInstantCreditTransferIn'` → `sepa_inst`, inače `sepa` |
+| `finality` | `statusInfo.status`: `Upcoming`/`Pending` → `notified`, `Booked` → `booked` (u sandboxu odmah `Booked`) |
+
+Matcher dobiva novi, najjači korak prije sid-a: **vIBAN → intent** (tablica vIBAN-a po intentu ili
+po tenantu). Opis se tada koristi samo kao provjera.
+
+## Webhook (G3, još nije uhvaćen)
+
+- Subscription: `addWebhookSubscription(label, endpoint, secret, eventTypes[], status)` ili
+  dashboard → Developers → Webhooks → New. Postoje i `probeWebhookEndpoint` i `replayWebhookEvent`
+  (korisno za testove).
+- Po Hookdeckovom vodiču (ne Swanovim docsima): tijelo je samo `eventType`, `eventId`, `eventDate`,
+  `projectId`, `resourceId`; Swan ne potpisuje tijelo, nego šalje dijeljenu tajnu u `x-swan-secret`.
+  Swan docs: `Transaction.Booked` i `Transaction.Released` mogu stići bilo kojim redom.
+- Posljedica za adapter: webhook je samo okidač, kao LHV `GENERAL_WEBHOOK`. Adapter provjeri
+  `x-swan-secret` (constant-time), pa **uvijek** dohvati `transaction(resourceId)` partnerskim
+  tokenom. Lažni webhook tako ne može ubaciti podatke, može samo izazvati dohvat.
+- Da se zatvori G3: endpoint koji hvata tijelo i headere (npr. privremena ruta u backendu na
+  stagingu), subscription na `Transaction.Booked`, ponoviti korak 5, spremiti payload u fixture.
+
+## Što ostaje za produkciju
+
+- „Talk to an expert” je prvi korak aktivacije; nakon njega standardni ugovori, compliance
+  odobrenje projekta, live API, završni pregled integracije.
+- Pitanja za Swan: cijena za partnera i po računu/vIBAN-u; može li account holder biti HR d.o.o.
+  (G7 u produkciji); potvrda da je novac na računu tenanta i da ITalk kao partner nije skrbnik (G8);
+  limit broja vIBAN-a; postoji li SEPA Instant za sve vIBAN-e.
+- IBAN je francuski (`FR76…`): HUB3 i HR bankovne aplikacije ne pomažu (matrica B), ali Revolut,
+  N26 i EU banke plaćaju normalno, a vIBAN rješava brisanje reference.
