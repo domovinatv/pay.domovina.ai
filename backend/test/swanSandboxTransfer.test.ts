@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import worker from '../src/index';
-import { SWAN_GRAPHQL_URL, SWAN_OAUTH_URL, SWAN_TESTING_URL } from '../src/providers/swan/client';
+import { SIMULATE_SEPA_IN_MUTATION, SWAN_GRAPHQL_URL, SWAN_OAUTH_URL, SWAN_TESTING_URL } from '../src/providers/swan/client';
 import { pickCreditorIban } from '../src/providers/swan/sandboxTransfer';
 import { encryptSecret, importKek } from '../src/tenants/secrets';
 import type { Env } from '../src/types';
@@ -147,6 +147,15 @@ describe('checkout page with a Swan sandbox account', () => {
     const other = await (await worker.fetch(new Request(`${BASE}/checkout/swansid00002`), env, ctx)).text();
     expect(other).toContain(`onclick="simulate('paid')"`);
     expect(other).not.toContain('onclick="simulateSwan()"');
+  });
+});
+
+describe('SIMULATE_SEPA_IN_MUTATION', () => {
+  // Swan's payload union is Success | ForbiddenRejection; an inline fragment
+  // on the Rejection interface fails validation ("invalid type: 'Rejection'").
+  it('spreads only on members of the payload union', () => {
+    expect(SIMULATE_SEPA_IN_MUTATION).toContain('... on ForbiddenRejection { message }');
+    expect(SIMULATE_SEPA_IN_MUTATION).not.toMatch(/on Rejection\b/);
   });
 });
 

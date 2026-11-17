@@ -60,7 +60,7 @@ export const SIMULATE_SEPA_IN_MUTATION = `mutation MptSimulateSepaIn($input: Inc
   simulateIncomingSepaCreditTransferReception(input: $input) {
     __typename
     ... on SimulateIncomingSepaCreditTransferReceptionSuccessPayload { transactionId }
-    ... on Rejection { message }
+    ... on ForbiddenRejection { message }
   }
 }`;
 
