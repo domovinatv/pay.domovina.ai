@@ -4,14 +4,14 @@
   probe u dashboardu i API Exploreru.
 - **Sandbox projekt:** „ITalk”, `caa91a63-c91a-473d-b880-c76b838bac20` (sandbox; tajne nisu u repou,
   client secret nije generiran).
-- **Presuda: GO za sandbox razvoj adaptera**, uz dva otvorena pitanja (webhook uživo nije uhvaćen,
-  G3 · partnerski ugovor i skrbništvo, G8). Plan: [provideri-priljeva-sandbox-prvo](../../plans/provideri-priljeva-sandbox-prvo.md).
+- **Presuda: GO za sandbox razvoj adaptera.** Otvoreno: format `secret`-a za `x-swan-secret` (G3) i
+  partnerski ugovor / skrbništvo (G8). Plan: [provideri-priljeva-sandbox-prvo](../../plans/provideri-priljeva-sandbox-prvo.md).
 
 | Vrata | Rezultat | Dokaz |
 |---|---|---|
 | G1 samoposlužni sandbox | ✅ | prijava brojem mobitela, sandbox projekt odmah; bez prodaje |
 | G2 simulacija dolazne SEPA s opisom | ✅ | Testing API `simulateIncomingSepaCreditTransferReception` (polja `label`, `endToEndId`, `isInstant`, `debtorIban`, `debtorName`); isto u dashboardu, Event Simulator → SEPA Credit Transfers |
-| G3 webhook + provjera | ⚠️ nije uhvaćen uživo | vidi „Webhook” dolje: tanka obavijest + `x-swan-secret`, detalji se dohvaćaju po `resourceId` |
+| G3 webhook + provjera | ✅ isporuka · ⚠️ tajna | `Transaction.Booked` stigao na produkcijski worker ~2 s nakon knjiženja (fixture `webhook-transaction-booked.json`); pretplata s našom tajnom odbijena (`InvalidArgumentRejection`), bez tajne prošla. Header `x-swan-secret` još nije viđen |
 | G4 opis ili vIBAN | ✅ oboje | `label` = naš tekst doslovno (`sid:swanprobe01`); `paymentMethodIdentifier` i `creditor.IBAN` = vIBAN na koji je stiglo |
 | G5 platitelj | ✅ | `debtor.name`, `debtor.IBAN` (HR IBAN prolazi), `counterparty` |
 | G6 SEPA Instant | ✅ | `type: SepaInstantCreditTransferIn` vs `SepaCreditTransferIn`; `Booked` ~75 ms nakon `createdAt` (sandbox) |
@@ -63,7 +63,7 @@ sandboxu.
 Matcher dobiva novi, najjači korak prije sid-a: **vIBAN → intent** (tablica vIBAN-a po intentu ili
 po tenantu). Opis se tada koristi samo kao provjera.
 
-## Webhook (G3, još nije uhvaćen)
+## Webhook (G3)
 
 - Subscription: `addWebhookSubscription(label, endpoint, secret, eventTypes[], status)` ili
   dashboard → Developers → Webhooks → New. Postoje i `probeWebhookEndpoint` i `replayWebhookEvent`
@@ -74,8 +74,13 @@ po tenantu). Opis se tada koristi samo kao provjera.
 - Posljedica za adapter: webhook je samo okidač, kao LHV `GENERAL_WEBHOOK`. Adapter provjeri
   `x-swan-secret` (constant-time), pa **uvijek** dohvati `transaction(resourceId)` partnerskim
   tokenom. Lažni webhook tako ne može ubaciti podatke, može samo izazvati dohvat.
-- Da se zatvori G3: endpoint koji hvata tijelo i headere (npr. privremena ruta u backendu na
-  stagingu), subscription na `Transaction.Booked`, ponoviti korak 5, spremiti payload u fixture.
+- **Uhvaćen 2026-11-17 bez promjene koda:** pretplata (sandbox) na
+  `https://api.mpt.hr/api/monerium/webhook/t/swan-probe-20261117`. Tenant ne postoji, pa ruta
+  vrati 404 i spremi prvih 1024 B tijela u `monerium_webhook_events` (`unknown_tenant`). Tijelo:
+  `eventId`, `eventType`, `eventDate`, `projectId`, `resourceId` (= `transaction.id`), `retryCount`.
+  Headere ta ruta ne sprema. Pretplata `05b475ba-…` je još aktivna; Swan na 404 radi ponovne
+  pokušaje (`retryCount`), pa je treba ugasiti ili preusmjeriti na pravu rutu adaptera.
+- Ostaje: kakav `secret` Swan prihvaća (naš 32-hex odbijen) i viđeni `x-swan-secret` header.
 
 ## Što ostaje za produkciju
 
