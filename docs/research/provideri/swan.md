@@ -140,3 +140,16 @@ Koraci (tajne upisuje vlasnik, ne agent):
   `booked`) → intent `paid`, `amount_received_cents=1234`, ~1 s nakon knjiženja.
 - Otvoreno: vremenska crta statusa na checkoutu još prikazuje Monerium korake (processing,
   minted, forwarding) i za `fiat_notify`; za Swan bi trebala biti „banka → primljeno”.
+
+## Otvoreno (stanje 2026-11-17, nakon #151)
+
+1. **Gumb „Simuliraj uplatu” na checkoutu** je ADR 0024 interna simulacija (`sandbox/simulate.ts`,
+   sintetski `sim_` order) i ne ide kroz Swan; intent `2v89mbb5mven` je tako plaćen, a u Swan
+   dashboardu ga nema. Za tenanta s aktivnim Swan sandbox računom gumb treba zvati Swanov
+   `simulateIncomingSepaCreditTransferReception` (vIBAN, `label: sid:<sid>`), analogno
+   `monerium/sandboxFund.ts`. Treba potvrditi Testing API endpoint za client-credentials token
+   (u dashboard sesiji je to `project-member/sandbox-partner-admin`).
+2. **Vremenska crta statusa** (`intents/stage.ts`) za `fiat_notify` prikazuje Monerium korake.
+3. ADR 0032 §1 (Monerium piše u `credit_events`) i §4 (`intent_settlements` umjesto sintetskog ordera).
+4. Format Swan webhook `secret`-a (32-hex odbijen s `InvalidArgumentRejection`).
+5. Produkcija: „Talk to an expert” kod Swana (cijena, HR d.o.o. kao account holder, skrbništvo — G7/G8).
