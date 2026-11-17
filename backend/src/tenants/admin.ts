@@ -3,6 +3,7 @@ import type { Hono } from 'hono';
 import type { Env } from '../types';
 import { actorOf } from '../admin/auth/mount';
 import { createReceivingAccount } from '../inflow/receivingAccounts';
+import { publicApiBase } from '../hosts';
 import {
   addPayoutAddress,
   getTenant,
@@ -173,6 +174,31 @@ export function mountTenantAdmin(app: Hono<{ Bindings: Env }>): void {
         revoked_at: k.revoked_at,
       })),
     });
+  });
+
+  /// ADR 0032: a tenant's receiving accounts, secrets redacted.
+  app.get('/admin/api/tenants/:id/receiving-accounts', async (c) => {
+    const tenantId = c.req.param('id');
+    if (!(await getTenant(c.env, tenantId))) return c.json({ error: 'tenant_not_found' }, 404);
+    const rows = await c.env.DB.prepare(
+      `SELECT id, provider, mode, iban, environment, external_account_id, client_id, label, active, created_at,
+              client_secret_enc IS NOT NULL AS has_client_secret, webhook_secret_enc IS NOT NULL AS has_webhook_secret
+         FROM receiving_accounts WHERE tenant_id = ? ORDER BY id`,
+    ).bind(tenantId).all();
+    const base = publicApiBase(c.env, new URL(c.req.url).origin);
+    return c.json({
+      accounts: rows.results.map((r) => ({ ...r, webhook_url: `${base}/api/${r.provider}/webhook/t/${tenantId}` })),
+    });
+  });
+
+  app.post('/admin/api/tenants/:id/receiving-accounts/:accId/deactivate', async (c) => {
+    const tenantId = c.req.param('id');
+    const accId = Number(c.req.param('accId'));
+    const res = await c.env.DB.prepare(`UPDATE receiving_accounts SET active = 0 WHERE id = ? AND tenant_id = ? AND active = 1`)
+      .bind(accId, tenantId).run();
+    if ((res.meta?.changes ?? 0) === 0) return c.json({ error: 'not_found_or_inactive' }, 404);
+    await writeAudit(c.env, { tenantId, action: 'receiving_account.deactivate', actor: actorOf(c), detail: JSON.stringify({ id: accId }) });
+    return c.json({ ok: true });
   });
 
   /// ADR 0032: register a tenant's receiving account at a provider (first:
