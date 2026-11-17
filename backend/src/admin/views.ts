@@ -1186,6 +1186,9 @@ export function renderIntentsPage(): string {
     </div>
     <div class="modal-body" id="modalBody">
       <form id="intentForm">
+        <label class="form-label">Tenant (intent se kreira u njegovo ime)
+          <select id="f_tenant" required></select>
+        </label>
         <label class="form-label">Target adresa (gdje EURe ide nakon mint-a)
           <input type="text" id="f_target" required pattern="^0x[0-9a-fA-F]{40}$"
                  placeholder="0x…40 hex znakova"
@@ -1469,10 +1472,11 @@ function wireForm() {
     const ttl = parseInt(document.getElementById('f_ttl').value, 10) || 900;
 
     try {
-      const r = await fetch('/api/intents', {
+      const r = await fetch('/admin/api/intents', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          tenant_id: document.getElementById('f_tenant').value,
           target_address: target,
           amount_eur: amountRaw,
           label: label || undefined,
@@ -1521,7 +1525,22 @@ function showCreated(d) {
   document.getElementById('createdNewBtn').addEventListener('click', openModal);
 }
 
-document.getElementById('newIntent').addEventListener('click', openModal);
+async function fillModalTenants() {
+  const sel = document.getElementById('f_tenant');
+  if (sel.dataset.filled) return;
+  const r = await fetch('/admin/api/tenants', { credentials: 'same-origin' });
+  const d = await r.json().catch(() => ({}));
+  for (const t of (d.tenants || [])) {
+    if (t.status !== 'active') continue;
+    const o = document.createElement('option');
+    o.value = t.id;
+    o.textContent = t.id + ' — ' + t.name + (t.sandbox ? ' · sandbox' : '');
+    sel.appendChild(o);
+  }
+  sel.dataset.filled = '1';
+  if (tenant) sel.value = tenant;
+}
+document.getElementById('newIntent').addEventListener('click', () => { fillModalTenants(); openModal(); });
 document.getElementById('modalClose').addEventListener('click', closeModal);
 modal.addEventListener('click', (e) => { if (e.target === modal) closeModal(); });
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && modal.style.display !== 'none') closeModal(); });
