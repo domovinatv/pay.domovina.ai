@@ -179,6 +179,9 @@ mora znati odakle je signal došao.
 6. **LHV Connect adapter:** kad ITalk ili tenant dobije LHV račun, a prije toga razvoj protiv
    emulatora `pinkainc/open-banking`.
 
+Redoslijed providera i vrata za sandbox test („prvo sandbox, pa KYB”):
+[`docs/plans/provideri-priljeva-sandbox-prvo.md`](../plans/provideri-priljeva-sandbox-prvo.md).
+
 ## Odbačeno
 
 - **Jedan „LHV adapter” za sve LHV klijente:** LHV obavještava Wise ili Monerium, ne njihove
