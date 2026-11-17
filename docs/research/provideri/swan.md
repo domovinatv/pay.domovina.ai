@@ -127,3 +127,16 @@ Koraci (tajne upisuje vlasnik, ne agent):
 4. **Intent:** `POST /api/intents` sa `sk_test_` ključem tenanta, iznos npr. 12,34 €.
 5. **Swan pretplata** `05b475ba-…`: endpoint → `https://api.mpt.hr/api/swan/webhook/t/<sbx-id>`;
    simulirati dolaznu uplatu na vIBAN s opisom `sid:<sid>` → intent `paid`, red u `credit_events`.
+
+### Prvi Swan → `paid` na produkciji (2026-11-17 22:34 UTC) ✅
+
+- Tenant `sbx-d166d9a98b`, receiving account #1 (dodan kroz `/admin/tenants`, #149), intent
+  `vmwjxqts8ajj` 12,34 € (kreiran `sk_test_` ključem).
+- Swan pretplata `05b475ba-…` preusmjerena na `/api/swan/webhook/t/sbx-d166d9a98b`; pomoćna
+  pretplata na example.com obrisana.
+- Simulirana SEPA Instant 12,34 € na vIBAN, opis `sid:vmwjxqts8ajj` → transakcija
+  `bosci_f0d42e37…` → webhook → OAuth + `transaction(id)` (potvrđeni URL-ovi `oauth.swan.io` i
+  `api.swan.io/sandbox-partner/graphql`) → `credit_events` #1 (`matched_by=sid`, `sepa_inst`,
+  `booked`) → intent `paid`, `amount_received_cents=1234`, ~1 s nakon knjiženja.
+- Otvoreno: vremenska crta statusa na checkoutu još prikazuje Monerium korake (processing,
+  minted, forwarding) i za `fiat_notify`; za Swan bi trebala biti „banka → primljeno”.
