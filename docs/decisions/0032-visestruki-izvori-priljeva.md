@@ -165,6 +165,16 @@ ne smije postojati** (odluka od 19. 10. 2026.); točku 4.3 ADR-a 0020 treba izba
 `payment.received` i `paid` dobivaju polja `source` (provider) i `settlement` (mode). Merchant ne
 mora znati odakle je signal došao.
 
+### 7. Ruta po provideru
+
+Svaki provider ima svoju dolaznu rutu, u istom obliku kao Monerium:
+`POST /api/<provider>/webhook/t/:tenantId` (`/api/monerium/…` već postoji, `/api/swan/…`,
+`/api/wise/…`, …). Ruta određuje adapter, a adapter provjerava autentičnost na svoj način.
+Nema univerzalne rute koja pogađa providera iz tijela ili headera: tada bi pošiljatelj birao
+kojom se provjerom provjerava njegov zahtjev. Tenant mora imati aktivan `receiving_account` tog
+providera, inače 404 (kao danas `unknown_tenant`). Od rute nadalje sve je zajedničko:
+`CreditEvent` → inbox → matcher.
+
 ## Redoslijed
 
 1. **Refactor bez promjene ponašanja:** `credit_events` + `CreditEvent`; Monerium webhook piše u
