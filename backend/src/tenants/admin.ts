@@ -2,6 +2,7 @@ import type { Hono } from 'hono';
 
 import type { Env } from '../types';
 import { actorOf } from '../admin/auth/mount';
+import { createReceivingAccount } from '../inflow/receivingAccounts';
 import {
   addPayoutAddress,
   getTenant,
@@ -172,6 +173,57 @@ export function mountTenantAdmin(app: Hono<{ Bindings: Env }>): void {
         revoked_at: k.revoked_at,
       })),
     });
+  });
+
+  /// ADR 0032: register a tenant's receiving account at a provider (first:
+  /// Swan, fiat_notify). Secrets are encrypted at rest and never returned.
+  app.post('/admin/api/tenants/:id/receiving-accounts', async (c) => {
+    const tenantId = c.req.param('id');
+    const tenant = await getTenant(c.env, tenantId);
+    if (!tenant) return c.json({ error: 'tenant_not_found' }, 404);
+    let b: Record<string, unknown>;
+    try {
+      b = await c.req.json();
+    } catch {
+      return c.json({ error: 'invalid_json' }, 400);
+    }
+    const str = (k: string) => (typeof b[k] === 'string' && (b[k] as string).trim() ? (b[k] as string).trim() : null);
+    const provider = str('provider');
+    if (provider !== 'swan') return c.json({ error: 'unsupported_provider' }, 400);
+    const environment = str('environment') === 'sandbox' ? 'sandbox' : 'live';
+    if (tenant.sandbox === 1 && environment !== 'sandbox') return c.json({ error: 'sandbox_tenant_needs_sandbox_account' }, 400);
+    const externalAccountId = str('external_account_id');
+    const clientId = str('client_id');
+    const clientSecret = str('client_secret');
+    if (!externalAccountId || !clientId || !clientSecret) {
+      return c.json({ error: 'missing_fields', required: ['external_account_id', 'client_id', 'client_secret'] }, 400);
+    }
+    let id: number;
+    try {
+      id = await createReceivingAccount(c.env, {
+        tenantId,
+        provider,
+        mode: 'fiat_notify',
+        iban: str('iban'),
+        environment,
+        externalAccountId,
+        clientId,
+        clientSecret,
+        webhookSecret: str('webhook_secret'),
+        label: str('label'),
+      });
+    } catch (e) {
+      const msg = (e as Error).message;
+      if (/UNIQUE/i.test(msg)) return c.json({ error: 'account_already_registered' }, 409);
+      throw e;
+    }
+    await writeAudit(c.env, {
+      tenantId,
+      action: 'receiving_account.create',
+      actor: actorOf(c),
+      detail: JSON.stringify({ id, provider, environment, external_account_id: externalAccountId }),
+    });
+    return c.json({ id, provider, environment, webhook_path: `/api/swan/webhook/t/${tenantId}` }, 201);
   });
 
   /// Issues a key and returns the RAW value exactly once — it is never

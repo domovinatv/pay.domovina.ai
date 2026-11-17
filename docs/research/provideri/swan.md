@@ -91,3 +91,20 @@ po tenantu). Opis se tada koristi samo kao provjera.
   limit broja vIBAN-a; postoji li SEPA Instant za sve vIBAN-e.
 - IBAN je francuski (`FR76…`): HUB3 i HR bankovne aplikacije ne pomažu (matrica B), ali Revolut,
   N26 i EU banke plaćaju normalno, a vIBAN rješava brisanje reference.
+
+## Implementacija (grana `feat/credit-events-inbox`, 2026-11-17)
+
+- Ruta `POST /api/swan/webhook/t/:tenantId` (ADR 0032 §7) → `providers/swan/adapter.ts`:
+  provjera `x-swan-secret` ako je postavljen, pa `transaction(resourceId)` tenantovim
+  pristupnim podacima; uplata se prihvaća samo ako je `transaction.account.id` tenantov
+  `receiving_accounts.external_account_id`.
+- `Booked` → `credit_events` → zajednički matcher (`inflow/matcher.ts`) → `inflow/settleFiat.ts`
+  (isti put kao sandbox simulacija: sintetski order `swan_<txId>`, forward `confirmed` /
+  `fiat_notify`, `settleNonRoutedPaid`). `Pending` se samo upiše (`notified`).
+- Registracija računa: `POST /admin/api/tenants/:id/receiving-accounts`
+  (`provider: swan`, `environment`, `external_account_id`, `client_id`, `client_secret`,
+  opcionalno `webhook_secret`). Tajne se kriptiraju KEK-om i nikad ne vraćaju.
+- Pretpostavka koju treba potvrditi prvim živim pozivom: OAuth `https://oauth.swan.io/oauth2/token`
+  i GraphQL `https://api.swan.io/sandbox-partner/graphql` (live: `live-partner`).
+- Model s jednim Swan projektom za više tenanata: Swan pretplata je po projektu, pa svaki tenant
+  dobije svoju pretplatu na svoj URL; tuđe transakcije završe kao `not_this_tenant_account`.

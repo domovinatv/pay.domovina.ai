@@ -19,6 +19,7 @@ import {
   recordMoneriumWebhookEvent,
 } from './monerium/db';
 import { handleMoneriumWebhook, makeWebhookDeps } from './monerium/webhookHandler';
+import { handleSwanWebhook, makeSwanWebhookDeps } from './providers/swan/adapter';
 import { getReferenceStyle, getTenantRail, multiTenantEnabled } from './tenants/rail';
 import { mountAdminUi } from './admin/app';
 import { buildHpbOps, buildMoneriumOps } from './admin/opsRoutes';
@@ -196,6 +197,19 @@ app.post('/api/monerium/webhook/t/:tenantId', async (c) => {
     rawBody,
     c.req.raw.headers,
   );
+  return c.json(res.body, res.status);
+});
+
+// ---- Swan (ADR 0032): fiat_notify adapter, one URL per tenant ----
+//
+// The tenant must have an active `receiving_accounts` row with provider
+// 'swan'; otherwise 404. The body only triggers a re-read of the transaction
+// from Swan's API with the tenant's credentials (providers/swan/adapter.ts).
+app.post('/api/swan/webhook/t/:tenantId', async (c) => {
+  const rawBody = await readWebhookBody(c.req.raw);
+  if (rawBody === null) return c.json({ error: 'payload_too_large' }, 413);
+  const tenantId = c.req.param('tenantId');
+  const res = await handleSwanWebhook(makeSwanWebhookDeps(c.env, tenantId), tenantId, rawBody, c.req.raw.headers);
   return c.json(res.body, res.status);
 });
 
