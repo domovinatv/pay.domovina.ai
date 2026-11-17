@@ -8,6 +8,7 @@ import { isReceiptSid } from '../receipts/sid';
 import { registerReceiptRoutes } from '../receipts/api';
 import { registerSimulateRoute } from '../sandbox/api';
 import { registerMoneriumSandboxFundRoute } from '../monerium/sandboxFund';
+import { registerSwanSandboxTransferRoute } from '../providers/swan/sandboxTransfer';
 import { isSandboxTenant, touchSandboxTenant } from '../sandbox/db';
 import {
   LIST_DEFAULT_LIMIT,
@@ -285,6 +286,7 @@ export function buildIntentApi(): Hono<{ Bindings: Env }> {
   registerReceiptRoutes(api);
   registerSimulateRoute(api);
   registerMoneriumSandboxFundRoute(api);
+  registerSwanSandboxTransferRoute(api);
 
   return api;
 }
