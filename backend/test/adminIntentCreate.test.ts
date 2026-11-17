@@ -55,3 +55,12 @@ describe('POST /admin/api/intents', () => {
     expect([302, 401, 403]).toContain(res.status);
   });
 });
+
+describe('intents page modal', () => {
+  it('fills the tenant select after openModal re-renders the form, and the script parses', async () => {
+    const { renderIntentsPage } = await import('../src/admin/views');
+    const html = renderIntentsPage();
+    expect(html).toContain("addEventListener('click', () => { openModal(); fillModalTenants(); })");
+    for (const m of html.matchAll(/<script>([\s\S]*?)<\/script>/g)) expect(() => new Function(m[1])).not.toThrow();
+  });
+});

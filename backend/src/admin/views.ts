@@ -1525,22 +1525,22 @@ function showCreated(d) {
   document.getElementById('createdNewBtn').addEventListener('click', openModal);
 }
 
+// openModal() re-renders the form from FORM_HTML, so the tenant <select> is
+// a new element on every open: fill it AFTER openModal, from a cached list.
+let modalTenants = null;
 async function fillModalTenants() {
-  const sel = document.getElementById('f_tenant');
-  if (sel.dataset.filled) return;
-  const r = await fetch('/admin/api/tenants', { credentials: 'same-origin' });
-  const d = await r.json().catch(() => ({}));
-  for (const t of (d.tenants || [])) {
-    if (t.status !== 'active') continue;
-    const o = document.createElement('option');
-    o.value = t.id;
-    o.textContent = t.id + ' — ' + t.name + (t.sandbox ? ' · sandbox' : '');
-    sel.appendChild(o);
+  if (!modalTenants) {
+    const r = await fetch('/admin/api/tenants', { credentials: 'same-origin' });
+    const d = await r.json().catch(() => ({}));
+    modalTenants = (d.tenants || []).filter(t => t.status === 'active');
   }
-  sel.dataset.filled = '1';
+  const sel = document.getElementById('f_tenant');
+  if (!sel) return;
+  sel.innerHTML = modalTenants.map(t =>
+    '<option value="' + esc(t.id) + '">' + esc(t.id) + ' — ' + esc(t.name) + (t.sandbox ? ' · sandbox' : '') + '</option>').join('');
   if (tenant) sel.value = tenant;
 }
-document.getElementById('newIntent').addEventListener('click', () => { fillModalTenants(); openModal(); });
+document.getElementById('newIntent').addEventListener('click', () => { openModal(); fillModalTenants(); });
 document.getElementById('modalClose').addEventListener('click', closeModal);
 modal.addEventListener('click', (e) => { if (e.target === modal) closeModal(); });
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && modal.style.display !== 'none') closeModal(); });
