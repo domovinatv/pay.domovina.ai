@@ -90,12 +90,16 @@ export function renderCheckoutPage(
   /// ADR 0024: `sandbox` = a self-serve sandbox tenant — no IBAN, no QR,
   /// simulate buttons instead. `moneriumSandbox` = a rail tenant on Monerium's
   /// sandbox: the real IBAN/QR plus a button that has Monerium simulate the
-  /// SEPA transfer (monerium/sandboxFund.ts).
-  opts: { sandbox?: boolean; moneriumSandbox?: boolean } = {},
+  /// SEPA transfer (monerium/sandboxFund.ts). `swanSandbox` = the tenant has
+  /// an active Swan sandbox account (ADR 0032): "Simuliraj uplatu" asks Swan's
+  /// Testing API for the credit instead of ADR 0024's internal simulation
+  /// (providers/swan/sandboxTransfer.ts).
+  opts: { sandbox?: boolean; moneriumSandbox?: boolean; swanSandbox?: boolean } = {},
 ): string {
   const sid = intent.sid;
   const sandbox = opts.sandbox === true;
-  const moneriumSandbox = !sandbox && opts.moneriumSandbox === true;
+  const swanSandbox = opts.swanSandbox === true;
+  const moneriumSandbox = !sandbox && !swanSandbox && opts.moneriumSandbox === true;
   // ADR 0024 D6: where "Natrag u aplikaciju" leads, per outcome.
   const ret = intent.return_url
     ? {
@@ -147,6 +151,7 @@ export function renderCheckoutPage(
     status,
     sandbox,
     moneriumSandbox,
+    swanSandbox,
     return: ret,
   };
 
@@ -403,8 +408,11 @@ ${moneriumSandbox ? '<div class="sandbox-ribbon" role="note">MONERIUM SANDBOX ·
   <div class="card">
     ${sandbox ? `<div class="sandbox-box" id="sandboxBox">
       <p><b>SANDBOX.</b> Nema IBAN-a ni QR koda: na ovaj intent nije moguće uplatiti stvarni novac.</p>
+      ${swanSandbox ? `<p>Gumb „Simuliraj uplatu” traži od Swana (sandbox) SEPA Instant uplatu točnog iznosa s referencom ovog checkouta; dalje ide pravim putem (Swan knjiženje, webhook, <code>paid</code>). Ostali gumbi su interna simulacija.</p>` : ''}
       <div class="sim-row">
-        <button type="button" class="primary" onclick="simulate('paid')">Simuliraj uplatu</button>
+        ${swanSandbox
+          ? `<button type="button" class="primary" onclick="simulateSwan()">Simuliraj uplatu (Swan)</button>`
+          : `<button type="button" class="primary" onclick="simulate('paid')">Simuliraj uplatu</button>`}
         <button type="button" onclick="simulate('received')">Samo zaprimljeno</button>
       </div>
       <div class="sim-row">
@@ -418,6 +426,13 @@ ${moneriumSandbox ? '<div class="sandbox-ribbon" role="note">MONERIUM SANDBOX ·
       <p><b>MONERIUM SANDBOX.</b> Na ovaj IBAN ide samo testni novac. Gumb traži od Moneriuma simuliranu SEPA uplatu točnog iznosa s referencom ovog checkouta; dalje sve ide pravim putem (order, webhook, mint na Chiadu).</p>
       <div class="sim-row">
         <button type="button" class="primary" onclick="simulateSepa()">Simuliraj SEPA uplatu</button>
+      </div>
+      <div class="sim-msg" id="simMsg"></div>
+    </div>` : ''}
+    ${swanSandbox && !sandbox ? `<div class="sandbox-box" id="sandboxBox">
+      <p><b>SWAN SANDBOX.</b> Gumb traži od Swana simuliranu SEPA Instant uplatu točnog iznosa s referencom ovog checkouta na tenantov Swan račun; dalje sve ide pravim putem (webhook, <code>paid</code>).</p>
+      <div class="sim-row">
+        <button type="button" class="primary" onclick="simulateSwan()">Simuliraj uplatu (Swan)</button>
       </div>
       <div class="sim-msg" id="simMsg"></div>
     </div>` : ''}
@@ -706,7 +721,7 @@ function applyState(s) {
     $('qrWrap').style.display = 'none';
   }
   if ((INITIAL.sandbox && (stage === 'settled' || stage === 'rejected')
-       || INITIAL.moneriumSandbox && stage && stage !== 'awaiting_payment') && $('sandboxBox')) {
+       || (INITIAL.moneriumSandbox || INITIAL.swanSandbox) && stage && stage !== 'awaiting_payment') && $('sandboxBox')) {
     $('sandboxBox').style.display = 'none';
   }
   applyReturn(s, stage);
@@ -765,6 +780,26 @@ async function simulateSepa() {
     const d = await r.json().catch(() => ({}));
     msg.textContent = r.ok
       ? 'Monerium je primio uplatu od ' + d.amount_eur + ' EUR. Mint obično stigne za 15–20 s.'
+      : 'Greška: ' + (d.error || r.status);
+  } catch (e) {
+    msg.textContent = 'Greška: ' + e;
+  }
+  buttons.forEach((b) => { b.disabled = false; });
+  await poll();
+  startPolling();
+}
+
+async function simulateSwan() {
+  const box = $('sandboxBox');
+  const msg = $('simMsg');
+  const buttons = box ? box.querySelectorAll('button') : [];
+  buttons.forEach((b) => { b.disabled = true; });
+  msg.textContent = 'Šaljem simuliranu uplatu Swanu…';
+  try {
+    const r = await fetch('/api/intents/' + SID + '/swan-sandbox-transfer', { method: 'POST' });
+    const d = await r.json().catch(() => ({}));
+    msg.textContent = r.ok
+      ? 'Swan je zaprimio uplatu od ' + d.amount_eur + ' EUR na ' + d.iban + '. Status stiže webhookom za nekoliko sekundi.'
       : 'Greška: ' + (d.error || r.status);
   } catch (e) {
     msg.textContent = 'Greška: ' + e;

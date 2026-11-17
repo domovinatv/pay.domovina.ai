@@ -45,6 +45,7 @@ import { watchAllRailOutflows } from './monerium/outflowWatch';
 import { routeAllOwedForwards } from './monerium/forward';
 import { renderCheckoutPage } from './checkout/page';
 import { isMoneriumSandboxTenant } from './monerium/sandboxFund';
+import { hasSwanSandboxAccount } from './providers/swan/sandboxTransfer';
 import { buildSandboxApi } from './sandbox/api';
 import { isSandboxTenant, sweepExpiredSandboxTenants } from './sandbox/db';
 import { sendAlert } from './alerts';
@@ -314,7 +315,8 @@ app.get('/checkout/:sid', async (c) => {
   const style = await getReferenceStyle(c.env, intent.tenant_id);
   const sandbox = await isSandboxTenant(c.env, intent.tenant_id);
   const moneriumSandbox = !sandbox && (await isMoneriumSandboxTenant(c.env, intent.tenant_id));
-  return c.html(renderCheckoutPage(intent, status, sepa, style, { sandbox, moneriumSandbox }));
+  const swanSandbox = await hasSwanSandboxAccount(c.env, intent.tenant_id);
+  return c.html(renderCheckoutPage(intent, status, sepa, style, { sandbox, moneriumSandbox, swanSandbox }));
 });
 
 // Branded HTML dashboard at /admin (Basic Auth gated).

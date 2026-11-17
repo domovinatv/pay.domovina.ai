@@ -143,12 +143,16 @@ Koraci (tajne upisuje vlasnik, ne agent):
 
 ## Otvoreno (stanje 2026-11-17, nakon #151)
 
-1. **Gumb „Simuliraj uplatu” na checkoutu** je ADR 0024 interna simulacija (`sandbox/simulate.ts`,
-   sintetski `sim_` order) i ne ide kroz Swan; intent `2v89mbb5mven` je tako plaćen, a u Swan
-   dashboardu ga nema. Za tenanta s aktivnim Swan sandbox računom gumb treba zvati Swanov
-   `simulateIncomingSepaCreditTransferReception` (vIBAN, `label: sid:<sid>`), analogno
-   `monerium/sandboxFund.ts`. Treba potvrditi Testing API endpoint za client-credentials token
-   (u dashboard sesiji je to `project-member/sandbox-partner-admin`).
+1. ~~**Gumb „Simuliraj uplatu” na checkoutu**~~ ✅ (PR `feat/swan-checkout-simulate`): za tenanta s
+   aktivnim Swan **sandbox** računom primarni gumb zove `POST /api/intents/:sid/swan-sandbox-transfer`
+   (`providers/swan/sandboxTransfer.ts`), koji preko Testing API-ja
+   (`https://api.swan.io/sandbox-partner-admin/graphql`, isti client-credentials token; shema
+   provjerena introspekcijom 17.11.) traži `simulateIncomingSepaCreditTransferReception`: iznos
+   intenta, `label` = referenca checkouta, `isInstant: true`, platitelj Ivan Horvat (HR IBAN).
+   `creditorIban` = IBAN upisan na računu primatelja, inače prvi `Enabled` vIBAN, inače IBAN računa
+   (`account(accountId)` na `sandbox-partner`). Dalje pravi put: Swan knjiženje → webhook → `paid`.
+   Ostali gumbi (zaprimljeno, premala, zakašnjela, odbijena) ostaju ADR 0024 interna simulacija.
+   Prije toga je intent `2v89mbb5mven` plaćen internom simulacijom i u Swanu ga nema.
 2. **Vremenska crta statusa** (`intents/stage.ts`) za `fiat_notify` prikazuje Monerium korake.
 3. ADR 0032 §1 (Monerium piše u `credit_events`) i §4 (`intent_settlements` umjesto sintetskog ordera).
 4. Format Swan webhook `secret`-a (32-hex odbijen s `InvalidArgumentRejection`).

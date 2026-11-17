@@ -6,6 +6,9 @@ export const SWAN_GRAPHQL_URL = {
   sandbox: 'https://api.swan.io/sandbox-partner/graphql',
   live: 'https://api.swan.io/live-partner/graphql',
 } as const;
+/// Testing API (simulators), sandbox only. Same client-credentials token as
+/// the partner API; schema checked 2026-11-17 by introspection.
+export const SWAN_TESTING_URL = 'https://api.swan.io/sandbox-partner-admin/graphql';
 
 export interface SwanTransaction {
   __typename: string;
@@ -37,8 +40,46 @@ export const TRANSACTION_QUERY = `query MptCreditTx($id: ID!) {
   }
 }`;
 
+export const ACCOUNT_IBANS_QUERY = `query MptAccountIbans($id: ID!) {
+  account(accountId: $id) {
+    IBAN name
+    holder { info { name } }
+    virtualIbanEntries(first: 10) { edges { node { IBAN status } } }
+  }
+}`;
+
+export interface SwanAccountIbans {
+  /// The account's own IBAN; null until the account is opened.
+  iban: string | null;
+  /// Enabled virtual IBANs, in Swan's order.
+  virtualIbans: string[];
+  holderName: string | null;
+}
+
+export const SIMULATE_SEPA_IN_MUTATION = `mutation MptSimulateSepaIn($input: IncomingSepaCreditTransferInput!) {
+  simulateIncomingSepaCreditTransferReception(input: $input) {
+    __typename
+    ... on SimulateIncomingSepaCreditTransferReceptionSuccessPayload { transactionId }
+    ... on Rejection { message }
+  }
+}`;
+
+export interface SimulateSepaInInput {
+  amount: { value: string; currency: 'EUR' };
+  creditorIban: string;
+  creditorName: string;
+  debtorIban: string;
+  debtorName: string;
+  label?: string;
+  endToEndId?: string;
+  isInstant?: boolean;
+}
+
 export interface SwanClient {
   getTransaction(id: string): Promise<SwanTransaction | null>;
+  getAccountIbans(accountId: string): Promise<SwanAccountIbans | null>;
+  /// Testing API; throws on a rejection. Returns the new transaction id.
+  simulateIncomingSepa(input: SimulateSepaInInput): Promise<string>;
 }
 
 export function makeSwanClient(args: {
@@ -69,17 +110,52 @@ export function makeSwanClient(args: {
     return token.value;
   }
 
+  async function gql<T>(url: string, query: string, variables: Record<string, unknown>): Promise<T | undefined> {
+    const res = await f(url, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${await accessToken()}` },
+      body: JSON.stringify({ query, variables }),
+    });
+    if (!res.ok) throw new Error(`swan graphql ${res.status}`);
+    const j = (await res.json()) as { data?: T; errors?: Array<{ message: string }> };
+    if (j.errors?.length) throw new Error(`swan graphql: ${j.errors[0].message}`);
+    return j.data;
+  }
+
   return {
     async getTransaction(id) {
-      const res = await f(SWAN_GRAPHQL_URL[args.environment], {
-        method: 'POST',
-        headers: { 'content-type': 'application/json', authorization: `Bearer ${await accessToken()}` },
-        body: JSON.stringify({ query: TRANSACTION_QUERY, variables: { id } }),
-      });
-      if (!res.ok) throw new Error(`swan graphql ${res.status}`);
-      const j = (await res.json()) as { data?: { transaction?: SwanTransaction | null }; errors?: Array<{ message: string }> };
-      if (j.errors?.length) throw new Error(`swan graphql: ${j.errors[0].message}`);
-      return j.data?.transaction ?? null;
+      const d = await gql<{ transaction?: SwanTransaction | null }>(
+        SWAN_GRAPHQL_URL[args.environment], TRANSACTION_QUERY, { id });
+      return d?.transaction ?? null;
+    },
+    async getAccountIbans(accountId) {
+      type Acc = {
+        IBAN: string | null;
+        name: string | null;
+        holder?: { info?: { name?: string | null } | null } | null;
+        virtualIbanEntries?: { edges?: Array<{ node?: { IBAN?: string | null; status?: string | null } | null }> } | null;
+      };
+      const d = await gql<{ account?: Acc | null }>(
+        SWAN_GRAPHQL_URL[args.environment], ACCOUNT_IBANS_QUERY, { id: accountId });
+      const a = d?.account;
+      if (!a) return null;
+      return {
+        iban: a.IBAN ?? null,
+        virtualIbans: (a.virtualIbanEntries?.edges ?? [])
+          .map((e) => e.node)
+          .filter((n) => !!n?.IBAN && n.status === 'Enabled')
+          .map((n) => n!.IBAN!),
+        holderName: a.holder?.info?.name ?? a.name ?? null,
+      };
+    },
+    async simulateIncomingSepa(input) {
+      if (args.environment !== 'sandbox') throw new Error('swan testing api: sandbox only');
+      const d = await gql<{
+        simulateIncomingSepaCreditTransferReception?: { __typename: string; transactionId?: string; message?: string };
+      }>(SWAN_TESTING_URL, SIMULATE_SEPA_IN_MUTATION, { input });
+      const p = d?.simulateIncomingSepaCreditTransferReception;
+      if (!p?.transactionId) throw new Error(`swan simulate: ${p?.__typename ?? 'no payload'}${p?.message ? ` ${p.message}` : ''}`);
+      return p.transactionId;
     },
   };
 }
