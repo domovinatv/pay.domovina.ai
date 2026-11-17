@@ -141,6 +141,15 @@ Koraci (tajne upisuje vlasnik, ne agent):
 - Otvoreno: vremenska crta statusa na checkoutu još prikazuje Monerium korake (processing,
   minted, forwarding) i za `fiat_notify`; za Swan bi trebala biti „banka → primljeno”.
 
+### Zamka: Swan GraphQL bez tokena ne validira sve
+
+Introspekcija na `sandbox-partner` i `sandbox-partner-admin` radi **bez tokena** (dobar način da se
+provjere polja i inputi). Ali neautorizirani poziv mutacije prođe do resolvera i padne na
+`RBAC: access denied`, pa **ne otkrije** neispravan inline fragment: `... on Rejection` je prošao
+provjeru bez tokena, a s tokenom je pao s „Inline fragment spread targets an invalid type:
+'Rejection'” (#153). Unije payloada čitaj introspekcijom (`possibleTypes`) i fragmente piši samo na
+njihove članove.
+
 ## Otvoreno (stanje 2026-11-17, nakon #151)
 
 1. ~~**Gumb „Simuliraj uplatu” na checkoutu**~~ ✅ (PR `feat/swan-checkout-simulate`): za tenanta s
@@ -170,6 +179,10 @@ Koraci (tajne upisuje vlasnik, ne agent):
    (ADR 0022 je on-chain). Admin: odabir providera u „Novi intent” (bez 0x polja za Swan), stupac
    Provider u listi. Otvoreno: Flutter `payment_status.dart` još nema fiat tekstove (generator radi
    samo Monerium intente).
+   **Deployano i živo potvrđeno 18.11.** (#154, migracija 0035, backfill 6 redova): admin modal sam
+   ponudi „Swan … (zadano)” bez 0x polja → intent `6x9tbabkm8gx` 6,66 € (`provider=swan`, target
+   nul-adresa, memo `sid:6x9tbabkm8gx`) → checkout s dvije faze → „Simuliraj uplatu (Swan)” → Swan
+   `bosci_3988f065…` (label `sid:6x9tbabkm8gx`) → `credit_events` #4 → `paid`.
 3. ADR 0032 §1 (Monerium piše u `credit_events`) i §4 (`intent_settlements` umjesto sintetskog ordera).
 4. Format Swan webhook `secret`-a (32-hex odbijen s `InvalidArgumentRejection`).
 5. Produkcija: „Talk to an expert” kod Swana (cijena, HR d.o.o. kao account holder, skrbništvo — G7/G8).
