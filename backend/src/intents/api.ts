@@ -9,6 +9,16 @@ import { registerReceiptRoutes } from '../receipts/api';
 import { registerSimulateRoute } from '../sandbox/api';
 import { registerMoneriumSandboxFundRoute } from '../monerium/sandboxFund';
 import { registerSwanSandboxTransferRoute } from '../providers/swan/sandboxTransfer';
+import {
+  FIAT_TARGET_PLACEHOLDER,
+  fiatAccountHasIban,
+  getPayeeDetails,
+  intentProvider,
+  isFiatProvider,
+  parseIntentProvider,
+  tenantProviders,
+  type IntentProvider,
+} from '../inflow/provider';
 import { isSandboxTenant, touchSandboxTenant } from '../sandbox/db';
 import {
   LIST_DEFAULT_LIMIT,
@@ -59,6 +69,10 @@ interface CreateIntentBody {
   /// ADR 0024 D6: where the checkout sends the buyer back, with
   /// `mpt_sid` + `mpt_status` appended. Secret key only.
   return_url?: string;
+  /// Migration 0035: 'monerium' | 'swan'. Omitted = the tenant's default
+  /// (its fiat account if it has one, else Monerium). A fiat provider takes
+  /// no target_address.
+  provider?: string;
 }
 
 const ADDR_RE = /^0x[0-9a-fA-F]{40}$/;
@@ -171,10 +185,14 @@ export function buildIntentApi(): Hono<{ Bindings: Env }> {
       cursor,
     });
     const origin = linkBases(c.env, c.req.url);
-    const sepa = await getSepaDetails(c.env, who.tenantId);
     const style = await getReferenceStyle(c.env, who.tenantId);
+    // Payee per provider (a tenant may hold intents on both).
+    const payees = new Map<IntentProvider, Awaited<ReturnType<typeof getPayeeDetails>>>();
+    for (const p of new Set(items.map((i) => intentProvider(i)))) {
+      payees.set(p, await getPayeeDetails(c.env, { tenant_id: who.tenantId, provider: p }, defaultTenantId(c.env)));
+    }
     const data = items.map((intent) => {
-      const json = intentResponseJson(intent, origin, sepa, style);
+      const json = intentResponseJson(intent, origin, payees.get(intentProvider(intent))!, style);
       const view = who.sandbox ? sandboxView(json, origin) : json;
       // A list is for bookkeeping; payment codes stay on the single intent.
       const { epc_qr_data: _e, hub3_data: _h, ...rest } = view;
@@ -208,7 +226,7 @@ export function buildIntentApi(): Hono<{ Bindings: Env }> {
     const intent = await getIntent(c.env, sid);
     if (!intent) return c.json({ error: 'intent_not_found' }, 404);
     const origin = linkBases(c.env, c.req.url);
-    const sepa = await getSepaDetails(c.env, intent.tenant_id ?? defaultTenantId(c.env));
+    const sepa = await getPayeeDetails(c.env, intent, defaultTenantId(c.env));
     const style = await getReferenceStyle(c.env, intent.tenant_id);
     const status = await buildIntentStatus(c.env, intent, c.executionCtx);
     const json = intentResponseJson(intent, origin, sepa, style);
@@ -249,6 +267,8 @@ export function buildIntentApi(): Hono<{ Bindings: Env }> {
     const tenantId = original.tenant_id ?? defaultTenantId(c.env);
     // Receipts are anchored on Gnosis; a simulated payment must never get one.
     if (await isSandboxTenant(c.env, tenantId)) return c.json({ error: 'receipts_not_in_sandbox' }, 409);
+    // ...and a fiat payment never touches the chain the receipt lives on.
+    if (isFiatProvider(intentProvider(original))) return c.json({ error: 'receipts_not_for_fiat' }, 409);
     const railRefusal = await tenantRailRefusal(c.env, tenantId);
     if (railRefusal) return c.json({ error: railRefusal, tenant_id: tenantId }, 403);
     const target = original.target_address;
@@ -302,8 +322,9 @@ async function createSandboxIntent(
   tenantId: string,
   secretKey: boolean,
   returnUrl: string | null,
+  provider: IntentProvider,
 ): Promise<Response> {
-  const target = (body.target_address ?? '').trim();
+  const target = isFiatProvider(provider) ? FIAT_TARGET_PLACEHOLDER : (body.target_address ?? '').trim();
   const amountEur = parseAmount(body.amount_eur);
   if (amountEur === null) return c.json({ error: 'invalid_amount_eur' }, 400);
   const amountCents = Math.round(amountEur * 100);
@@ -316,14 +337,14 @@ async function createSandboxIntent(
   const ttl = Math.min(Math.max(Math.floor(body.expires_in_seconds ?? DEFAULT_TTL_SECONDS), 60), MAX_TTL_SECONDS);
   if (body.sid !== undefined && !SID_RE.test(body.sid)) return c.json({ error: 'invalid_sid' }, 400);
   if (body.sid !== undefined && isReceiptSid(body.sid)) return c.json({ error: 'receipts_not_in_sandbox' }, 400);
-  const sid = await insertWithRetry(c.env, target, amountCents, ttl, body, tenantId, secretKey, returnUrl);
+  const sid = await insertWithRetry(c.env, target, amountCents, ttl, body, tenantId, secretKey, returnUrl, provider);
   if (sid === 'conflict') return c.json({ error: 'sid_already_exists' }, 409);
   if (!sid) return c.json({ error: 'sid_collision_after_retries' }, 500);
   const intent = await getIntent(c.env, sid);
   if (!intent) return c.json({ error: 'intent_not_persisted' }, 500);
   await touchSandboxTenant(c.env, tenantId);
   const origin = linkBases(c.env, c.req.url);
-  const sepa = await getSepaDetails(c.env, tenantId);
+  const sepa = await getPayeeDetails(c.env, intent, defaultTenantId(c.env));
   const status = computeStage({ intent, order: null, forward: null, now: Math.floor(Date.now() / 1000) });
   return c.json({ ...sandboxView(intentResponseJson(intent, origin, sepa, null), origin), status });
 }
@@ -448,7 +469,9 @@ export function intentResponseJson(
     amount_eur: amountEur,
     amount_cents: intent.amount_cents,
     currency: intent.currency,
-    target_address: intent.target_address,
+    provider: intentProvider(intent),
+    // A fiat intent has no on-chain destination (migration 0035).
+    target_address: isFiatProvider(intentProvider(intent)) ? null : intent.target_address,
     label: intent.label,
     metadata: intent.metadata_json ? JSON.parse(intent.metadata_json) : null,
     memo,
@@ -502,6 +525,7 @@ async function insertWithRetry(
   tenantId: string,
   createdWithKey: boolean,
   returnUrl: string | null = null,
+  provider: IntentProvider = 'monerium',
 ): Promise<string | 'conflict' | null> {
   // Client-supplied sid: single attempt. A real duplicate-sid collision is
   // the caller's error (409); ANY OTHER failure (transient D1 error, etc.)
@@ -520,6 +544,7 @@ async function insertWithRetry(
         tenantId,
         createdWithKey,
         returnUrl,
+        provider,
       });
       await assignShortRef(env, body.sid, tenantId, ttlSeconds);
       return body.sid;
@@ -543,6 +568,7 @@ async function insertWithRetry(
         tenantId,
         createdWithKey,
         returnUrl,
+        provider,
       });
     } catch (e) {
       // Most likely PK collision on sid — retry. Any other DB error
@@ -606,15 +632,29 @@ export async function createIntentWith(
   } catch {
     return c.json({ error: 'invalid_json' }, 400);
   }
-  const target = (body.target_address ?? '').trim();
-  if (!ADDR_RE.test(target)) {
-    return c.json({ error: 'invalid_target_address' }, 400);
-  }
   // Which tenant is asking. Soft by default (no key → default tenant); flip
   // INTENT_REQUIRE_TENANT_KEY=1 once every client ships a key.
   const tenant = await resolve(c);
   if (!tenant.ok) {
     return c.json({ error: tenant.error }, tenant.error === 'tenant_suspended' ? 403 : 401);
+  }
+  // Migration 0035: which provider the intent goes through.
+  const providers = await tenantProviders(c.env, tenant.tenantId);
+  let provider = providers.default;
+  if (body.provider !== undefined && body.provider !== null && body.provider !== '') {
+    const p = parseIntentProvider(body.provider);
+    if (!p) return c.json({ error: 'invalid_provider' }, 400);
+    if (!providers.available.includes(p)) {
+      return c.json({ error: 'provider_not_available', tenant_id: tenant.tenantId, provider: p }, 403);
+    }
+    provider = p;
+  }
+  const fiat = isFiatProvider(provider);
+  // A fiat intent has no destination on any chain; its target is a fixed
+  // placeholder and the caller's target_address (if any) is ignored.
+  const target = fiat ? FIAT_TARGET_PLACEHOLDER : (body.target_address ?? '').trim();
+  if (!fiat && !ADDR_RE.test(target)) {
+    return c.json({ error: 'invalid_target_address' }, 400);
   }
   // ADR 0024 D6: a public key (or none) could otherwise turn our checkout
   // into a redirect to anywhere — pk_ keys are public by design.
@@ -628,18 +668,24 @@ export async function createIntentWith(
   // can be paid or forwarded, so the whitelist and the SR-01 cap have
   // nothing to protect; its payments are simulated (/:sid/simulate).
   if (tenant.sandbox === true) {
-    return createSandboxIntent(c, body, tenant.tenantId, tenant.keyKind === 'secret', returnUrl);
+    return createSandboxIntent(c, body, tenant.tenantId, tenant.keyKind === 'secret', returnUrl, provider);
+  }
+  // Fiat (ADR 0032): the money lands on the tenant's own provider account.
+  // No Monerium rail, no whitelist, no campaign — but the payer must be shown
+  // an IBAN, so the account needs one.
+  if (fiat && !(await fiatAccountHasIban(c.env, tenant.tenantId, provider))) {
+    return c.json({ error: 'receiving_account_without_iban', tenant_id: tenant.tenantId, provider }, 409);
   }
   // A non-default tenant collects on ITS OWN IBAN. Issuing a QR for that
   // IBAN while the rail cannot see the tenant's Monerium webhook would take
   // money we can never report or route — refuse instead (ADR 0017).
-  const railRefusal = await tenantRailRefusal(c.env, tenant.tenantId);
+  const railRefusal = fiat ? null : await tenantRailRefusal(c.env, tenant.tenantId);
   if (railRefusal) return c.json({ error: railRefusal, tenant_id: tenant.tenantId }, 403);
   // Direct mode: Monerium mints straight into the target, so the target must
   // be one of the tenant's registered project Safes (campaigns). Nothing is
   // ever forwarded, so the payout whitelist does not apply.
   const style = await getReferenceStyle(c.env, tenant.tenantId);
-  const direct = style?.mode === 'direct';
+  const direct = !fiat && style?.mode === 'direct';
   if (direct && !(await findCampaignBySafe(c.env, tenant.tenantId, target))) {
     return c.json(
       { error: 'target_not_campaign', tenant_id: tenant.tenantId, target_address: target.toLowerCase() },
@@ -649,7 +695,7 @@ export async function createIntentWith(
   // Fail fast on a destination the forward gate would refuse anyway. This is
   // UX, not the security boundary — `authorizeForward` re-checks at forward
   // time, because an address can be revoked between intent and payment.
-  if (!direct && !(await isAddressWhitelisted(c.env, tenant.tenantId, target))) {
+  if (!fiat && !direct && !(await isAddressWhitelisted(c.env, tenant.tenantId, target))) {
     return c.json(
       { error: 'target_not_whitelisted', tenant_id: tenant.tenantId, target_address: target.toLowerCase() },
       403,
@@ -686,14 +732,17 @@ export async function createIntentWith(
       return c.json({ error: 'too_many_open_intents', target_address: target.toLowerCase() }, 429);
     }
   }
-  const sid = await insertWithRetry(c.env, target, amountCents, ttl, body, tenant.tenantId, secretKey, returnUrl);
+  // For a fiat intent the cap runs on the placeholder, i.e. per tenant: the
+  // stray matcher pairs reference-less credits by amount and time, which
+  // floods of keyless intents would make ambiguous.
+  const sid = await insertWithRetry(c.env, target, amountCents, ttl, body, tenant.tenantId, secretKey, returnUrl, provider);
   if (sid === 'conflict') return c.json({ error: 'sid_already_exists' }, 409);
   if (!sid) return c.json({ error: 'sid_collision_after_retries' }, 500);
   const intent = await getIntent(c.env, sid);
   if (!intent) return c.json({ error: 'intent_not_persisted' }, 500);
 
   const origin = linkBases(c.env, c.req.url);
-  const sepa = await getSepaDetails(c.env, tenant.tenantId);
+  const sepa = await getPayeeDetails(c.env, intent, defaultTenantId(c.env));
   const status = computeStage({
     intent, order: null, forward: null,
     now: Math.floor(Date.now() / 1000),

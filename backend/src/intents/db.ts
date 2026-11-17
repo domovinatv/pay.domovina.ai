@@ -27,6 +27,9 @@ export interface PaymentIntentRow {
   /// Migration 0031 (ADR 0028): short reference the payer may type instead
   /// of the memo. Null when allocation failed; absent on older rows/tests.
   short_ref?: string | null;
+  /// Migration 0035: inflow provider ('monerium' | 'swan'); NULL on older
+  /// rows = Monerium. Read it through inflow/provider.ts intentProvider().
+  provider?: string | null;
 }
 
 export interface CreateIntentArgs {
@@ -42,6 +45,8 @@ export interface CreateIntentArgs {
   createdWithKey?: boolean;
   /// ADR 0024 D6, validated by the caller (secret key only).
   returnUrl?: string | null;
+  /// Migration 0035; omitted = 'monerium'.
+  provider?: string;
 }
 
 export async function createIntent(
@@ -52,8 +57,8 @@ export async function createIntent(
   await env.DB.prepare(
     `INSERT INTO payment_intents
        (sid, target_address, amount_cents, currency, label, metadata_json,
-        state, created_at, expires_at, tenant_id, created_with_key, return_url)
-     VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?)`,
+        state, created_at, expires_at, tenant_id, created_with_key, return_url, provider)
+     VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?)`,
   )
     .bind(
       args.sid,
@@ -67,6 +72,7 @@ export async function createIntent(
       args.tenantId,
       args.createdWithKey ? 1 : 0,
       args.returnUrl ?? null,
+      args.provider ?? 'monerium',
     )
     .run();
 }

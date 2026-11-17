@@ -159,7 +159,17 @@ Koraci (tajne upisuje vlasnik, ne agent):
    dashboardu) → webhook → `credit_events` #2 (`matched_by=sid`) → `paid` ~1 s. Novac je sletio na
    vIBAN `…2132042467678` (prvi `Enabled` u Swanovom redoslijedu), ne na `…2131653013357` iz probe;
    ako treba fiksni, upiši IBAN na račun primatelja.
-2. **Vremenska crta statusa** (`intents/stage.ts`) za `fiat_notify` prikazuje Monerium korake.
+2. ~~**Vremenska crta statusa** za `fiat_notify` prikazuje Monerium korake.~~ ✅ (PR
+   `feat/provider-aware-intents`, migracija 0035): intent nosi `provider` (`monerium` | `swan`),
+   fiksiran pri izradi; zadano je tenantov fiat račun ako ga ima, inače Monerium, a API i admin modal
+   mogu ga zadati (`provider`). Swan intent nema `target_address` (u bazi nul-adresa, u API-ju
+   `null`), referenca je `sid:<sid>`, EPC QR i IBAN su sa Swan računa primatelja (bez IBAN-a na
+   računu izrada intenta vraća `409 receiving_account_without_iban`). Status nosi
+   `provider` + `settlement: fiat|onchain`; fiat crta je samo `payment` → `settled` („Knjiženo na
+   računu primatelja”), bez Moneriuma, minta, Gnosisscana, „Primatelj wallet” i potvrde o uplati
+   (ADR 0022 je on-chain). Admin: odabir providera u „Novi intent” (bez 0x polja za Swan), stupac
+   Provider u listi. Otvoreno: Flutter `payment_status.dart` još nema fiat tekstove (generator radi
+   samo Monerium intente).
 3. ADR 0032 §1 (Monerium piše u `credit_events`) i §4 (`intent_settlements` umjesto sintetskog ordera).
 4. Format Swan webhook `secret`-a (32-hex odbijen s `InvalidArgumentRejection`).
 5. Produkcija: „Talk to an expert” kod Swana (cijena, HR d.o.o. kao account holder, skrbništvo — G7/G8).
