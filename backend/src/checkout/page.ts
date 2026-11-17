@@ -1,3 +1,4 @@
+import { intentProvider, isFiatProvider } from '../inflow/provider';
 import { toSVG } from 'bwip-js/generic';
 import qrcode from 'qrcode-generator';
 
@@ -100,6 +101,14 @@ export function renderCheckoutPage(
   const sandbox = opts.sandbox === true;
   const swanSandbox = opts.swanSandbox === true;
   const moneriumSandbox = !sandbox && !swanSandbox && opts.moneriumSandbox === true;
+  // Migration 0035: a fiat intent (Swan) is plain SEPA onto the tenant's own
+  // account — no EURe, no chain, no wallet; the copy must not claim either.
+  const provider = intentProvider(intent);
+  const fiat = isFiatProvider(provider);
+  const providerName = provider === 'swan' ? 'Swan' : 'Monerium';
+  // A fiat payee without an IBAN cannot be paid (intent creation refuses it;
+  // this only guards a later change of the receiving account).
+  const payable = !fiat || sepa.iban !== '';
   // ADR 0024 D6: where "Natrag u aplikaciju" leads, per outcome.
   const ret = intent.return_url
     ? {
@@ -125,11 +134,12 @@ export function renderCheckoutPage(
     remittanceInfo: memo,
     bic: sepa.bic,
   });
-  const hub3Svg = renderPdf417Svg(buildIntentHub3Text(intent, sepa));
+  const hub3Svg = payable ? renderPdf417Svg(buildIntentHub3Text(intent, sepa)) : null;
   // ADR 0022: a receipt sid links to its receipt; any other pending intent
   // offers to re-issue itself under a key-bound sid from this browser.
   const receiptSid = isReceiptSid(sid);
-  const receiptBlock = sandbox
+  // Receipts are anchored on Gnosis (ADR 0022): not for a fiat payment.
+  const receiptBlock = sandbox || fiat
     ? ''
     : receiptSid
     ? `<p class="receipt-note">🧾 Ova uplata nosi <a href="/potvrda/${escapeAttr(sid)}">potvrdu o uplati</a>. Ključ potvrde je u ovom pregledniku.</p>`
@@ -152,6 +162,9 @@ export function renderCheckoutPage(
     sandbox,
     moneriumSandbox,
     swanSandbox,
+    provider,
+    fiat,
+    provider_name: providerName,
     return: ret,
   };
 
@@ -436,7 +449,8 @@ ${moneriumSandbox ? '<div class="sandbox-ribbon" role="note">MONERIUM SANDBOX ·
       </div>
       <div class="sim-msg" id="simMsg"></div>
     </div>` : ''}
-    ${sandbox ? '<div id="qrWrap" style="display:none"></div>' : `<div class="qr-wrap" id="qrWrap">
+    ${!sandbox && !payable ? `<p class="lede" id="noIban"><b>Primatelj još nema IBAN za uplatu.</b> Javite se primatelju.</p>` : ''}
+    ${sandbox || !payable ? '<div id="qrWrap" style="display:none"></div>' : `<div class="qr-wrap" id="qrWrap">
       ${hub3Svg === null ? '' : `<div class="code-tabs" role="tablist">
         <button type="button" role="tab" id="tabEpc" aria-selected="true" onclick="showCode('epc')">EPC QR</button>
         <button type="button" role="tab" id="tabHub3" aria-selected="false" onclick="showCode('hub3')">HUB3 barkod (uplatnica)</button>
@@ -466,10 +480,11 @@ ${moneriumSandbox ? '<div class="sandbox-ribbon" role="note">MONERIUM SANDBOX ·
     <div id="statusArea"></div>
     <div class="timeline" id="timeline"></div>
     <div class="detail-rows">
-      <div class="row"><span class="label">Primatelj wallet</span><span class="value" id="targetVal">—</span></div>
+      ${fiat ? '' : `<div class="row"><span class="label">Primatelj wallet</span><span class="value" id="targetVal">—</span></div>`}
       <div class="row"><span class="label">SEPA reference</span><span class="value" id="memoVal">—</span></div>
-      ${sandbox ? '' : `<div class="row"><span class="label">IBAN</span><span class="value">${escapeAttr(formatIban(sepa.iban))}</span></div>
+      ${sandbox || !payable ? '' : `<div class="row"><span class="label">IBAN</span><span class="value">${escapeAttr(formatIban(sepa.iban))}</span></div>
       <div class="row"><span class="label">Primatelj</span><span class="value">${escapeAttr(sepa.beneficiaryName)}</span></div>`}
+      ${fiat ? `<div class="row"><span class="label">Račun primatelja</span><span class="value">${escapeAttr(providerName)} · SEPA${sandbox || swanSandbox ? ' (sandbox)' : ''}</span></div>` : ''}
       <div class="row"><span class="label">Sesija</span><span class="value" id="sidVal">—</span></div>
     </div>
   </div>
@@ -486,7 +501,7 @@ ${moneriumSandbox ? '<div class="sandbox-ribbon" role="note">MONERIUM SANDBOX ·
     <h2 id="successTitle">Uplata zaprimljena!</h2>
     <p class="sub"><strong id="successAmount">—</strong> EUR je stiglo.</p>
     <p class="settle-note" id="successNote"></p>
-    <a id="txLink" class="tx-link" href="#" target="_blank" rel="noopener" style="display:none">Pogledaj transakciju na Gnosisscanu →</a>
+    ${fiat ? '' : '<a id="txLink" class="tx-link" href="#" target="_blank" rel="noopener" style="display:none">Pogledaj transakciju na Gnosisscanu →</a>'}
     ${receiptSid ? `<a class="tx-link" href="/potvrda/${escapeAttr(sid)}">Preuzmi potvrdu o uplati →</a>` : ''}
     ${ret ? `<a class="return-btn" id="returnBtn" href="${escapeAttr(ret.paid)}" style="display:none">Natrag u aplikaciju</a>` : ''}
     <button type="button" class="details-btn" id="successDetails">Prikaži detalje</button>
@@ -544,6 +559,16 @@ const STEP_COPY = {
   forwarding: { title: 'Prosljeđivanje primatelju',    custodian: 'MPT relay' },
   settled:    { title: 'Kod primatelja',               custodian: 'Skrbnik: primatelj' },
 };
+// Fiat provider (Swan): plain SEPA onto the recipient's own account — the
+// only steps are the payer's bank and the booking at the recipient.
+const FIAT_STEP_COPY = {
+  payment: { title: 'Uplata iz tvoje banke', custodian: 'Skrbnik: tvoja banka' },
+  settled: { title: 'Knjiženo na računu primatelja', custodian: 'Račun primatelja kod: ' + INITIAL.provider_name },
+};
+function stepCopy(key) {
+  const table = INITIAL.fiat ? FIAT_STEP_COPY : STEP_COPY;
+  return table[key] || STEP_COPY[key] || { title: key, custodian: '' };
+}
 
 function ensureAudio() {
   try { audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)(); }
@@ -631,6 +656,12 @@ function stepNote(step, status) {
   if (step.key === 'forwarding' && step.status === 'failed') {
     return 'Prosljeđivanje nije uspjelo — novac je siguran u MPT Safeu, rješavamo ručno.';
   }
+  if (INITIAL.fiat && step.key === 'settled' && step.status === 'in_progress') {
+    return 'Banka primatelja je zaprimila uplatu, čeka se knjiženje…';
+  }
+  if (INITIAL.fiat && step.key === 'settled' && step.status === 'proven') {
+    return 'Uplata je knjižena na računu primatelja. Gotovo!';
+  }
   if (step.key === 'settled' && step.status === 'proven') {
     return 'Potvrđeno on-chain. Gotovo!';
   }
@@ -652,7 +683,7 @@ function txLinksHtml(step, status) {
 
 function renderTimeline(status) {
   const html = status.steps.map(step => {
-    const copy = STEP_COPY[step.key] || { title: step.key, custodian: '' };
+    const copy = stepCopy(step.key);
     const note = stepNote(step, status);
     return '<div class="tl-step ' + step.status + '">' +
       '<div class="tl-rail"><div class="tl-marker">' + markerHtml(step.status) + '</div><div class="tl-line"></div></div>' +
@@ -684,7 +715,12 @@ function renderStatusBar(s) {
       ' od ' + s.amount_eur + ' EUR — manje od traženog iznosa. Primatelj je obaviješten.';
   } else if (stage === 'settled') {
     cls = 'paid';
-    inner = '<span style="font-size:1.1em">✓</span> Uplata potvrđena — EURe kod primatelja';
+    inner = '<span style="font-size:1.1em">✓</span> ' + (INITIAL.fiat
+      ? 'Uplata potvrđena — knjižena na računu primatelja'
+      : 'Uplata potvrđena — EURe kod primatelja');
+  } else if (isReceived(stage) && INITIAL.fiat) {
+    cls = 'paid';
+    inner = '<span style="font-size:1.1em">✓</span> Uplata zaprimljena — knjiži se na račun primatelja';
   } else if (isReceived(stage)) {
     // Card-like: Monerium holds the funds → the payment is done from the
     // payer's point of view. Only the EURe settlement is still pending.
@@ -703,8 +739,10 @@ function renderStatusBar(s) {
 
 function applyState(s) {
   $('amount').textContent = s.amount_eur + ' EUR';
-  $('targetVal').textContent = shortAddr(s.target_address);
-  $('targetVal').setAttribute('title', s.target_address);
+  if ($('targetVal')) {
+    $('targetVal').textContent = shortAddr(s.target_address);
+    $('targetVal').setAttribute('title', s.target_address);
+  }
   $('memoVal').textContent = s.memo;
   $('sidVal').textContent = s.sid;
   renderStatusBar(s);
@@ -837,6 +875,15 @@ function updateSuccess(s) {
   const status = s.status;
   const stage = status ? status.stage : null;
   const note = $('successNote');
+  if (INITIAL.fiat) {
+    note.className = stage === 'settled' ? 'settle-note done' : 'settle-note';
+    note.innerHTML = stage !== 'settled'
+      ? '<span class="pulse-dot"></span>Banka primatelja knjiži uplatu…'
+      : status.amount_mismatch === 'under'
+        ? '⚠ Uplata je knjižena, ali iznos je manji od traženog (' + eurCents(status.amount_received_cents) + ' od ' + s.amount_eur + ' EUR).'
+        : '✓ Uplata je knjižena na računu primatelja (' + esc(INITIAL.provider_name) + ', SEPA).';
+    return;
+  }
   if (stage === 'settled') {
     note.className = 'settle-note done';
     note.innerHTML = status.amount_mismatch === 'under'

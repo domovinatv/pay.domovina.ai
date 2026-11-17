@@ -18,6 +18,7 @@ import type { MoneriumOrder } from '../monerium/types';
 import { getTenantRail, type TenantRail } from '../tenants/rail';
 import { defaultTenantId } from '../tenants/whitelist';
 import { getTenant, writeAudit } from '../tenants/db';
+import { tenantProviders } from '../inflow/provider';
 import { createIntentWith } from '../intents/api';
 import { getIntent, isTrustedTarget } from '../intents/db';
 import { getForwardStatus } from '../router/safe';
@@ -275,6 +276,12 @@ export function mountAdminUi(
       await writeAudit(c.env, { tenantId, action: 'intent.create_admin', actor: actorOf(c), detail: JSON.stringify({ sid: d.sid ?? null }) });
     }
     return res;
+  });
+  /// Providers the "Novi intent" modal offers for a tenant (migration 0035).
+  app.get('/admin/api/tenants/:id/providers', async (c) => {
+    const t = await getTenant(c.env, c.req.param('id'));
+    if (!t) return c.json({ error: 'tenant_not_found' }, 404);
+    return c.json(await tenantProviders(c.env, t.id));
   });
   app.get('/admin/api/intents', async (c) => {
     const stateParam = c.req.query('state');

@@ -5,6 +5,7 @@ import { getMoneriumOrder, getForwardByOrder, isKnownPayer } from '../monerium/d
 import { makeConfirmDeps, settleConfirmedForward } from './confirm';
 import { defaultTenantId } from '../tenants/whitelist';
 import type { Hex } from 'viem';
+import { intentProvider, isFiatProvider, type IntentProvider } from '../inflow/provider';
 
 /// Canonical per-stage payment status — "gdje su moji novci".
 ///
@@ -51,6 +52,12 @@ export interface StageStep {
 
 export interface StageResult {
   stage: PaymentStage;
+  /// Migration 0035: the intent's inflow provider.
+  provider: IntentProvider;
+  /// `onchain` = SEPA → Monerium → EURe (mint, maybe a forward); `fiat` =
+  /// plain SEPA onto the tenant's own account (Swan): the timeline is only
+  /// payment → booked at the recipient, with no Monerium, mint or chain.
+  settlement: 'onchain' | 'fiat';
   steps: StageStep[];
   /// Seconds since intent creation.
   elapsed_seconds: number;
@@ -94,6 +101,8 @@ export type StageIntent = Pick<
   /// For amount_mismatch (BW-01). Optional so narrow test rows still work.
   amount_cents?: number;
   amount_received_cents?: number | null;
+  /// Migration 0035; absent/NULL = Monerium.
+  provider?: string | null;
 };
 export type StageOrder = Pick<
   MoneriumOrderRow,
@@ -128,6 +137,8 @@ export function computeStage(input: StageInput): StageResult {
   // intent's settlement, whatever path brought the order here.
   const forward = isForeignForward(input.forward, intent.sid) ? null : input.forward;
   const elapsed = Math.max(0, now - intent.created_at);
+  const provider = intentProvider(intent);
+  if (isFiatProvider(provider)) return computeFiatStage(intent, order, provider, now, elapsed);
 
   const mintTxHashes = parseTxHashes(order?.tx_hashes ?? null);
   const rejectedReason = order ? parseRejectedReason(order.raw_json) : null;
@@ -163,6 +174,8 @@ export function computeStage(input: StageInput): StageResult {
 
   return {
     stage,
+    provider,
+    settlement: 'onchain',
     steps,
     elapsed_seconds: elapsed,
     seconds_in_stage: Math.max(0, now - stageEnteredAt({
@@ -178,6 +191,61 @@ export function computeStage(input: StageInput): StageResult {
     rejected_reason: rejectedReason,
     review_expected:
       stage === 'received_processing' && input.knownPayer != null ? !input.knownPayer : null,
+    amount_mismatch: amountMismatch(intent),
+    amount_received_cents: intent.amount_received_cents ?? null,
+  };
+}
+
+/// Fiat provider (Swan): the credit is booked straight on the tenant's own
+/// account (inflow/settleFiat.ts writes it as a synthetic order: `pending` =
+/// announced, `processed` = booked). Two steps, both told as they are: the
+/// payer's bank, then the recipient's account at the provider.
+function computeFiatStage(
+  intent: StageIntent,
+  order: StageOrder | null,
+  provider: IntentProvider,
+  now: number,
+  elapsed: number,
+): StageResult {
+  const placedAt = isoToUnix(order?.placed_at ?? null) ?? order?.updated_at ?? null;
+  const processedAt = isoToUnix(order?.processed_at ?? null) ?? order?.updated_at ?? null;
+  const stage: PaymentStage = order?.state === 'rejected' ? 'rejected'
+    : !order ? (intent.state === 'expired' ? 'expired' : 'awaiting_payment')
+    : order.state === 'processed' ? 'settled'
+    : 'received_processing';
+  const steps: StageStep[] = [
+    {
+      key: 'payment', custodian: 'bank',
+      status: order ? 'proven' : stage === 'expired' ? 'failed' : 'waiting',
+      at: order ? placedAt : stage === 'expired' ? intent.expires_at : null,
+    },
+    {
+      key: 'settled', custodian: 'recipient',
+      status: stage === 'settled' ? 'proven' : stage === 'rejected' ? 'failed'
+        : stage === 'received_processing' ? 'in_progress' : 'waiting',
+      at: stage === 'settled' || stage === 'rejected' ? processedAt : null,
+    },
+  ];
+  const enteredAt = stage === 'awaiting_payment' ? intent.created_at
+    : stage === 'expired' ? intent.expires_at
+    : stage === 'received_processing' ? placedAt ?? intent.created_at
+    : processedAt ?? intent.paid_at ?? intent.created_at;
+  return {
+    stage,
+    provider,
+    settlement: 'fiat',
+    steps,
+    elapsed_seconds: elapsed,
+    seconds_in_stage: Math.max(0, now - enteredAt),
+    forward_expected: false,
+    order_id: order?.id ?? null,
+    order_state: order?.state ?? null,
+    mint_tx_hashes: [],
+    forward_status: null,
+    forward_tx_hash: null,
+    forward_error: null,
+    rejected_reason: order ? parseRejectedReason(order.raw_json) : null,
+    review_expected: null,
     amount_mismatch: amountMismatch(intent),
     amount_received_cents: intent.amount_received_cents ?? null,
   };

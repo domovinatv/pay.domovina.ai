@@ -1189,7 +1189,11 @@ export function renderIntentsPage(): string {
         <label class="form-label">Tenant (intent se kreira u njegovo ime)
           <select id="f_tenant" required></select>
         </label>
-        <label class="form-label">Target adresa (gdje EURe ide nakon mint-a)
+        <label class="form-label">Provider (kuda uplata ide)
+          <select id="f_provider"></select>
+          <span class="form-hint" id="f_provider_hint"></span>
+        </label>
+        <label class="form-label" id="f_target_wrap">Target adresa (gdje EURe ide nakon mint-a)
           <input type="text" id="f_target" required pattern="^0x[0-9a-fA-F]{40}$"
                  placeholder="0x…40 hex znakova"
                  value="0x6693a7D19486Dc45e9F90Fd2D515d972bBA2d65e" />
@@ -1289,6 +1293,7 @@ export function renderIntentsPage(): string {
       <tr>
         <th>Stvoreno</th>
         <th>Tenant</th>
+        <th>Provider</th>
         <th>Monerium</th>
         <th>Stanje</th>
         <th>Iznos</th>
@@ -1300,7 +1305,7 @@ export function renderIntentsPage(): string {
         <th>Forward TX</th>
       </tr>
     </thead>
-    <tbody id="rows"><tr><td colspan="11" class="empty">Učitavam…</td></tr></tbody>
+    <tbody id="rows"><tr><td colspan="12" class="empty">Učitavam…</td></tr></tbody>
   </table>
 </div>
 ${INTENTS_SCRIPT}`;
@@ -1357,7 +1362,7 @@ function diffAndToast(items) {
 
 async function load() {
   const tbody = document.getElementById('rows');
-  if (lastSeen === null) tbody.innerHTML = '<tr><td colspan="11" class="empty">Učitavam…</td></tr>';
+  if (lastSeen === null) tbody.innerHTML = '<tr><td colspan="12" class="empty">Učitavam…</td></tr>';
   const q = new URLSearchParams();
   if (state) q.set('state', state);
   if (search) {
@@ -1371,7 +1376,7 @@ async function load() {
     if (!r.ok) throw new Error('HTTP '+r.status);
     data = await r.json();
   } catch (e) {
-    tbody.innerHTML = '<tr><td colspan="11" class="empty">Greška: '+esc(e.message)+'</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="12" class="empty">Greška: '+esc(e.message)+'</td></tr>';
     return;
   }
   fillTenants(data.tenants);
@@ -1383,7 +1388,7 @@ async function load() {
   lastSeen = next;
 
   if (data.items.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="11" class="empty">Nema intentova.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="12" class="empty">Nema intentova.</td></tr>';
     return;
   }
   let html = '';
@@ -1391,14 +1396,17 @@ async function load() {
     const pill = it.state === 'paid' ? 'ok' : it.state === 'expired' ? 'bad' : 'warn';
     const checkoutLink = '<a href="/checkout/'+esc(it.sid)+'" target="_blank" rel="noopener" class="mono">'+esc(it.sid)+'</a>';
     const ex = explorer(it.chain);
-    const targetCell = '<a href="'+ex+'/address/'+esc(it.target_address)+'" target="_blank" rel="noopener" class="mono dim">'+esc(short(it.target_address,10))+'</a>';
+    const targetCell = it.provider === 'swan'
+      ? '<span class="dim">— (SEPA)</span>'
+      : '<a href="'+ex+'/address/'+esc(it.target_address)+'" target="_blank" rel="noopener" class="mono dim">'+esc(short(it.target_address,10))+'</a>';
     const txCell = it.forward_tx_hash
       ? '<a class="mono" href="'+ex+'/tx/'+esc(it.forward_tx_hash)+'" target="_blank" rel="noopener">'+esc(short(it.forward_tx_hash,10))+'</a>'
       : '<span class="dim">—</span>';
     html += '<tr>'
       + '<td>'+esc(fmtUnix(it.created_at))+'</td>'
       + '<td>'+tenantCell(it)+'</td>'
-      + '<td>'+envPill(it.monerium_env)+'</td>'
+      + '<td><span class="pill">'+(it.provider === 'swan' ? 'SWAN' : 'MONERIUM')+'</span></td>'
+      + '<td>'+(it.provider === 'swan' ? '<span class="dim">—</span>' : envPill(it.monerium_env))+'</td>'
       + '<td><span class="pill '+pill+'">'+esc(it.state)+'</span></td>'
       + '<td class="amount">'+esc(eur(it.amount_cents))+'</td>'
       + '<td>'+checkoutLink+'</td>'
@@ -1466,7 +1474,8 @@ function wireForm() {
     const prevErr = form.querySelector('.form-error');
     if (prevErr) prevErr.remove();
 
-    const target = document.getElementById('f_target').value.trim();
+    const provider = document.getElementById('f_provider').value || undefined;
+    const target = provider === 'swan' ? undefined : document.getElementById('f_target').value.trim();
     const amountRaw = document.getElementById('f_amount').value.trim().replace(',', '.');
     const label = document.getElementById('f_label').value.trim();
     const ttl = parseInt(document.getElementById('f_ttl').value, 10) || 900;
@@ -1477,6 +1486,7 @@ function wireForm() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           tenant_id: document.getElementById('f_tenant').value,
+          provider,
           target_address: target,
           amount_eur: amountRaw,
           label: label || undefined,
@@ -1492,6 +1502,8 @@ function wireForm() {
       errDiv.className = 'form-error';
       errDiv.textContent = err.message === 'target_not_whitelisted'
         ? 'Adresa nije na payout whitelisti tenanta — dodaj je na kartici Whitelist pa pokušaj ponovno.'
+        : err.message === 'receiving_account_without_iban'
+        ? 'Tenantov Swan račun nema upisan IBAN — upiši ga u Tenanti → Računi primatelja.'
         : 'Greška: ' + esc(err.message);
       form.insertBefore(errDiv, form.firstChild);
       submitBtn.disabled = false;
@@ -1539,6 +1551,41 @@ async function fillModalTenants() {
   sel.innerHTML = modalTenants.map(t =>
     '<option value="' + esc(t.id) + '">' + esc(t.id) + ' — ' + esc(t.name) + (t.sandbox ? ' · sandbox' : '') + '</option>').join('');
   if (tenant) sel.value = tenant;
+  sel.addEventListener('change', fillModalProviders);
+  await fillModalProviders();
+}
+
+// Migration 0035: which provider the intent goes through. Swan = plain SEPA
+// onto the tenant's account, so there is no target address to ask for.
+const PROVIDER_LABEL = {
+  monerium: 'Monerium — SEPA → EURe na Gnosisu',
+  swan: 'Swan — SEPA Instant na tenantov račun (bez EURe-a)',
+};
+async function fillModalProviders() {
+  const sel = document.getElementById('f_provider');
+  const tsel = document.getElementById('f_tenant');
+  if (!sel || !tsel || !tsel.value) return;
+  let d = { available: ['monerium'], default: 'monerium' };
+  try {
+    const r = await fetch('/admin/api/tenants/' + encodeURIComponent(tsel.value) + '/providers', { credentials: 'same-origin' });
+    if (r.ok) d = await r.json();
+  } catch {}
+  sel.innerHTML = d.available.map(p =>
+    '<option value="' + esc(p) + '">' + esc(PROVIDER_LABEL[p] || p) + (p === d.default ? ' (zadano)' : '') + '</option>').join('');
+  sel.value = d.default;
+  sel.onchange = syncProviderFields;
+  syncProviderFields();
+}
+function syncProviderFields() {
+  const p = document.getElementById('f_provider').value;
+  const wrap = document.getElementById('f_target_wrap');
+  const input = document.getElementById('f_target');
+  const fiat = p === 'swan';
+  wrap.style.display = fiat ? 'none' : '';
+  input.required = !fiat;
+  document.getElementById('f_provider_hint').textContent = fiat
+    ? 'Nema EURe-a ni 0x adrese: novac ide na tenantov Swan račun, referenca je sid.'
+    : '';
 }
 document.getElementById('newIntent').addEventListener('click', () => { openModal(); fillModalTenants(); });
 document.getElementById('modalClose').addEventListener('click', closeModal);

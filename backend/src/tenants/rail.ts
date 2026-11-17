@@ -283,8 +283,11 @@ export async function getReferenceStyle(env: Env, tenantId: string | null): Prom
 
 export function intentReference(
   style: ReferenceStyle | null,
-  intent: { target_address: string; sid: string },
+  intent: { target_address: string; sid: string; provider?: string | null },
 ): string {
+  // Fiat provider (ADR 0032, migration 0035): no chain and no target, the
+  // reference only has to carry the sid for the matcher.
+  if (intent.provider === 'swan') return `sid:${intent.sid}`;
   return style?.mode === 'direct'
     ? directReference(style.chain, intent.target_address, intent.sid)
     : `mpt:${intent.target_address}?sid=${intent.sid}`;

@@ -46,6 +46,7 @@ import { routeAllOwedForwards } from './monerium/forward';
 import { renderCheckoutPage } from './checkout/page';
 import { isMoneriumSandboxTenant } from './monerium/sandboxFund';
 import { hasSwanSandboxAccount } from './providers/swan/sandboxTransfer';
+import { getPayeeDetails } from './inflow/provider';
 import { buildSandboxApi } from './sandbox/api';
 import { isSandboxTenant, sweepExpiredSandboxTenants } from './sandbox/db';
 import { sendAlert } from './alerts';
@@ -56,7 +57,6 @@ import { buildActivityApi } from './publicRead/activity';
 import { linkReceipts } from './receipts/link';
 import { mountReceiptPages } from './receipts/page';
 import { hostPolicyMiddleware } from './hosts';
-import { getSepaDetails } from './tenants/db';
 import { defaultTenantId } from './tenants/whitelist';
 
 const app = new Hono<{ Bindings: Env }>();
@@ -311,7 +311,7 @@ app.get('/checkout/:sid', async (c) => {
   const intent = await getIntent(c.env, sid);
   if (!intent) return c.text('intent not found', 404);
   const status = await buildIntentStatus(c.env, intent, c.executionCtx);
-  const sepa = await getSepaDetails(c.env, intent.tenant_id ?? defaultTenantId(c.env));
+  const sepa = await getPayeeDetails(c.env, intent, defaultTenantId(c.env));
   const style = await getReferenceStyle(c.env, intent.tenant_id);
   const sandbox = await isSandboxTenant(c.env, intent.tenant_id);
   const moneriumSandbox = !sandbox && (await isMoneriumSandboxTenant(c.env, intent.tenant_id));
