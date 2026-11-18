@@ -319,4 +319,14 @@ describe('admin v2', () => {
     expect(await s.html('/admin/v2/payments/paidprod0001')).not.toContain('/checkout/paidprod0001');
     expect(await s.html('/admin/v2/payments/new?tenant=crosulja-staging', 'sandbox')).toContain('Monerium sandbox · chiado');
   });
+
+  it('novi intent: direct tenant nudi samo projektne Safeove, ne whitelist', async () => {
+    s.raw.prepare(`UPDATE tenant_rail SET mode = 'direct' WHERE tenant_id = 'italk'`).run();
+    s.raw.prepare(`INSERT INTO tenant_campaigns (tenant_id, campaign_id, safe_address, label, created_at) VALUES ('italk', 'razvoj', '0x1111111111111111111111111111111111111111', 'Razvoj MPT-a', 0)`).run();
+    s.raw.prepare(`INSERT INTO tenant_payout_addresses (tenant_id, address, label, source, created_at) VALUES ('italk', '0x2222222222222222222222222222222222222222', 'Ops', 'admin', 0)`).run();
+    const h = await s.html('/admin/v2/payments/new');
+    expect(h).toContain('0x1111111111111111111111111111111111111111');
+    expect(h).not.toContain('0x2222222222222222222222222222222222222222');
+    expect(h).toContain('1 odobrenih primatelja (direct');
+  });
 });
