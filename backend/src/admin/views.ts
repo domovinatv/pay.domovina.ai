@@ -192,6 +192,8 @@ footer {
   color: var(--muted); font-size: .82rem; text-align: center;
 }
 tr[data-href] { cursor: pointer; }
+.try-v2 { margin-left: .75rem; font-size: .8rem; font-weight: 600; color: #fff; background: var(--navy); padding: .3rem .7rem; border-radius: 6px; text-decoration: none; white-space: nowrap; }
+.try-v2:hover { opacity: .9; }
 nav.tabs form.logout { margin-left: auto; display: flex; align-items: center; gap: .5rem; font-size: .8rem; }
 nav.tabs form.logout button { font: inherit; padding: .3rem .7rem; border: 1px solid var(--border); background: #fff; color: var(--navy); border-radius: 6px; cursor: pointer; }
 main.login { max-width: 26rem; margin: 3rem auto; }
@@ -364,6 +366,7 @@ ${TOAST_JS}
     <div class="word">MPT · <span class="accent">Mint Pay Transfer</span></div>
   </div>
   <span class="badge">${escapeHtml(badgeLabel)}</span>
+  <a class="try-v2" href="/admin/v2">Probaj v2 →</a>
 </header>
 <nav class="tabs">
   ${t('events', 'Webhook eventi', '/admin/')}

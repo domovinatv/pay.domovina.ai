@@ -6,7 +6,7 @@ import type { Child, FC } from 'hono/jsx';
 import type { AttentionItem, NewIntentOptions, Overview, ParkedForward, PaymentBundle, PaymentFilter, PaymentListRow, PayStatus, ResolveBundle, SearchHit } from './data';
 import type { OffRailLeg } from '../../monerium/offrail';
 import { isFiatProvider } from '../../inflow/provider';
-import { PAY_STATUSES } from './data';
+import { CHANNELS, PAY_STATUSES, type Channel } from './data';
 import type { Scope } from './scope';
 import { TenantNav } from './tenantPages';
 import {
@@ -36,6 +36,8 @@ const channel = (r: { provider: string | null; settled_provider?: string | null;
 // ---------------------------------------------------------------------------
 // Pregled
 // ---------------------------------------------------------------------------
+
+const CHANNEL_LABEL: Record<Channel, string> = { monerium: 'Monerium', swan: 'Swan', sim: 'Simulirano' };
 
 export const HomePage: FC<{ scope: Scope; ov: Overview; attention: AttentionItem[]; recent: PaymentListRow[] }> = ({ scope, ov, attention, recent }) => {
   const max = Math.max(1, ...ov.series.map((s) => s.cents));
@@ -70,12 +72,21 @@ export const HomePage: FC<{ scope: Scope; ov: Overview; attention: AttentionItem
               <>
                 <div class="chart" role="img" aria-label={`Promet po danu, zadnjih ${ov.days} dana`}>
                   {ov.series.map((s) => (
-                    <div class="bar" title={`${d(s.day)} · ${fmtEur(s.cents)} · ${s.count} uplata`}>
-                      <span class={s.cents ? '' : 'zero'} style={`height:${s.cents ? Math.max(3, (s.cents / max) * 100) : 1}%`} />
+                    <div class="bar" title={`${d(s.day)} · ${fmtEur(s.cents)} · ${s.count} uplata${CHANNELS.filter((c) => s.byChannel?.[c]).map((c) => ` · ${CHANNEL_LABEL[c]} ${fmtEur(s.byChannel![c]!)}`).join('')}`}>
+                      <span class={s.cents ? 'stack' : 'zero'} style={`height:${s.cents ? Math.max(3, (s.cents / max) * 100) : 1}%`}>
+                        {s.cents ? CHANNELS.filter((c) => s.byChannel?.[c]).map((c) => <i class={`ch-${c}`} style={`flex-grow:${s.byChannel![c]}`} />) : null}
+                      </span>
                     </div>
                   ))}
                 </div>
                 <div class="axis"><span>{d(first)}</span><span>{d(mid)}</span><span>{d(last)}</span></div>
+                {ov.channels && Object.keys(ov.channels).length ? (
+                  <div class="legend" aria-label="Po kanalu">
+                    {CHANNELS.filter((c) => ov.channels![c]).map((c) => (
+                      <a href={`/admin/v2/payments?status=paid${c === 'sim' ? '' : `&provider=${c}`}`}><i class={`ch-${c}`} />{CHANNEL_LABEL[c]} <strong>{fmtEur(ov.channels![c]!)}</strong></a>
+                    ))}
+                  </div>
+                ) : null}
               </>
             )}
           </div>

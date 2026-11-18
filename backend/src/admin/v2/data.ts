@@ -182,8 +182,15 @@ export interface Overview {
   created: number;
   pendingNow: number;
   prevVolumeCents: number;
-  series: Array<{ day: string; cents: number; count: number }>;
+  series: Array<{ day: string; cents: number; count: number; byChannel?: Partial<Record<Channel, number>> }>;
+  /// Ukupno po kanalu u razdoblju (legenda grafa).
+  channels?: Partial<Record<Channel, number>>;
 }
+
+/// Kanal plaćene uplate: provider iz intent_settlements, inače provider intenta, inače Monerium.
+export type Channel = 'monerium' | 'swan' | 'sim';
+export const CHANNELS: Channel[] = ['monerium', 'swan', 'sim'];
+const CHANNEL_SQL = `CASE COALESCE(s.provider, i.provider, 'monerium') WHEN 'swan' THEN 'swan' WHEN 'sandbox' THEN 'sim' ELSE 'monerium' END`;
 
 export async function getOverview(env: Env, scope: Scope, days: number): Promise<Overview> {
   const t = scope.where();
@@ -200,18 +207,28 @@ export async function getOverview(env: Env, scope: Scope, days: number): Promise
   ).bind(since, prevSince, since, since, since, now(), ...t.args).first<{
     vol: number | null; prev_vol: number | null; paid: number | null; created: number | null; pending_now: number | null;
   }>();
+  const ti = scope.where('i.tenant_id');
   const series = await env.DB.prepare(
-    `SELECT date(paid_at, 'unixepoch') AS day, SUM(COALESCE(amount_received_cents, amount_cents)) AS cents, COUNT(*) AS count
-       FROM payment_intents
-      WHERE state = 'paid' AND paid_at >= ? AND ${t.sql}
-      GROUP BY day ORDER BY day`,
-  ).bind(since, ...t.args).all<{ day: string; cents: number; count: number }>();
+    `SELECT date(i.paid_at, 'unixepoch') AS day, ${CHANNEL_SQL} AS channel,
+            SUM(COALESCE(i.amount_received_cents, i.amount_cents)) AS cents, COUNT(*) AS count
+       FROM payment_intents i LEFT JOIN intent_settlements s ON s.sid = i.sid
+      WHERE i.state = 'paid' AND i.paid_at >= ? AND ${ti.sql}
+      GROUP BY day, channel ORDER BY day`,
+  ).bind(since, ...ti.args).all<{ day: string; channel: Channel; cents: number; count: number }>();
   // Popuni dane bez uplata nulom, da graf ima ravnu vremensku os.
-  const byDay = new Map(series.results.map((r) => [r.day, r]));
+  const byDay = new Map<string, Overview['series'][number]>();
+  const channels: Partial<Record<Channel, number>> = {};
+  for (const r of series.results) {
+    const e = byDay.get(r.day) ?? { day: r.day, cents: 0, count: 0, byChannel: {} };
+    e.cents += r.cents; e.count += r.count;
+    e.byChannel![r.channel] = (e.byChannel![r.channel] ?? 0) + r.cents;
+    channels[r.channel] = (channels[r.channel] ?? 0) + r.cents;
+    byDay.set(r.day, e);
+  }
   const filled: Overview['series'] = [];
   for (let d = days - 1; d >= 0; d--) {
     const day = new Date((now() - d * 86400) * 1000).toISOString().slice(0, 10);
-    filled.push(byDay.get(day) ?? { day, cents: 0, count: 0 });
+    filled.push(byDay.get(day) ?? { day, cents: 0, count: 0, byChannel: {} });
   }
   return {
     days,
@@ -221,6 +238,7 @@ export async function getOverview(env: Env, scope: Scope, days: number): Promise
     created: agg?.created ?? 0,
     pendingNow: agg?.pending_now ?? 0,
     series: filled,
+    channels,
   };
 }
 
