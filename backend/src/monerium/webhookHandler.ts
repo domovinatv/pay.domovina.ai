@@ -14,6 +14,7 @@ import { sendAlert } from '../alerts';
 import type { TenantRail } from '../tenants/rail';
 import { orderState } from './orderState';
 import { publishIntentChange } from '../intents/stream';
+import { recordMoneriumCredit } from './inbox';
 
 /// Inbound Monerium webhook, for ONE tenant's rail (ADR 0017). Extracted from
 /// index.ts so the attribution and fail-closed branches are unit-testable;
@@ -50,6 +51,9 @@ export interface WebhookDeps {
   /// Stray resolver, read-only: the intent a reference-less order most
   /// plausibly paid, or null. Lights "received" early; never moves value.
   previewStray(order: MoneriumOrder): Promise<string | null>;
+  /// ADR 0032 inbox record (credit_events). Optional and never fatal: the
+  /// settlement still runs on the Monerium path.
+  recordCredit?(order: MoneriumOrder, hint: { sid: string | null; previewSid: string | null }): Promise<void>;
   /// Poke the intent's SSE stream (no-op while SSE is off).
   publish(sid: string | null): Promise<void>;
   alert(text: string): Promise<void>;
@@ -71,6 +75,9 @@ export function makeWebhookDeps(
     notifyLifecycle: (order) => notifyOrderLifecycle(env, order, rail.tenantId),
     forward: (order) => maybeForward(makeForwardDeps(env, rail), order),
     previewStray: (order) => previewStraySid(makeForwardDeps(env, rail), order),
+    recordCredit: async (order, hint) => {
+      await recordMoneriumCredit(env, order, rail.tenantId, hint);
+    },
     publish: (sid) => publishIntentChange(env, sid),
     alert: (text) => sendAlert(env, text),
     waitUntil: (p) => ctx.waitUntil(p),
@@ -203,6 +210,9 @@ export async function handleMoneriumWebhook(
         return { status: 200, body: { ok: true, stale: true } };
       }
       console.log(`monerium ${eventType} order ${order.id} state=${order.state ?? '?'}`);
+      // Inbox record before the forward is queued, so the settlement row the
+      // forward writes can link to the `booked` event.
+      if (deps.recordCredit) await safely(deps.recordCredit(order, { sid, previewSid: sidResolved }));
       // Merchant sees `payment.received` the moment Monerium holds the funds
       // (order.created, ~1 s) — the card-like "approved" moment — and
       // `payment.rejected` if Monerium refuses. Settlement (`intent.paid`)
