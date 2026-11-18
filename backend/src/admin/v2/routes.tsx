@@ -7,12 +7,12 @@ import type { Context, Hono } from 'hono';
 import type { Env } from '../../types';
 import { adminSession } from '../auth/mount';
 import {
-  getAttention, getOverview, getPaymentBundle, getResolveBundle, getTenantDetail, getWebhookEvent, listAuditV2, listInbox, listOutbox,
+  getAttention, getNewIntentOptions, getOverview, getPaymentBundle, getResolveBundle, getTenantDetail, getWebhookEvent, listAuditV2, listInbox, listOutbox,
   listParkedForwards, listPayments, listPayouts, listTenantStats, listWebhookEvents, PAY_STATUSES, search,
   type PaymentFilter, type PayStatus,
 } from './data';
 import {
-  DevelopersPage, EventDetailPage, HomePage, PaymentDetailPage, PaymentsPage, PayoutsPage, ResolvePage, SearchPage, TenantDetailPage,
+  DevelopersPage, EventDetailPage, HomePage, NewIntentPage, PaymentDetailPage, PaymentsPage, PayoutsPage, ResolvePage, SearchPage, TenantDetailPage,
   TenantsPage, type DevTab,
 } from './pages';
 import { loadScope, MODE_COOKIE, modeFromCookie, type Mode, type Scope } from './scope';
@@ -108,6 +108,17 @@ export function mountAdminV2(app: Hono<{ Bindings: Env }>): void {
     c.header('content-type', 'text/csv; charset=utf-8');
     c.header('content-disposition', `attachment; filename="mpt-uplate-${scope.mode}-${new Date().toISOString().slice(0, 10)}.csv"`);
     return c.body(rows.join('\n') + '\n');
+  });
+
+  // Novi intent: forma; slanje ide na postojeći POST /admin/api/intents.
+  // Prije /payments/:sid, inače bi „new” bio sid.
+  app.get('/admin/v2/payments/new', async (c) => {
+    const scope = await scopeOf(c);
+    const tenants = scope.tenants.filter((t) => t.status === 'active');
+    const want = c.req.query('tenant');
+    const pick = tenants.find((t) => t.id === want) ?? tenants.find((t) => t.id === scope.defaultId) ?? tenants[0] ?? null;
+    const opts = pick ? await getNewIntentOptions(c.env, pick.id) : null;
+    return page(c, scope, 'Novi intent', 'payments', <NewIntentPage scope={scope} tenants={tenants} tenantId={pick?.id ?? null} opts={opts} />);
   });
 
   app.get('/admin/v2/payments/:sid', async (c) => {

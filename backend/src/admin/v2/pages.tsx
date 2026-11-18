@@ -3,8 +3,9 @@
 
 import type { Child, FC } from 'hono/jsx';
 
-import type { AttentionItem, Overview, ParkedForward, PaymentBundle, PaymentFilter, PaymentListRow, PayStatus, ResolveBundle, SearchHit } from './data';
+import type { AttentionItem, NewIntentOptions, Overview, ParkedForward, PaymentBundle, PaymentFilter, PaymentListRow, PayStatus, ResolveBundle, SearchHit } from './data';
 import type { OffRailLeg } from '../../monerium/offrail';
+import { isFiatProvider } from '../../inflow/provider';
 import { PAY_STATUSES } from './data';
 import type { Scope } from './scope';
 import {
@@ -173,6 +174,80 @@ export const PaymentsPage: FC<{
         </div>
       </section>
       <p class="dim small" style="margin:0">Jedan red = jedan payment intent. Monerium order, webhook eventi, forward i isporuke vide se u detalju uplate.</p>
+    </>
+  );
+};
+
+// ---------------------------------------------------------------------------
+// Novi intent (zamjena za v1 modal; šalje na postojeći POST /admin/api/intents)
+// ---------------------------------------------------------------------------
+
+const PROVIDER_LABEL: Record<string, string> = {
+  monerium: 'Monerium — SEPA → EURe na Gnosisu',
+  swan: 'Swan — SEPA Instant na tenantov račun (bez EURe-a)',
+};
+
+export const NewIntentPage: FC<{
+  scope: Scope; tenants: Scope['tenants']; tenantId: string | null; opts: NewIntentOptions | null;
+}> = ({ scope, tenants, tenantId, opts }) => {
+  const t = tenantId ? scope.byId(tenantId) : null;
+  const fiatDefault = opts ? isFiatProvider(opts.providers.default) : false;
+  return (
+    <>
+      <a href="/admin/v2/payments" class="small">← Uplate</a>
+      <div class="row"><h1>Novi intent</h1></div>
+      <p class="dim" style="margin:0">Intent se kreira u ime tenanta, istim putem kao <Mono>POST /api/intents</Mono> s tajnim ključem. Zapisuje se u audit kao <Mono>intent.create_admin</Mono>.</p>
+      <form class="chips" method="get" action="/admin/v2/payments/new">
+        <label for="ntenant" class="dim small">Tenant</label>
+        <select id="ntenant" name="tenant" class="chip" data-autosubmit>
+          {tenants.map((x) => <option value={x.id} selected={x.id === tenantId}>{x.name ? `${x.name} (${x.id})` : x.id}</option>)}
+        </select>
+        <button class="btn" type="submit">Odaberi</button>
+        <span class="dim small">{scope.mode === 'sandbox' ? 'Samo sandbox tenanti; produkcijski su pod „Produkcija”.' : 'Samo produkcijski tenanti; sandbox je pod „Sandbox”.'}</span>
+      </form>
+      {!t || !opts ? (
+        <Empty>Nema aktivnog tenanta u ovom okruženju.</Empty>
+      ) : (
+        <section class="card" style="max-width:640px">
+          <div class="card-h"><h2>{t.name ?? t.id}</h2><span class="dim small">{t.sandbox ? 'sandbox · uplata se simulira' : `${t.monerium_env ?? '—'} · ${t.chain ?? '—'} · ${opts.mode ?? 'forward'}`}</span></div>
+          <form class="card-b form" id="intentForm" data-intent-form>
+            <input type="hidden" name="tenant_id" value={t.id} />
+            <div id="intentErr" class="callout bad" role="alert" hidden></div>
+            {opts.providers.available.length > 1 ? (
+              <label>Kanal (kuda uplata ide)
+                <select name="provider" data-provider>
+                  {opts.providers.available.map((p) => <option value={p} data-fiat={isFiatProvider(p) ? '1' : undefined} selected={p === opts.providers.default}>{(PROVIDER_LABEL[p] ?? p) + (p === opts.providers.default ? ' (zadano)' : '')}</option>)}
+                </select>
+              </label>
+            ) : <input type="hidden" name="provider" value={opts.providers.default} />}
+            <label data-target-wrap hidden={fiatDefault}>Odredište (0x adresa)
+              <input name="target_address" class="mono" list="intentTargets" pattern="^0x[0-9a-fA-F]{40}$" placeholder="0x…40 hex znakova" autocomplete="off"
+                required={!fiatDefault} value={opts.targets[0]?.address ?? ''} />
+              <datalist id="intentTargets">
+                {opts.targets.map((a) => <option value={a.address}>{`${a.kind === 'project' ? 'projekt' : 'whitelist'}${a.label ? ` · ${a.label}` : ''}`}</option>)}
+              </datalist>
+              <span class="dim small">
+                {opts.targets.length
+                  ? `${opts.targets.length} odobrenih primatelja (${opts.mode === 'direct' ? 'direct: samo projektni Safeovi' : 'payout whitelist i projekti'}); polje nudi popis.`
+                  : t.sandbox ? 'Sandbox: bilo koja adresa.' : 'Tenant nema odobrenih primatelja — intent će biti odbijen dok se ne doda projekt ili adresa na whitelistu.'}
+              </span>
+            </label>
+            <p class="dim small" data-fiat-hint hidden={!fiatDefault} style="margin:0">Nema EURe-a ni 0x adrese: novac ide na tenantov Swan račun, referenca je sid.</p>
+            <label>Iznos (EUR)
+              <input name="amount_eur" inputmode="decimal" required pattern="^[0-9]+([.,][0-9]{1,2})?$" placeholder="npr. 0,50" autocomplete="off" />
+            </label>
+            <label>Opis (neobavezno)
+              <input name="label" maxlength={140} placeholder="npr. test plaćanje" />
+            </label>
+            <label>Istječe za
+              <select name="expires_in_seconds">
+                {[[900, '15 min (zadano)'], [3600, '1 sat'], [21600, '6 sati'], [86400, '24 sata']].map(([v, l]) => <option value={String(v)}>{l}</option>)}
+              </select>
+            </label>
+            <div class="acts" style="justify-content:flex-start"><button class="btn primary" type="submit">Kreiraj intent</button></div>
+          </form>
+        </section>
+      )}
     </>
   );
 };
@@ -726,7 +801,7 @@ export const ResolvePage: FC<{
       <a href="/admin/v2/payouts" class="small">← Isplate</a>
       <div class="row" style="align-items:flex-start;padding-bottom:20px;border-bottom:1px solid var(--line)">
         <div class="two" style="gap:8px">
-          <span class="dim small">Zapela uplata · {tenantLabel(scope, b.tenantId)}</span>
+          <span class="dim small">{b.parked ? 'Zapela uplata' : 'Isplata'} · {tenantLabel(scope, b.tenantId)}</span>
           <span style="display:flex;gap:12px;align-items:center;flex-wrap:wrap">
             <span style="font-size:32px;font-weight:700" class="num">{fmtEur(b.amountCents)}</span>
             {f ? <FwdPill status={f.status} /> : null}

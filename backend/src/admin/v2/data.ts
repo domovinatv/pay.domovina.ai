@@ -6,6 +6,7 @@ import type { Scope } from './scope';
 import { getMoneriumOrder, type MoneriumOrderRow } from '../../monerium/db';
 import { listRerouteCandidates } from '../../intents/db';
 import { STRAY_LOOKBACK_SECONDS } from '../../monerium/strayResolver';
+import { tenantProviders, type TenantProviders } from '../../inflow/provider';
 
 const now = () => Math.floor(Date.now() / 1000);
 
@@ -480,6 +481,45 @@ export async function getTenantDetail(env: Env, id: string) {
     accounts: accounts.results,
     keys: keys.results,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Novi intent (forma)
+// ---------------------------------------------------------------------------
+
+export type IntentTarget = { address: string; label: string | null; kind: 'project' | 'whitelist' };
+
+export interface NewIntentOptions {
+  providers: TenantProviders;
+  mode: string | null;
+  /// Odobreni primatelji tenanta: aktivni projekti (direct) i payout whitelist
+  /// (forward). Samo prijedlozi u formi; pravilo provodi createIntentWith.
+  targets: IntentTarget[];
+}
+
+export async function getNewIntentOptions(env: Env, tenantId: string): Promise<NewIntentOptions> {
+  const [providers, rail, campaigns, addresses] = await Promise.all([
+    tenantProviders(env, tenantId),
+    env.DB.prepare(`SELECT mode FROM tenant_rail WHERE tenant_id = ?`).bind(tenantId).first<{ mode: string | null }>(),
+    env.DB.prepare(
+      `SELECT safe_address AS address, COALESCE(label, campaign_id) AS label FROM tenant_campaigns
+        WHERE tenant_id = ? AND revoked_at IS NULL ORDER BY created_at DESC`,
+    ).bind(tenantId).all<{ address: string; label: string | null }>(),
+    env.DB.prepare(
+      `SELECT address, label FROM tenant_payout_addresses WHERE tenant_id = ? AND revoked_at IS NULL ORDER BY created_at DESC`,
+    ).bind(tenantId).all<{ address: string; label: string | null }>(),
+  ]);
+  const seen = new Set<string>();
+  const targets: IntentTarget[] = [];
+  for (const [rows, kind] of [[campaigns.results, 'project'], [addresses.results, 'whitelist']] as const) {
+    for (const r of rows) {
+      const k = r.address.toLowerCase();
+      if (seen.has(k)) continue;
+      seen.add(k);
+      targets.push({ address: r.address, label: r.label, kind });
+    }
+  }
+  return { providers, mode: rail?.mode ?? null, targets };
 }
 
 // ---------------------------------------------------------------------------

@@ -271,4 +271,44 @@ describe('admin v2', () => {
     expect(await s.html('/admin/v2/payments/stuckprod001')).toContain('/admin/v2/payouts/order/ord-stuck');
     expect(await s.html('/admin/v2')).toContain('/admin/v2/payouts/order/ord-stuck');
   });
+
+  it('novi intent: forma u v2 umjesto v1 modala, po okruženju, s odobrenim primateljima', async () => {
+    s.raw.prepare(`INSERT INTO tenant_campaigns (tenant_id, campaign_id, safe_address, label, created_at) VALUES ('italk', 'razvoj', '0x1111111111111111111111111111111111111111', 'Razvoj MPT-a', 0)`).run();
+    s.raw.prepare(`INSERT INTO tenant_payout_addresses (tenant_id, address, label, source, created_at) VALUES ('italk', '0x2222222222222222222222222222222222222222', 'Ops', 'admin', 0),
+                   ('italk', '0x3333333333333333333333333333333333333333', 'Opozvana', 'admin', 0)`).run();
+    s.raw.prepare(`UPDATE tenant_payout_addresses SET revoked_at = 1 WHERE address = '0x3333333333333333333333333333333333333333'`).run();
+    const home = await s.html('/admin/v2');
+    expect(home).toContain('href="/admin/v2/payments/new"');
+    const h = await s.html('/admin/v2/payments/new');
+    expect(h).toContain('Novi intent');
+    expect(h).toContain('name="tenant_id" value="italk"');
+    expect(h).toContain('0x1111111111111111111111111111111111111111');
+    expect(h).toContain('0x2222222222222222222222222222222222222222');
+    expect(h).not.toContain('0x3333333333333333333333333333333333333333');
+    expect(h).not.toContain('sbx-abc');
+    expect(h).toContain("'/admin/api/intents'");
+    for (const js of inlineScripts(h)) expect(() => new Function(js)).not.toThrow();
+    const sbx = await s.html('/admin/v2/payments/new', 'sandbox');
+    expect(sbx).toContain('name="tenant_id" value="crosulja-staging"');
+    expect(sbx).toContain('<option value="sbx-abc"');
+    expect(await s.html('/admin/v2/payments/new?tenant=sbx-abc', 'sandbox')).toContain('name="tenant_id" value="sbx-abc"');
+    // Tenant iz drugog okruženja se ne može odabrati preko ?tenant=.
+    expect(await s.html('/admin/v2/payments/new?tenant=sbx-abc')).toContain('name="tenant_id" value="italk"');
+  });
+
+  it('novi intent: tenant sa Swan računom nudi Swan kao zadani, bez obaveznog odredišta', async () => {
+    s.raw.prepare(`INSERT INTO receiving_accounts (tenant_id, provider, mode, iban, environment, external_account_id, client_id, client_secret_enc, label, active, created_at)
+                   VALUES ('italk', 'swan', 'fiat_notify', 'FR7612345000019876543210987', 'live', 'acc1', 'cid', 'enc', 'Swan', 1, 0)`).run();
+    const h = await s.html('/admin/v2/payments/new');
+    expect(h).toMatch(/<option value="swan" data-fiat="1" selected="">/);
+    expect(h).toContain('data-target-wrap="true" hidden=""');
+  });
+
+  it('riješi: naslov kaže „Zapela uplata” samo kad je zapelo', async () => {
+    expect(await s.html('/admin/v2/payouts/order/ord-stuck')).toContain('Zapela uplata ·');
+    s.raw.prepare(`UPDATE monerium_forwards SET status = 'confirmed' WHERE order_id = 'ord-stuck'`).run();
+    const h = await s.html('/admin/v2/payouts/order/ord-stuck');
+    expect(h).not.toContain('Zapela uplata ·');
+    expect(h).toContain('Isplata ·');
+  });
 });
