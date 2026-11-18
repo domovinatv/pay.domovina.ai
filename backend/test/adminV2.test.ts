@@ -232,4 +232,43 @@ describe('admin v2', () => {
     expect([1, 2, 5, 11, 12, 21, 22, 25].map(tenantCount)).toEqual(
       ['1 tenant', '2 tenanta', '5 tenanata', '11 tenanata', '12 tenanata', '21 tenant', '22 tenanta', '25 tenanata']);
   });
+  it('riješi zapelu uplatu: kandidati za preusmjeravanje, razlog za drugi iznos, povijest forwarda', async () => {
+    // Otvoren intent istog tenanta oko vremena uplate, drugog iznosa → treba razlog.
+    s.raw.prepare(`INSERT INTO payment_intents (sid, target_address, amount_cents, state, created_at, expires_at, tenant_id)
+                   VALUES ('kandidat0001', '0x7a1c00000000000000000000000000000000e9b2', 2400, 'pending', ?, ?, 'italk')`)
+      .run(Math.floor(Date.parse('2026-11-18T16:00:00Z') / 1000), NOW + 600);
+    const h = await s.html('/admin/v2/payouts/order/ord-stuck');
+    expect(h).toContain('Novac je u MPT Safeu, ali nije proslijeđen');
+    expect(h).toContain('/admin/api/orders/ord-stuck/reroute');
+    expect(h).toContain('kandidat0001');
+    expect(h).toMatch(/data-reason="rr-kandidat0001"/);
+    expect(h).toContain('Riješeno ručno (izvan raila)');
+    expect(h).toContain('Ana Anić');
+    expect(h).not.toContain('minted-at-destination');
+    for (const js of inlineScripts(h)) expect(() => new Function(js)).not.toThrow();
+  });
+
+  it('riješi: mint izvan Safea nudi samo zatvaranje, ne preusmjeravanje', async () => {
+    s.raw.prepare(`UPDATE monerium_forwards SET error = 'not_whitelisted:mint_address_mismatch' WHERE order_id = 'ord-stuck'`).run();
+    const h = await s.html('/admin/v2/payouts/order/ord-stuck');
+    expect(h).toContain('Novac nije u MPT Safeu');
+    expect(h).toContain('/admin/api/orders/ord-stuck/minted-at-destination');
+    expect(h).not.toContain('/admin/api/orders/ord-stuck/reroute');
+    expect(h).not.toContain('Riješeno ručno (izvan raila)');
+  });
+
+  it('riješi: order koji nije zapeo nema akcija; nepostojeći order', async () => {
+    s.raw.prepare(`INSERT INTO monerium_forwards (order_id, target_address, amount_wei, amount_cents, sid, status, attempts, created_at, updated_at, tenant_id)
+                   VALUES ('ord-stuck', '0x7a1c00000000000000000000000000000000e9b2', '25000000000000000000', 2500, 'stuckprod001', 'confirmed', 1, ?, ?, 'italk')`).run(NOW - 10, NOW - 10);
+    const h = await s.html('/admin/v2/payouts/order/ord-stuck');
+    expect(h).toContain('Nije zapelo.');
+    expect(h).not.toMatch(/data-post="\/admin\/api\/(orders|forwards)/);
+    expect(await s.html('/admin/v2/payouts/order/nema')).toContain('ne postoji');
+  });
+
+  it('isplate i detalj uplate vode na v2 „Riješi”', async () => {
+    expect(await s.html('/admin/v2/payouts?status=blocked')).toContain('/admin/v2/payouts/order/ord-stuck');
+    expect(await s.html('/admin/v2/payments/stuckprod001')).toContain('/admin/v2/payouts/order/ord-stuck');
+    expect(await s.html('/admin/v2')).toContain('/admin/v2/payouts/order/ord-stuck');
+  });
 });

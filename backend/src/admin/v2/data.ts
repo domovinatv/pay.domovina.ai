@@ -3,6 +3,9 @@
 
 import type { Env } from '../../types';
 import type { Scope } from './scope';
+import { getMoneriumOrder, type MoneriumOrderRow } from '../../monerium/db';
+import { listRerouteCandidates } from '../../intents/db';
+import { STRAY_LOOKBACK_SECONDS } from '../../monerium/strayResolver';
 
 const now = () => Math.floor(Date.now() / 1000);
 
@@ -264,7 +267,7 @@ export async function getAttention(env: Env, scope: Scope, fmtAmount: (c: number
       severity: 'warn',
       title: f.status === 'blocked' ? 'Forward blokiran' : 'Forward neuspio',
       sub: `${tenantName(f.tenant_id)} · ${fmtAmount(f.amount_cents)} · ${(f.error ?? '').slice(0, 90) || f.status}`,
-      href: f.sid ? `/admin/v2/payments/${encodeURIComponent(f.sid)}` : `/admin/v2/payouts?status=${f.status}`,
+      href: `/admin/v2/payouts/order/${encodeURIComponent(f.order_id)}`,
       cta: f.status === 'failed' ? 'Ponovi' : 'Riješi',
       at: f.updated_at,
     });
@@ -537,4 +540,50 @@ export async function search(env: Env, raw: string): Promise<SearchHit[]> {
   // Isti cilj iz dva izvora = jedan pogodak.
   const seen = new Set<string>();
   return hits.filter((h) => (seen.has(h.href) ? false : (seen.add(h.href), true)));
+}
+
+// ---------------------------------------------------------------------------
+// Riješi zapelu uplatu (order → forward povijest + kandidati za preusmjeravanje)
+// ---------------------------------------------------------------------------
+
+export interface ResolveForward {
+  id: number; status: string; error: string | null; target_address: string; amount_cents: number | null;
+  sid: string | null; memo_prefix: string | null; tx_hash: string | null; created_at: number; updated_at: number;
+}
+
+export interface ResolveBundle {
+  order: MoneriumOrderRow;
+  tenantId: string;
+  forwards: ResolveForward[];
+  latest: ResolveForward | null;
+  /// Zadnji forward je failed/blocked → order je parkiran i akcije imaju smisla.
+  parked: boolean;
+  amountCents: number;
+  candidates: Awaited<ReturnType<typeof listRerouteCandidates>>;
+}
+
+export async function getResolveBundle(env: Env, orderId: string, defaultTenantId: string): Promise<ResolveBundle | null> {
+  const order = await getMoneriumOrder(env, orderId);
+  if (!order) return null;
+  const tenantId = order.tenant_id ?? defaultTenantId;
+  const fw = await env.DB.prepare(
+    `SELECT id, status, error, target_address, amount_cents, sid, memo_prefix, tx_hash, created_at, updated_at
+       FROM monerium_forwards WHERE order_id = ? ORDER BY id`,
+  ).bind(orderId).all<ResolveForward>();
+  const forwards = fw.results;
+  const latest = forwards[forwards.length - 1] ?? null;
+  const parked = !!latest && (latest.status === 'failed' || latest.status === 'blocked');
+  const amountCents = Math.round(Number(order.amount) * 100);
+  // Isti prozor kao /admin/api/orders/:id/reroute-candidates (v1 picker).
+  const placed = order.placed_at ? Math.floor(Date.parse(order.placed_at) / 1000) : now();
+  const candidates = parked
+    ? await listRerouteCandidates(env, {
+        tenantId,
+        defaultTenantId,
+        amountCents,
+        createdFrom: placed - STRAY_LOOKBACK_SECONDS,
+        createdTo: placed + 3600,
+      })
+    : [];
+  return { order, tenantId, forwards, latest, parked, amountCents, candidates };
 }
