@@ -329,4 +329,73 @@ describe('admin v2', () => {
     expect(h).not.toContain('0x2222222222222222222222222222222222222222');
     expect(h).toContain('1 odobrenih primatelja (direct');
   });
+
+  it('uređivanje tenanta: primatelji — liste, opoziv (DELETE), dodavanje i provjera kroz postojeći API', async () => {
+    s.raw.prepare(`INSERT INTO tenant_campaigns (tenant_id, campaign_id, safe_address, label, created_at, revoked_at) VALUES
+                   ('italk', 'razvoj-mpt', '0x1111111111111111111111111111111111111111', 'Razvoj MPT-a', 0, NULL),
+                   ('italk', 'stari-proj', '0x4444444444444444444444444444444444444444', 'Stari', 0, 5)`).run();
+    s.raw.prepare(`INSERT INTO tenant_payout_addresses (tenant_id, address, label, source, created_at, revoked_at) VALUES
+                   ('italk', '0x2222222222222222222222222222222222222222', 'Ops', 'admin', 0, NULL),
+                   ('italk', '0x3333333333333333333333333333333333333333', 'Opozvana', 'admin', 0, 9)`).run();
+    const h = await s.html('/admin/v2/tenants/italk/recipients');
+    expect(h).toContain('data-post="/admin/api/tenants/italk/campaigns/razvoj-mpt" data-method="DELETE"');
+    expect(h).toContain('data-post="/admin/api/tenants/italk/addresses/0x2222222222222222222222222222222222222222" data-method="DELETE"');
+    expect(h).toContain('data-api="/admin/api/tenants/italk/campaigns"');
+    expect(h).toContain('data-api="/admin/api/tenants/italk/addresses"');
+    expect(h).toContain('data-check="/admin/api/tenants/italk/check/"');
+    expect(h).not.toContain('stari-proj');
+    expect(h).not.toContain('Opozvana');
+    const all = await s.html('/admin/v2/tenants/italk/recipients?all=1');
+    expect(all).toContain('stari-proj');
+    expect(all).toContain('Opozvana');
+    for (const js of inlineScripts(h)) expect(() => new Function(js)).not.toThrow();
+    // Pregled tenanta vodi na nove kartice.
+    const ov = await s.html('/admin/v2/tenants/italk');
+    expect(ov).toContain('href="/admin/v2/tenants/italk/recipients"');
+    expect(ov).toContain('href="/admin/v2/tenants/italk/rail"');
+  });
+
+  it('uređivanje tenanta: rail zaključan dok je tenant aktivan, tajne se ne prikazuju', async () => {
+    s.raw.prepare(`UPDATE tenant_rail SET client_secret_enc = 'ENCSECRETXYZ', router_key_enc = 'ROUTERKEYENC', router_address = '0x5555555555555555555555555555555555555555' WHERE tenant_id = 'italk'`).run();
+    const h = await s.html('/admin/v2/tenants/italk/rail');
+    expect(h).not.toContain('ENCSECRETXYZ');
+    expect(h).not.toContain('ROUTERKEYENC');
+    expect(h).toContain('data-api="/admin/api/tenants/italk/rail" data-method="PUT"');
+    expect(h).toMatch(/<fieldset disabled=""/);
+    expect(h).toContain('/admin/api/tenants/italk/suspend');
+    expect(h).not.toContain('/admin/api/tenants/italk/activate');
+    expect(h).toContain('/admin/api/tenants/italk/rail/router-key?rotate=1');
+    for (const js of inlineScripts(h)) expect(() => new Function(js)).not.toThrow();
+    s.raw.prepare(`UPDATE tenants SET status = 'suspended' WHERE id = 'italk'`).run();
+    const sus = await s.html('/admin/v2/tenants/italk/rail');
+    expect(sus).not.toMatch(/<fieldset disabled=""/);
+    expect(sus).toContain('/admin/api/tenants/italk/resume');
+    // Sandbox tenant nema rail: kartica se ne nudi, ruta vodi na pregled.
+    expect(await s.html('/admin/v2/tenants/sbx-abc')).not.toContain('/admin/v2/tenants/sbx-abc/rail');
+    expect((await s.get('/admin/v2/tenants/sbx-abc/rail')).status).toBe(302);
+  });
+
+  it('uređivanje tenanta: ključevi (izdaj jednom, opozovi po 12-hex id-u) i Swan račun', async () => {
+    const hash = 'ab'.repeat(32);
+    s.raw.prepare(`INSERT INTO tenant_api_keys (key_hash, tenant_id, kind, label, created_at) VALUES (?, 'italk', 'secret', 'Shopify', 0)`).run(hash);
+    const h = await s.html('/admin/v2/tenants/italk/keys');
+    expect(h).not.toContain(hash);
+    expect(h).toContain(`data-post="/admin/api/tenants/italk/keys/${hash.slice(0, 12)}" data-method="DELETE"`);
+    expect(h).toContain('data-api="/admin/api/tenants/italk/keys" data-show="key"');
+    expect(h).toContain('data-api="/admin/api/tenants/italk/receiving-accounts"');
+    const sbx = await s.html('/admin/v2/tenants/sbx-abc/keys', 'sandbox');
+    expect(sbx).not.toContain('<option value="live">');
+    expect((await s.get('/admin/v2/tenants/nema/keys')).status).toBe(200);
+  });
+
+  it('novi tenant: forma na postojeći POST, prekidač okruženja ostaje na njoj', async () => {
+    expect(await s.html('/admin/v2/tenants')).toContain('href="/admin/v2/tenants/new"');
+    const h = await s.html('/admin/v2/tenants/new');
+    expect(h).toContain('data-api="/admin/api/tenants" data-redirect="/admin/v2/tenants/{tenant_id}/rail"');
+    for (const js of inlineScripts(h)) expect(() => new Function(js)).not.toThrow();
+    const r = await s.get('/admin/v2/mode/sandbox?next=' + encodeURIComponent('/admin/v2/tenants/new'));
+    expect(r.headers.get('location')).toBe('/admin/v2/tenants/new');
+    const r2 = await s.get('/admin/v2/mode/sandbox?next=' + encodeURIComponent('/admin/v2/tenants/italk/rail'));
+    expect(r2.headers.get('location')).toBe('/admin/v2/tenants');
+  });
 });

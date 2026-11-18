@@ -458,6 +458,7 @@ export async function getTenantDetail(env: Env, id: string) {
     router_key_enc: string | null; webhook_secret_enc: string | null; webhook_subscription_id: string | null;
     outbound_webhook_url: string | null; outbound_webhook_secret_enc: string | null; mode: string | null;
     verified_at: number | null; verify_report: string | null;
+    eure_contract: string | null; rpc_url: string | null; max_forward_cents: number | null; 
   }>();
   const sandboxRow = await env.DB.prepare(`SELECT * FROM sandbox_tenants WHERE tenant_id = ?`).bind(id).first<{ outbound_webhook_url: string | null; expires_at: number | null }>();
   const campaigns = await env.DB.prepare(
@@ -469,6 +470,7 @@ export async function getTenantDetail(env: Env, id: string) {
   const accounts = await env.DB.prepare(
     `SELECT id, provider, mode, iban, environment, external_account_id, label, active, created_at FROM receiving_accounts WHERE tenant_id = ? ORDER BY id`,
   ).bind(id).all<{ id: number; provider: string; mode: string; iban: string | null; environment: string; external_account_id: string | null; label: string | null; active: number; created_at: number }>();
+  const tenantRow = tenant as (typeof tenant & { allow_sources?: string | null }) | null;
   const keys = await env.DB.prepare(
     `SELECT key_hash, kind, label, created_at, revoked_at FROM tenant_api_keys WHERE tenant_id = ? ORDER BY revoked_at IS NOT NULL, created_at DESC`,
   ).bind(id).all<{ key_hash: string; kind: string; label: string | null; created_at: number; revoked_at: number | null }>();
@@ -480,7 +482,17 @@ export async function getTenantDetail(env: Env, id: string) {
     addressCount: addresses?.c ?? 0,
     accounts: accounts.results,
     keys: keys.results,
+    allowSources: tenantRow?.allow_sources ?? null,
   };
+}
+
+/// Payout whitelist tenanta (aktivne prve), za v2 „Primatelje”.
+export async function listTenantAddresses(env: Env, id: string) {
+  const r = await env.DB.prepare(
+    `SELECT address, label, source, created_at, created_by, revoked_at, revoked_by FROM tenant_payout_addresses
+      WHERE tenant_id = ? ORDER BY revoked_at IS NOT NULL, created_at DESC LIMIT 500`,
+  ).bind(id).all<{ address: string; label: string | null; source: string; created_at: number; created_by: string | null; revoked_at: number | null; revoked_by: string | null }>();
+  return r.results;
 }
 
 // ---------------------------------------------------------------------------

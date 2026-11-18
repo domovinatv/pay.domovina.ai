@@ -8,6 +8,7 @@ import type { OffRailLeg } from '../../monerium/offrail';
 import { isFiatProvider } from '../../inflow/provider';
 import { PAY_STATUSES } from './data';
 import type { Scope } from './scope';
+import { TenantNav } from './tenantPages';
 import {
   ago, Empty, explorerAddr, explorerTx, fmtAmountStr, fmtDate, fmtDateSec, fmtEur, fmtIso, FwdPill, Mono,
   PAY_LABEL, PayPill, Pill, short,
@@ -485,7 +486,7 @@ export const PayoutsPage: FC<{ scope: Scope; status?: string; items: Array<Parke
 
 export const TenantsPage: FC<{ scope: Scope; stats: Map<string, { vol: number; paid: number; last_intent: number | null }> }> = ({ scope, stats }) => (
   <>
-    <div class="row"><h1>Tenanti</h1><a class="btn" href="/admin/tenants">+ Novi tenant (v1)</a></div>
+    <div class="row"><h1>Tenanti</h1><span class="chips"><a class="btn small" href="/admin/tenants">v1</a><a class="btn primary" href="/admin/v2/tenants/new">+ Novi tenant</a></span></div>
     <section class="card">
       {scope.tenants.length ? (
         <div class="tbl"><table>
@@ -517,12 +518,14 @@ export interface TenantDetailData {
     roles_modifier: string | null; role_key: string | null; router_address: string | null; router_key_enc: string | null;
     webhook_secret_enc: string | null; webhook_subscription_id: string | null; outbound_webhook_url: string | null;
     outbound_webhook_secret_enc: string | null; mode: string | null; verified_at: number | null; verify_report: string | null;
+    eure_contract?: string | null; rpc_url?: string | null; max_forward_cents?: number | null;
   } | null;
   sandboxRow: { outbound_webhook_url: string | null; expires_at: number | null } | null;
   campaigns: Array<{ campaign_id: string; safe_address: string; label: string | null; created_at: number; revoked_at: number | null }>;
   addressCount: number;
   accounts: Array<{ id: number; provider: string; mode: string; iban: string | null; environment: string; external_account_id: string | null; label: string | null; active: number; created_at: number }>;
   keys: Array<{ key_hash: string; kind: string; label: string | null; created_at: number; revoked_at: number | null }>;
+  allowSources?: string | null;
 }
 
 export const TenantDetailPage: FC<{ scope: Scope; id: string; d: TenantDetailData; recent: PaymentListRow[]; stats?: { vol: number; paid: number }; audit: Array<{ id: number; at: number; action: string; actor: string; address: string | null }> }> = ({ scope, id, d, recent, stats, audit }) => {
@@ -570,9 +573,11 @@ export const TenantDetailPage: FC<{ scope: Scope; id: string; d: TenantDetailDat
         <div class="chips">
           {!isSbx && rail ? <a class="btn" href={`/admin/tenants/${encodeURIComponent(id)}/setup`}>On-chain setup</a> : null}
           <a class="btn" href="/admin/tenants">Uredi (v1)</a>
+          {!isSbx ? <a class="btn" href={`/admin/v2/tenants/${encodeURIComponent(id)}/rail`}>Rail i status</a> : null}
           {!isSbx && rail ? <button class="btn primary" data-post={`/admin/api/tenants/${encodeURIComponent(id)}/rail/verify`} data-render="verify">Pokreni provjeru</button> : null}
         </div>
       </div>
+      <TenantNav id={id} tab="overview" sandbox={isSbx} />
       <div class="cols">
         <section class="card" style="flex:2 1 460px">
           <div class="card-h" style="flex-direction:column;align-items:stretch;gap:10px">
@@ -597,7 +602,7 @@ export const TenantDetailPage: FC<{ scope: Scope; id: string; d: TenantDetailDat
           {tenant && !isSbx ? <section class="card"><div class="card-h"><h2>Prihvatni račun</h2></div><div class="card-b"><dl class="kv">
             <dt>Primatelj</dt><dd>{tenant.beneficiary_name}</dd><dt>IBAN</dt><dd><Mono>{tenant.iban}</Mono></dd><dt>BIC</dt><dd><Mono>{tenant.bic ?? '—'}</Mono></dd>
           </dl></div></section> : null}
-          <section class="card"><div class="card-h"><h2>Projekti (primatelji)</h2><a class="small" href="/admin/whitelist">Upravljaj (v1)</a></div>
+          <section class="card"><div class="card-h"><h2>Projekti (primatelji)</h2><a class="small" href={`/admin/v2/tenants/${encodeURIComponent(id)}/recipients`}>Upravljaj →</a></div>
             {d.campaigns.length ? d.campaigns.map((c) => (
               <div class="check"><span class="two" style="flex:1"><span style="display:flex;justify-content:space-between;gap:8px"><span style="font-weight:500">{c.label ?? c.campaign_id}</span>{c.revoked_at ? <Pill tone="muted">opozvan</Pill> : <Pill tone="ok">aktivan</Pill>}</span><Mono>{c.campaign_id} · {short(c.safe_address, 8, 6)}</Mono></span></div>
             )) : <Empty>Nema projekata.</Empty>}
