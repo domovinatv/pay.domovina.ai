@@ -34,6 +34,7 @@ import { mountTenantAdmin } from '../tenants/admin';
 import { actorOf, mountAdminAuth } from './auth/mount';
 import { loadTenantTags, tenantWhere } from './tenantTags';
 import { buildHpbOps, buildMoneriumOps } from './opsRoutes';
+import { mountAdminV2 } from './v2/routes';
 import { listOffRailLegs, makeOffRailDeps, markResolvedOffRail } from '../monerium/offrail';
 import {
   renderEventDetailPage,
@@ -402,6 +403,8 @@ export function mountAdminUi(
   // Tenant payout whitelist console + JSON API (ADR 0016). Inherits the same
   // Basic Auth gate as the rest of /admin/*.
   mountTenantAdmin(app);
+  // Admin v2 (Stripe-style redizajn) uz bok v1; čita isto, akcije zovu v1 API.
+  mountAdminV2(app);
 
   app.get('/admin/api/sybil/phone/:phoneHash', async (c) => {
     const phoneHash = c.req.param('phoneHash');
