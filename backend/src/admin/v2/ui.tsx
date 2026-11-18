@@ -285,6 +285,9 @@ td.r,th.r{text-align:right}
 .chart{display:flex;align-items:flex-end;gap:4px;height:180px;border-bottom:1px solid var(--line)}
 .bar{flex:1;display:flex;align-items:flex-end;height:100%}.bar span{display:block;width:100%;background:var(--navy);border-radius:3px 3px 0 0;min-height:2px}
 .bar span.zero{background:var(--line)}
+.bar span.stack{display:flex;flex-direction:column-reverse;overflow:hidden;background:none!important}.bar span.stack i{display:block;width:100%;flex-basis:0;min-height:1px}
+.ch-monerium{background:var(--navy)}.ch-swan{background:#0E9F6E}.ch-sim{background:var(--sbx)}
+.legend{display:flex;flex-wrap:wrap;gap:16px;margin-top:12px;font-size:13px}.legend a{color:var(--text);display:inline-flex;align-items:center;gap:6px}.legend i{width:10px;height:10px;border-radius:2px;display:inline-block}
 body.sandbox .bar span{background:var(--sbx)}
 .axis{display:flex;justify-content:space-between;font-size:12px;color:var(--dim);margin-top:6px}
 dl.kv{margin:0;display:grid;grid-template-columns:minmax(110px,.8fr) minmax(0,1.6fr);gap:9px 14px;font-size:13px}

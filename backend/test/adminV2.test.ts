@@ -404,4 +404,15 @@ describe('admin v2', () => {
     expect(h).toContain('Sandbox tenant (ADR 0024):');
     expect(h).not.toContain('Forward tenant:');
   });
+
+  it('pregled: graf prometa po kanalu (Monerium / Swan / simulirano) s legendom', async () => {
+    s.raw.prepare(`INSERT INTO intent_settlements (sid, provider, settlement_ref, created_at) VALUES ('paidprod0001', 'swan', 'swan_x', ?)`).run(NOW - 1800);
+    const h = await s.html('/admin/v2?days=7');
+    expect(h).toContain('class="ch-swan"');
+    expect(h).toContain('class="ch-monerium"');
+    expect(h).toMatch(/Swan <strong>10,00\s€<\/strong>/);
+    expect(h).toMatch(/Monerium <strong>5,00\s€<\/strong>/);
+    const sbx = await s.html('/admin/v2?days=7', 'sandbox');
+    expect(sbx).not.toContain('class="ch-swan"');
+  });
 });
