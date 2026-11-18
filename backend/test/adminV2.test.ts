@@ -311,4 +311,12 @@ describe('admin v2', () => {
     expect(h).not.toContain('Zapela uplata ·');
     expect(h).toContain('Isplata ·');
   });
+
+  it('novi intent: prekidač okruženja ostaje na formi; detalj čekajuće uplate nudi checkout', async () => {
+    const r = await s.get('/admin/v2/mode/sandbox?next=' + encodeURIComponent('/admin/v2/payments/new?tenant=italk'));
+    expect(r.headers.get('location')).toBe('/admin/v2/payments/new?tenant=italk');
+    expect(await s.html('/admin/v2/payments/waitprod0001')).toContain('href="/checkout/waitprod0001"');
+    expect(await s.html('/admin/v2/payments/paidprod0001')).not.toContain('/checkout/paidprod0001');
+    expect(await s.html('/admin/v2/payments/new?tenant=crosulja-staging', 'sandbox')).toContain('Monerium sandbox · chiado');
+  });
 });

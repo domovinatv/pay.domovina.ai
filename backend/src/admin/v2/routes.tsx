@@ -63,7 +63,8 @@ export function mountAdminV2(app: Hono<{ Bindings: Env }>): void {
     const mode: Mode = c.req.param('mode') === 'sandbox' ? 'sandbox' : 'production';
     const next = c.req.query('next') ?? '';
     // Samo unutar v2; detalj uplate/tenanta iz drugog okruženja vodi na listu.
-    const target = /^\/admin\/v2(\/(payments|tenants|developers\/events)\/[^?]+)/.test(next)
+    // Forma za novi intent ostaje forma (tenant se bira iz novog okruženja).
+    const target = /^\/admin\/v2(\/(payments|tenants|developers\/events)\/[^?]+)/.test(next) && !next.startsWith('/admin/v2/payments/new')
       ? next.replace(/^(\/admin\/v2\/(payments|tenants|developers)).*$/, '$1')
       : next.startsWith('/admin/v2') && !next.startsWith('//') ? next : '/admin/v2';
     const secure = new URL(c.req.url).protocol === 'https:' ? '; Secure' : '';
