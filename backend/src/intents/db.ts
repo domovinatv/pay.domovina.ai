@@ -126,6 +126,44 @@ export async function getIntent(
   return row ?? null;
 }
 
+/// Provider of a settlement, read off its order id: synthetic fiat orders
+/// carry `<provider>_` (inflow/settleFiat.ts), sandbox ones `sim_`.
+export function settlementProvider(orderId: string): string {
+  if (orderId.startsWith('swan_')) return 'swan';
+  if (orderId.startsWith('sim_')) return 'sandbox';
+  return 'monerium';
+}
+
+/// ADR 0032 §4: the settlement row is written in the SAME D1 transaction as
+/// the intent's `monerium_order_id`, and only when the claim actually landed
+/// (the SELECT re-reads the row the UPDATE just wrote). The two can never
+/// disagree. Upsert because a `pending` underpaid intent can still flip
+/// `paid` on a later order, which rewrites `monerium_order_id` too.
+async function runSettlementClaim(
+  env: Env,
+  claim: D1PreparedStatement,
+  sid: string,
+  orderId: string,
+): Promise<boolean> {
+  const now = Math.floor(Date.now() / 1000);
+  const link = env.DB.prepare(
+    `INSERT INTO intent_settlements (sid, provider, settlement_ref, credit_event_id, created_at)
+     SELECT i.sid, ?, i.monerium_order_id,
+            (SELECT ce.id FROM credit_events ce WHERE ce.settlement_ref = i.monerium_order_id
+              ORDER BY ce.id DESC LIMIT 1),
+            ?
+       FROM payment_intents i
+      WHERE i.sid = ? AND i.monerium_order_id = ?
+     ON CONFLICT (sid) DO UPDATE SET
+       provider = excluded.provider,
+       settlement_ref = excluded.settlement_ref,
+       credit_event_id = excluded.credit_event_id
+     WHERE intent_settlements.settlement_ref <> excluded.settlement_ref`,
+  ).bind(settlementProvider(orderId), now, sid, orderId);
+  const [res] = await env.DB.batch([claim, link]);
+  return (res.meta?.changes ?? 0) > 0;
+}
+
 /// Idempotently mark an intent paid. Only transitions `pending → paid`
 /// — already-paid or expired intents are left untouched so we never
 /// overwrite earlier (correct) settlement data with later (orphan)
@@ -141,7 +179,7 @@ export async function markIntentPaid(
   },
 ): Promise<boolean> {
   const now = Math.floor(Date.now() / 1000);
-  const res = await env.DB.prepare(
+  const claim = env.DB.prepare(
     `UPDATE payment_intents
         SET state = 'paid',
             paid_at = ?,
@@ -164,8 +202,7 @@ export async function markIntentPaid(
       args.amountReceivedCents,
       args.amountReceivedCents,
     )
-    .run();
-  return (res.meta?.changes ?? 0) > 0;
+  return runSettlementClaim(env, claim, sid, args.moneriumOrderId);
 }
 
 /// Settlement for LESS than the intent asked for (BW-01). The money did reach
@@ -183,7 +220,7 @@ export async function markIntentUnderpaid(
     amountReceivedCents: number | null;
   },
 ): Promise<boolean> {
-  const res = await env.DB.prepare(
+  const claim = env.DB.prepare(
     `UPDATE payment_intents
         SET monerium_order_id = ?,
             forward_id = ?,
@@ -203,8 +240,7 @@ export async function markIntentUnderpaid(
       args.amountReceivedCents,
       args.amountReceivedCents,
     )
-    .run();
-  return (res.meta?.changes ?? 0) > 0;
+  return runSettlementClaim(env, claim, sid, args.moneriumOrderId);
 }
 
 /// Settlement landed on an intent that had already EXPIRED. The state stays
@@ -222,7 +258,7 @@ export async function markIntentLate(
   },
 ): Promise<boolean> {
   const now = Math.floor(Date.now() / 1000);
-  const res = await env.DB.prepare(
+  const claim = env.DB.prepare(
     `UPDATE payment_intents
         SET paid_at = ?,
             monerium_order_id = ?,
@@ -241,8 +277,7 @@ export async function markIntentLate(
       args.amountReceivedCents,
       sid,
     )
-    .run();
-  return (res.meta?.changes ?? 0) > 0;
+  return runSettlementClaim(env, claim, sid, args.moneriumOrderId);
 }
 
 export interface ListIntentsFilter {

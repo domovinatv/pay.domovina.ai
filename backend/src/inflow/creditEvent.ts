@@ -85,11 +85,22 @@ export async function recordMatch(
   id: number,
   args: { sid: string | null; by: string | null; note: string | null; settlementRef: string | null },
 ): Promise<void> {
-  await env.DB.prepare(
+  const update = env.DB.prepare(
     `UPDATE credit_events SET matched_sid = ?, matched_by = ?, match_note = ?, settlement_ref = ? WHERE id = ?`,
-  )
-    .bind(args.sid, args.by, args.note, args.settlementRef, id)
-    .run();
+  ).bind(args.sid, args.by, args.note, args.settlementRef, id);
+  if (!args.settlementRef) {
+    await update.run();
+    return;
+  }
+  // ADR 0032 §4: the settlement row may already exist (a fiat settle runs
+  // before its match is recorded; a Monerium cron reconcile can settle before
+  // the webhook's inbox write). Link it to this event if it has none yet.
+  await env.DB.batch([
+    update,
+    env.DB.prepare(
+      `UPDATE intent_settlements SET credit_event_id = ? WHERE settlement_ref = ? AND credit_event_id IS NULL`,
+    ).bind(id, args.settlementRef),
+  ]);
 }
 
 export async function getCreditEvent(env: Env, provider: string, providerRef: string): Promise<CreditEventRow | null> {

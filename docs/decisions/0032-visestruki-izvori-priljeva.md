@@ -189,6 +189,14 @@ providera, inače 404 (kao danas `unknown_tenant`). Od rute nadalje sve je zajed
 6. **LHV Connect adapter:** kad ITalk ili tenant dobije LHV račun, a prije toga razvoj protiv
    emulatora `pinkainc/open-banking`.
 
+**Stanje 2026-11-18:** koraci 1 i 2 djelomično. `credit_events` + `receiving_accounts` (mig 0034,
+Swan kao prvi `fiat_notify`). Monerium webhook zapisuje verificirane `issue` ordere u inbox
+(`notified`/`booked`), ali je to zapis, ne pogon: matcher i forward za Monerium još idu starim
+putem. `intent_settlements` (mig 0036) puni se u istoj D1 transakciji kao `monerium_order_id`,
+uz backfill. Otvoreno: guardovi s `monerium_order_id IS NULL` na `intent_settlements`, Monerium
+matcher kroz `inflow/matcher.ts`, i fiat settlement bez sintetskog `monerium_orders` reda
+(`inflow/settleFiat.ts`), za što status timeline, potvrde i outbox moraju čitati inbox.
+
 Redoslijed providera i vrata za sandbox test („prvo sandbox, pa KYB”):
 [`docs/plans/provideri-priljeva-sandbox-prvo.md`](../plans/provideri-priljeva-sandbox-prvo.md).
 

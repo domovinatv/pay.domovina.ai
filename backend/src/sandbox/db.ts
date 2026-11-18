@@ -202,6 +202,12 @@ export async function sweepExpiredSandboxTenants(env: Env, limit = 50): Promise<
       env.DB.prepare(`DELETE FROM webhook_outbox WHERE tenant_id = ?`).bind(id),
       env.DB.prepare(`DELETE FROM monerium_forwards WHERE tenant_id = ? AND error = 'simulated'`).bind(id),
       env.DB.prepare(`DELETE FROM monerium_orders WHERE tenant_id = ? AND id LIKE 'sim\\_%' ESCAPE '\\'`).bind(id),
+      // FK children first: settlements → inbox events → receiving accounts.
+      env.DB.prepare(
+        `DELETE FROM intent_settlements WHERE sid IN (SELECT sid FROM payment_intents WHERE tenant_id = ?)`,
+      ).bind(id),
+      env.DB.prepare(`DELETE FROM credit_events WHERE tenant_id = ?`).bind(id),
+      env.DB.prepare(`DELETE FROM receiving_accounts WHERE tenant_id = ?`).bind(id),
       env.DB.prepare(`DELETE FROM payment_intents WHERE tenant_id = ?`).bind(id),
       env.DB.prepare(`DELETE FROM tenant_api_keys WHERE tenant_id = ?`).bind(id),
       env.DB.prepare(`DELETE FROM sandbox_tenants WHERE tenant_id = ?`).bind(id),

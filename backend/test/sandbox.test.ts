@@ -401,4 +401,27 @@ describe('expiry sweep', () => {
     }
     expect(raw.prepare(`SELECT COUNT(*) AS n FROM tenants WHERE id = 'live'`).get()).toEqual({ n: 1 });
   });
+
+  it('also removes its receiving accounts, inbox events and settlements (FK children)', async () => {
+    const { env, raw } = setup();
+    const { j: sb } = await newSandbox(env);
+    const sid = (await newIntent(env, sb.secret_key)).j.sid as string;
+    await simulate(env, sid);
+    const acc = raw.prepare(
+      `INSERT INTO receiving_accounts (tenant_id, provider, mode, environment, external_account_id, created_at)
+       VALUES (?, 'swan', 'fiat_notify', 'sandbox', 'acc-1', 0)`,
+    ).run(sb.tenant_id);
+    raw.prepare(
+      `INSERT INTO credit_events (provider, provider_ref, tenant_id, receiving_account_id, amount_cents, currency, finality, occurred_at, created_at)
+       VALUES ('swan', 'bosci_1:booked', ?, ?, 100, 'EUR', 'booked', 0, 0)`,
+    ).run(sb.tenant_id, acc.lastInsertRowid);
+    expect(raw.prepare(`SELECT COUNT(*) AS n FROM intent_settlements WHERE sid = ?`).get(sid)).toEqual({ n: 1 });
+    raw.prepare(`UPDATE sandbox_tenants SET expires_at = 1 WHERE tenant_id = ?`).run(sb.tenant_id);
+    expect(await sweepExpiredSandboxTenants(env)).toBe(1);
+    expect(raw.prepare(`SELECT COUNT(*) AS n FROM intent_settlements WHERE sid = ?`).get(sid)).toEqual({ n: 0 });
+    for (const table of ['credit_events', 'receiving_accounts', 'tenants']) {
+      const col = table === 'tenants' ? 'id' : 'tenant_id';
+      expect(raw.prepare(`SELECT COUNT(*) AS n FROM ${table} WHERE ${col} = ?`).get(sb.tenant_id)).toEqual({ n: 0 });
+    }
+  });
 });
