@@ -217,6 +217,9 @@ describe('admin v2', () => {
   it('isplate: zapeli forward ima akciju (v1), a mint izravno nije „proslijeđeno”', async () => {
     const h = await s.html('/admin/v2/payouts?status=blocked');
     expect(h).toContain('/admin/forwards?status=blocked');
+    expect(h).not.toContain('minted-at-destination'); // samo za mint_address_mismatch
+    s.raw.prepare(`UPDATE monerium_forwards SET error = 'not_whitelisted:mint_address_mismatch' WHERE order_id = 'ord-stuck'`).run();
+    expect(await s.html('/admin/v2/payouts?status=blocked')).toContain('/admin/api/orders/ord-stuck/minted-at-destination');
     s.raw.prepare(`INSERT INTO monerium_forwards (order_id, target_address, amount_wei, amount_cents, sid, status, error, attempts, created_at, updated_at, tenant_id)
                    VALUES ('ord-direct', '0x7a1c00000000000000000000000000000000e9b2', '0', 1000, 'paidprod0001', 'confirmed', 'direct_mint', 0, ?, ?, 'italk')`).run(NOW - 1800, NOW - 1800);
     const d = await s.html('/admin/v2/payments/paidprod0001');

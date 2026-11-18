@@ -35,7 +35,7 @@ import { actorOf, mountAdminAuth } from './auth/mount';
 import { loadTenantTags, tenantWhere } from './tenantTags';
 import { buildHpbOps, buildMoneriumOps } from './opsRoutes';
 import { mountAdminV2 } from './v2/routes';
-import { listOffRailLegs, makeOffRailDeps, markResolvedOffRail } from '../monerium/offrail';
+import { listOffRailLegs, makeMintedDirectDeps, makeOffRailDeps, markMintedAtDestination, markResolvedOffRail } from '../monerium/offrail';
 import {
   renderEventDetailPage,
   renderEventsPage,
@@ -227,6 +227,15 @@ export function mountAdminUi(
       reason: reason || undefined,
     });
     return r.ok ? c.json(r) : c.json(r, r.error === 'bad_tx_hash' ? 400 : 409);
+  });
+  // Parked order whose mint landed straight at the referenced address (not the
+  // rail's Safe): nothing to forward, the money is already there. Verified
+  // on-chain against the order's own mint tx; moves no money.
+  app.post('/admin/api/orders/:id/minted-at-destination', async (c) => {
+    const loaded = await loadParkedOrder(c.env, c.req.param('id'));
+    if ('error' in loaded) return c.json({ error: loaded.error }, 404);
+    const r = await markMintedAtDestination(makeMintedDirectDeps(c.env, loaded.rail), loaded.order, actorOf(c));
+    return r.ok ? c.json(r) : c.json(r, 409);
   });
   // Outbound merchant webhook outbox (migration 0015).
   app.get('/admin/api/outbox', async (c) => {

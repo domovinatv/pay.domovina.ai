@@ -199,3 +199,120 @@ export function makeOffRailDeps(env: Env, rail: TenantRail): OffRailDeps {
     alert: (text) => sendAlert(env, text),
   };
 }
+
+// ---------------------------------------------------------------------------
+// Mint je već na odredištu (forward #92, 11. 10. 2026.)
+// ---------------------------------------------------------------------------
+//
+// Monerium je mintao izravno na adresu iz reference, ne na Safe tenanta, pa je
+// gate forward blokirao (`mint_address_mismatch`). Nema što proslijediti:
+// novac je već tamo. Današnji kod isti slučaj za poznati intent bilježi kao
+// `direct_mint`; ovo zatvara stare parkirane redove kojima to nije pomoglo.
+//
+// Provjera je na lancu, kao i za „riješeno ručno”: u jednom od orderovih tx-ova
+// mora postojati EURe Transfer od 0x0 (mint) na orderovu adresu, točno na
+// iznos ordera, i taj leg ne smije zatvarati neki drugi order.
+
+const PARKED = new Set(['blocked', 'failed']);
+
+export interface MintedDirectDeps {
+  /// Prihvatni Safe raila — mint na njega znači da novac JEST u Safeu (to je reroute).
+  safe: string;
+  getForwardByOrder(orderId: string): Promise<{ status: string } | null>;
+  /// EURe mintovi (Transfer od 0x0) u uspješnom tx-u; null = tx ne postoji / pao.
+  mintsIn(txHash: string): Promise<OffRailTransfer[] | null>;
+  usedLegs: OffRailDeps['usedLegs'];
+  record: OffRailDeps['record'];
+  audit: OffRailDeps['audit'];
+  alert: OffRailDeps['alert'];
+}
+
+export type MintedDirectResult =
+  | { ok: true; forwardId: number; to: string; txHash: string; logIndex: number }
+  | { ok: false; error: 'not_processed' | 'not_parked' | 'already_forwarded' | 'already_resolved'
+      | 'no_mint_address' | 'minted_to_safe' | 'no_mint_to_address' };
+
+export async function markMintedAtDestination(
+  deps: MintedDirectDeps,
+  order: MoneriumOrder,
+  actor: string,
+): Promise<MintedDirectResult> {
+  if (order.kind !== 'issue' || (order.state ?? order.meta?.state) !== 'processed') {
+    return { ok: false, error: 'not_processed' };
+  }
+  const existing = await deps.getForwardByOrder(order.id);
+  if (existing && LIVE.has(existing.status)) return { ok: false, error: 'already_forwarded' };
+  if (existing?.status === 'resolved_offrail') return { ok: false, error: 'already_resolved' };
+  if (!existing || !PARKED.has(existing.status)) return { ok: false, error: 'not_parked' };
+
+  const to = (order.address ?? '').toLowerCase();
+  if (!/^0x[0-9a-f]{40}$/.test(to)) return { ok: false, error: 'no_mint_address' };
+  if (to === deps.safe.toLowerCase()) return { ok: false, error: 'minted_to_safe' };
+
+  const want = eurToWei(order.amount ?? '0');
+  for (const raw of order.meta?.txHashes ?? []) {
+    const tx = raw.trim().toLowerCase();
+    if (!/^0x[0-9a-f]{64}$/.test(tx)) continue;
+    const mints = await deps.mintsIn(tx);
+    if (!mints) continue;
+    const used = await deps.usedLegs(tx);
+    if (used.includes(null)) continue;
+    const pick = mints.find((m) => m.to.toLowerCase() === to && m.valueWei === want && !used.includes(m.logIndex));
+    if (!pick) continue;
+    const amountCents = parseAmountCents(order.amount);
+    const forwardId = await deps.record({
+      orderId: order.id,
+      txHash: tx,
+      logIndex: pick.logIndex,
+      to,
+      valueWei: pick.valueWei,
+      amountCents,
+      sid: extractRoutingFromOrder(order).sid,
+    });
+    await deps.audit({
+      kind: 'minted_at_destination',
+      order_id: order.id,
+      tx_hash: tx,
+      log_index: pick.logIndex,
+      to,
+      value_wei: pick.valueWei.toString(),
+      order_amount_cents: amountCents,
+      previous_status: existing.status,
+      actor,
+    });
+    await deps.alert(
+      `✅ <b>Parkirana uplata zatvorena: mint je već na odredištu</b>\n` +
+        `order: <code>${order.id}</code> · iznos: <b>${order.amount} EUR</b>\n` +
+        `mint tx: <code>${tx}</code> → <code>${to}</code>\n` +
+        `označio: <code>${actor}</code>`,
+    ).catch(() => {});
+    return { ok: true, forwardId, to, txHash: tx, logIndex: pick.logIndex };
+  }
+  return { ok: false, error: 'no_mint_to_address' };
+}
+
+export function makeMintedDirectDeps(env: Env, rail: TenantRail): MintedDirectDeps {
+  const base = makeOffRailDeps(env, rail);
+  const s = rail.signer;
+  const client = createPublicClient({
+    chain: s.chain === 'chiado' ? gnosisChiado : gnosis,
+    transport: http(s.rpcUrl),
+  });
+  const eure = s.eureContract.toLowerCase();
+  const zero = '0x0000000000000000000000000000000000000000';
+  return {
+    safe: s.safe,
+    getForwardByOrder: base.getForwardByOrder,
+    mintsIn: async (txHash) => {
+      const receipt = await client.getTransactionReceipt({ hash: txHash as Hex }).catch(() => null);
+      if (!receipt || receipt.status !== 'success') return null;
+      return parseEventLogs({ abi: [TRANSFER], logs: receipt.logs })
+        .filter((l) => l.address.toLowerCase() === eure && l.args.from.toLowerCase() === zero)
+        .map((l) => ({ logIndex: l.logIndex, to: l.args.to, valueWei: l.args.value }));
+    },
+    usedLegs: base.usedLegs,
+    record: base.record,
+    audit: base.audit,
+    alert: base.alert,
+  };
+}
