@@ -244,6 +244,7 @@ h2{margin:0;font-size:15px;font-weight:600}
 .card-b{padding:16px 20px}
 .btn{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--line);background:#fff;color:var(--text);border-radius:8px;padding:0 14px;min-height:36px;font:inherit;font-weight:500;cursor:pointer;white-space:nowrap}
 .btn:hover{text-decoration:none;border-color:#C4CBD6}
+.acts{display:inline-flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
 .btn.primary{background:var(--navy);border-color:var(--navy);color:#fff;font-weight:600;min-height:40px}
 .btn.danger{color:var(--bad)}.btn[data-armed]{background:var(--bad);border-color:var(--bad);color:#fff}
 .btn:disabled{opacity:.55;cursor:default}

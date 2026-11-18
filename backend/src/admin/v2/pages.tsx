@@ -386,7 +386,10 @@ export const PayoutsPage: FC<{ scope: Scope; status?: string; items: Array<Parke
                   <td class="dim">{tenantLabel(scope, f.tenant_id)}</td>
                   <td>{f.tx_hash ? <a href={explorerTx(chain, f.tx_hash)} target="_blank" rel="noopener" class="mono">{short(f.tx_hash, 8, 4)} ↗</a> : '—'}</td>
                   <td class="r dim" style="white-space:nowrap">{fmtDate(f.updated_at)}</td>
-                  <td class="r">{parkedIds.has(f.id) ? <a class="btn" href={`/admin/forwards?status=${f.status}`}>{f.status === 'failed' ? 'Ponovi' : 'Riješi'} (v1)</a> : null}</td>
+                  <td class="r">{parkedIds.has(f.id) ? <span class="acts">
+                    {f.error?.includes('mint_address_mismatch') ? <button class="btn primary" data-post={`/admin/api/orders/${encodeURIComponent(f.order_id)}/minted-at-destination`} data-confirm="Potvrdi: provjeri mint na lancu" data-done="Zatvoreno: mint je na odredištu." title="Monerium je mintao izravno na adresu iz reference; provjera mint tx-a na lancu, novac se ne miče">Mint je već na odredištu</button> : null}
+                    <a class="btn" href={`/admin/forwards?status=${f.status}`}>{f.status === 'failed' ? 'Ponovi' : 'Riješi'} (v1)</a>
+                  </span> : null}</td>
                 </tr>
               );
             })}</tbody>
