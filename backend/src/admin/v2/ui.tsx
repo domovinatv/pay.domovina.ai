@@ -179,7 +179,7 @@ export const Layout: FC<LayoutProps> = ({ title, nav, scope, email, path, childr
                 <a href={modeLink('production')} class={sbx ? '' : 'on'} aria-pressed={sbx ? 'false' : 'true'}>Produkcija <span class="cnt">{prodCount}</span></a>
                 <a href={modeLink('sandbox')} class={sbx ? 'on sbx' : ''} aria-pressed={sbx ? 'true' : 'false'}>Sandbox <span class="cnt">{sbxCount}</span></a>
               </div>
-              <a class="btn primary" href="/admin/intents">+ Novi intent</a>
+              <a class="btn primary" href="/admin/v2/payments/new">+ Novi intent</a>
             </header>
             {sbx ? (
               <div class="sbxbar"><strong>Sandbox podaci</strong> — samo sandbox/chiado i <span class="mono">sbx-</span> tenanti. Ništa ovdje nije pravi novac.</div>
@@ -316,6 +316,10 @@ pre{margin:0;background:var(--side);border:1px solid var(--line);border-radius:8
 .progress{height:6px;border-radius:999px;background:var(--muted-bg);overflow:hidden}.progress span{display:block;height:100%;background:#16A34A}
 .ava{width:44px;height:44px;border-radius:10px;background:var(--navy);color:#fff;font-weight:700;font-size:18px;display:flex;align-items:center;justify-content:center;flex:none}
 body.sandbox .ava{background:var(--sbx)}
+.form{display:flex;flex-direction:column;gap:14px}.form label{display:flex;flex-direction:column;gap:6px;font-size:13px;font-weight:500}
+.form input,.form select{border:1px solid var(--line);border-radius:8px;padding:0 10px;min-height:38px;font:inherit;font-weight:400;background:#fff;color:var(--text);min-width:0}
+.form input:focus,.form select:focus{outline:0;border-color:var(--navy);box-shadow:0 0 0 3px var(--navy-bg)}
+[hidden]{display:none!important}
 .toast{position:fixed;right:20px;bottom:20px;background:var(--text);color:#fff;padding:12px 16px;border-radius:10px;font-size:13px;max-width:420px;box-shadow:0 8px 24px rgba(0,0,0,.18)}
 @media (max-width:720px){.top,.main{padding-left:16px;padding-right:16px}.sbxbar{padding:8px 16px}.kpi{border-right:0;border-bottom:1px solid var(--line)}
 .side{flex:1 1 100%;max-width:none;flex-direction:row;align-items:center;gap:4px;padding:8px 16px;overflow-x:auto;border-right:0;border-bottom:1px solid var(--line);position:sticky;top:0;z-index:5}
@@ -339,6 +343,55 @@ const JS = `
   document.addEventListener('click', function(e){
     if (e.target.closest('a,button,input,summary,label')) return;
     var tr = e.target.closest('tr[data-href]'); if (tr) window.location.href = tr.dataset.href;
+  });
+  // Promjena <select data-autosubmit> odmah pošalje svoju GET formu.
+  document.addEventListener('change', function(e){
+    var s = e.target.closest && e.target.closest('select[data-autosubmit]'); if (s && s.form) s.form.submit();
+    var p = e.target.closest && e.target.closest('select[data-provider]'); if (p) syncProvider(p.form);
+  });
+  function syncProvider(f){
+    var p = f.querySelector('[data-provider]'); if (!p) return;
+    var fiat = !!p.selectedOptions[0] && p.selectedOptions[0].dataset.fiat === '1';
+    var w = f.querySelector('[data-target-wrap]'), h = f.querySelector('[data-fiat-hint]'), i = f.elements.target_address;
+    if (w) w.hidden = fiat; if (h) h.hidden = !fiat; if (i) i.required = !fiat;
+  }
+  // Novi intent: POST /admin/api/intents (isti put kao v1 modal), pa na detalj uplate.
+  var INTENT_ERR = {
+    target_not_whitelisted: 'Adresa nije među odobrenim primateljima tenanta (whitelist ili projekt).',
+    target_not_campaign: 'Direct tenant: odredište mora biti jedan od njegovih projektnih Safeova.',
+    receiving_account_without_iban: 'Tenantov Swan račun nema upisan IBAN.',
+    invalid_target_address: 'Odredište nije ispravna 0x adresa.',
+    invalid_amount_eur: 'Iznos nije ispravan.',
+    amount_out_of_range: 'Iznos je izvan dopuštenog raspona.',
+    too_many_open_intents: 'Previše otvorenih intenta na to odredište.',
+    tenant_rail_not_configured: 'Tenant nema postavljen rail (Monerium webhook).',
+    tenant_rail_disabled: 'Multi-tenant rail je isključen.',
+    tenant_suspended: 'Tenant je suspendiran.'
+  };
+  document.addEventListener('submit', function(e){
+    var f = e.target; if (!f.matches || !f.matches('form[data-intent-form]')) return;
+    e.preventDefault();
+    var err = document.getElementById('intentErr'); if (err) { err.hidden = true; err.textContent = ''; }
+    var btn = f.querySelector('button[type=submit]'); var label = btn.textContent; btn.disabled = true; btn.textContent = 'Kreiram…';
+    var el = f.elements, prov = el.provider ? el.provider.value : '';
+    var fiat = el.provider && el.provider.selectedOptions && el.provider.selectedOptions[0] ? el.provider.selectedOptions[0].dataset.fiat === '1' : false;
+    var body = {
+      tenant_id: el.tenant_id.value,
+      provider: prov || undefined,
+      target_address: fiat ? undefined : el.target_address.value.trim(),
+      amount_eur: el.amount_eur.value.trim().replace(',', '.'),
+      label: el.label.value.trim() || undefined,
+      expires_in_seconds: Number(el.expires_in_seconds.value) || 900
+    };
+    fetch('/admin/api/intents', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })
+      .then(function(r){ return r.json().catch(function(){ return {}; }).then(function(j){ return { ok: r.ok, status: r.status, j: j }; }); })
+      .then(function(res){
+        if (res.ok && res.j.sid) { location.href = '/admin/v2/payments/' + encodeURIComponent(res.j.sid); return; }
+        btn.disabled = false; btn.textContent = label;
+        var code = res.j.error || ('HTTP ' + res.status);
+        if (err) { err.textContent = (INTENT_ERR[code] || 'Greška') + ' (' + code + ')'; err.hidden = false; err.scrollIntoView({ block: 'nearest' }); }
+      })
+      .catch(function(x){ btn.disabled = false; btn.textContent = label; if (err) { err.textContent = 'Mreža: ' + x.message; err.hidden = false; } });
   });
   function toast(msg){ var d=document.createElement('div'); d.className='toast'; d.textContent=msg; document.body.appendChild(d); setTimeout(function(){d.remove();}, 6000); }
   // Akcije: <button data-post="/admin/api/..." data-confirm="Tekst">. Prvi klik
