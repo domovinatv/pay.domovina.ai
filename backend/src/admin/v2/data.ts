@@ -511,7 +511,13 @@ export async function getNewIntentOptions(env: Env, tenantId: string): Promise<N
   ]);
   const seen = new Set<string>();
   const targets: IntentTarget[] = [];
-  for (const [rows, kind] of [[campaigns.results, 'project'], [addresses.results, 'whitelist']] as const) {
+  // Direct: Monerium minta ravno na odredište, API prima samo projektni Safe
+  // (target_not_campaign); whitelist se tamo ne gleda pa ga ne nudimo.
+  const direct = rail?.mode === 'direct';
+  const sources = direct
+    ? ([[campaigns.results, 'project']] as const)
+    : ([[campaigns.results, 'project'], [addresses.results, 'whitelist']] as const);
+  for (const [rows, kind] of sources) {
     for (const r of rows) {
       const k = r.address.toLowerCase();
       if (seen.has(k)) continue;
