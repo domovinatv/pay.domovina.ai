@@ -225,7 +225,7 @@ function buildSteps(b: PaymentBundle, chain: string | null): Step[] {
     const tone: StepTone = fwd.status === 'confirmed' || fwd.status === 'resolved_offrail' ? 'ok' : fwd.status === 'blocked' ? 'warn' : fwd.status === 'failed' ? 'bad' : 'wait';
     steps.push({
       tone,
-      title: fwd.status === 'confirmed' ? 'Proslijeđeno na odredište' : fwd.status === 'blocked' ? 'Forward blokiran' : fwd.status === 'failed' ? 'Forward neuspio' : fwd.status === 'resolved_offrail' ? 'Riješeno ručno (izvan raila)' : 'Forward u letu',
+      title: fwd.status === 'confirmed' && fwd.error === 'direct_mint' ? 'Mint izravno na odredište' : fwd.status === 'confirmed' && fwd.error === 'self_target_noop' ? 'Mint na Safe tenanta (nema forwarda)' : fwd.status === 'confirmed' ? 'Proslijeđeno na odredište' : fwd.status === 'blocked' ? 'Forward blokiran' : fwd.status === 'failed' ? 'Forward neuspio' : fwd.status === 'resolved_offrail' ? 'Riješeno ručno (izvan raila)' : 'Forward u letu',
       sub: <>{fmtEur(fwd.amount_cents)} → <a href={explorerAddr(chain, fwd.target_address)} target="_blank" rel="noopener"><Mono>{short(fwd.target_address, 8, 6)}</Mono></a>{fwd.error ? ` · ${fwd.error}` : ''}{b.forwards.length > 1 ? ` · ${b.forwards.length} pokušaja` : ''}</>,
       ref: fwd.tx_hash ? <a href={explorerTx(chain, fwd.tx_hash)} target="_blank" rel="noopener"><Mono>tx {short(fwd.tx_hash, 10, 6)} ↗</Mono></a> : <Mono>forward #{fwd.id}</Mono>,
       at: fmtDateSec(fwd.updated_at),
@@ -374,7 +374,7 @@ export const PayoutsPage: FC<{ scope: Scope; status?: string; items: Array<Parke
       <section class="card">
         {items.length ? (
           <div class="tbl"><table>
-            <thead><tr><th>Iznos</th><th>Status</th><th>Odredište</th><th>Uplata</th><th>Tenant</th><th>TX</th><th class="r">Ažurirano</th></tr></thead>
+            <thead><tr><th>Iznos</th><th>Status</th><th>Odredište</th><th>Uplata</th><th>Tenant</th><th>TX</th><th class="r">Ažurirano</th><th></th></tr></thead>
             <tbody>{items.map((f) => {
               const chain = scope.byId(f.tenant_id)?.chain;
               return (
@@ -386,6 +386,7 @@ export const PayoutsPage: FC<{ scope: Scope; status?: string; items: Array<Parke
                   <td class="dim">{tenantLabel(scope, f.tenant_id)}</td>
                   <td>{f.tx_hash ? <a href={explorerTx(chain, f.tx_hash)} target="_blank" rel="noopener" class="mono">{short(f.tx_hash, 8, 4)} ↗</a> : '—'}</td>
                   <td class="r dim" style="white-space:nowrap">{fmtDate(f.updated_at)}</td>
+                  <td class="r">{parkedIds.has(f.id) ? <a class="btn" href={`/admin/forwards?status=${f.status}`}>{f.status === 'failed' ? 'Ponovi' : 'Riješi'} (v1)</a> : null}</td>
                 </tr>
               );
             })}</tbody>
@@ -448,7 +449,12 @@ export const TenantDetailPage: FC<{ scope: Scope; id: string; d: TenantDetailDat
   const name = tenant?.name ?? id;
   const isSbx = Boolean(tenant?.sandbox);
   const report: Array<{ key: string; ok: boolean; detail: string }> = (() => {
-    try { return rail?.verify_report ? (JSON.parse(rail.verify_report) as Array<{ key: string; ok: boolean; detail: string }>) : []; } catch { return []; }
+    // onboarding.ts sprema `{ checks: [...] }`; golo polje prihvaćamo radi starijih redova.
+    try {
+      const parsed: unknown = rail?.verify_report ? JSON.parse(rail.verify_report) : [];
+      const list = Array.isArray(parsed) ? parsed : (parsed as { checks?: unknown })?.checks;
+      return Array.isArray(list) ? (list as Array<{ key: string; ok: boolean; detail: string }>) : [];
+    } catch { return []; }
   })();
   const activeCampaigns = d.campaigns.filter((c) => !c.revoked_at);
   type Check = { ok: boolean | null; title: string; detail: string };
@@ -576,7 +582,7 @@ export const DevelopersPage: FC<{
             return (
               <tr class="click" data-href={href}>
                 <td><span class="two"><a class="mono" href={href} style="color:var(--text)">{e.event_type ?? '—'}</a><span class="dim small">#{e.id}{e.processing_note ? ` · ${e.processing_note.slice(0, 70)}` : ''}</span></span></td>
-                <td>{e.signature_ok ? <Pill tone="ok">OK</Pill> : <Pill tone="bad">neispravan</Pill>}</td>
+                <td>{e.signature_ok ? <Pill tone="ok">OK</Pill> : e.event_type === 'unknown_tenant' ? <Pill tone="warn">nepoznat tenant</Pill> : <Pill tone="bad">neispravan</Pill>}</td>
                 <td class="amt">{fmtEur(e.amount_cents)}</td>
                 <td>{sid ? <a class="mono" href={`/admin/v2/payments/${encodeURIComponent(sid)}`}>{sid}</a> : <span class="dim">—</span>}{e.sid_resolved && !e.sid_extracted ? <span class="dim small"> (resolver)</span> : null}</td>
                 <td class="dim">{e.tenant_id ? tenantLabel(scope, e.tenant_id) : '—'}</td>
@@ -661,7 +667,7 @@ export const EventDetailPage: FC<{ scope: Scope; e: NonNullable<Awaited<ReturnTy
     <>
       <a href="/admin/v2/developers?tab=events" class="small">← Webhookovi</a>
       <div class="row"><div class="two"><h1 class="mono" style="font-size:22px">{e.event_type ?? 'event'}</h1><span class="dim small">event #{e.id} · {fmtDateSec(e.received_at)}</span></div>
-        {e.signature_ok ? <Pill tone="ok">Potpis OK</Pill> : <Pill tone="bad">Potpis neispravan</Pill>}</div>
+        {e.signature_ok ? <Pill tone="ok">Potpis OK</Pill> : e.event_type === 'unknown_tenant' ? <Pill tone="warn">Nepoznat tenant u URL-u · potpis nije provjeren</Pill> : <Pill tone="bad">Potpis neispravan</Pill>}</div>
       <section class="card"><div class="card-b"><dl class="kv">
         <dt>Tenant</dt><dd>{e.tenant_id ? tenantLabel(scope, e.tenant_id) : 'nije razriješen'}</dd>
         <dt>Uplata</dt><dd>{sid ? <a class="mono" href={`/admin/v2/payments/${encodeURIComponent(sid)}`}>{sid}</a> : '—'}{e.sid_resolved && !e.sid_extracted ? ' (stray resolver)' : ''}</dd>

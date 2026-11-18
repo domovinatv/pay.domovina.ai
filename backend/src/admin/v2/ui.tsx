@@ -25,6 +25,13 @@ export const fmtAmountStr = (amount: string | null | undefined) => (amount == nu
 export const short = (s: string | null | undefined, head = 6, tail = 4) =>
   !s ? '—' : s.length <= head + tail + 1 ? s : `${s.slice(0, head)}…${s.slice(-tail)}`;
 
+/// 1 tenant, 2–4 tenanta, 5+ tenanata (11–14 uvijek „tenanata”).
+export function tenantCount(n: number): string {
+  const d = n % 10, h = n % 100;
+  const w = d === 1 && h !== 11 ? 'tenant' : d >= 2 && d <= 4 && (h < 12 || h > 14) ? 'tenanta' : 'tenanata';
+  return `${n} ${w}`;
+}
+
 export function ago(unix: number | null | undefined): string {
   if (!unix) return '—';
   const s = Math.floor(Date.now() / 1000) - unix;
@@ -129,7 +136,7 @@ export const Layout: FC<LayoutProps> = ({ title, nav, scope, email, path, childr
               <span class="logo">M</span>
               <span class="acct-txt">
                 <strong>MPT Admin</strong>
-                <span class="dim">{sbx ? `Sandbox · ${scope.tenants.length} tenanata` : `Produkcija · ${scope.tenants.length} tenanata`}</span>
+                <span class="dim">{`${sbx ? 'Sandbox' : 'Produkcija'} · ${tenantCount(scope.tenants.length)}`}</span>
               </span>
             </a>
             <nav aria-label="Glavna navigacija" class="navgroup">
@@ -307,7 +314,10 @@ pre{margin:0;background:var(--side);border:1px solid var(--line);border-radius:8
 .ava{width:44px;height:44px;border-radius:10px;background:var(--navy);color:#fff;font-weight:700;font-size:18px;display:flex;align-items:center;justify-content:center;flex:none}
 body.sandbox .ava{background:var(--sbx)}
 .toast{position:fixed;right:20px;bottom:20px;background:var(--text);color:#fff;padding:12px 16px;border-radius:10px;font-size:13px;max-width:420px;box-shadow:0 8px 24px rgba(0,0,0,.18)}
-@media (max-width:720px){.top,.main{padding-left:16px;padding-right:16px}.sbxbar{padding:8px 16px}.side{max-width:none}.kpi{border-right:0;border-bottom:1px solid var(--line)}}
+@media (max-width:720px){.top,.main{padding-left:16px;padding-right:16px}.sbxbar{padding:8px 16px}.kpi{border-right:0;border-bottom:1px solid var(--line)}
+.side{flex:1 1 100%;max-width:none;flex-direction:row;align-items:center;gap:4px;padding:8px 16px;overflow-x:auto;border-right:0;border-bottom:1px solid var(--line);position:sticky;top:0;z-index:5}
+.side .acct{padding:4px;border:0;background:none}.side .acct-txt,.navhead,.foot,.ext{display:none}
+.navgroup{flex-direction:row;gap:2px}.nav{white-space:nowrap;padding:6px 10px}}
 `;
 
 // ---------------------------------------------------------------------------

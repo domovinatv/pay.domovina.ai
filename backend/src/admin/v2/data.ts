@@ -221,7 +221,7 @@ export async function getOverview(env: Env, scope: Scope, days: number): Promise
 }
 
 export interface AttentionItem {
-  kind: 'parked_forward' | 'sig_fail' | 'outbox_failed' | 'unmatched_credit';
+  kind: 'parked_forward' | 'sig_fail' | 'unknown_tenant' | 'outbox_failed' | 'unmatched_credit';
   severity: 'warn' | 'error';
   title: string;
   sub: string;
@@ -272,7 +272,7 @@ export async function getAttention(env: Env, scope: Scope, fmtAmount: (c: number
   const t = scope.where();
   const sig = await env.DB.prepare(
     `SELECT COUNT(*) AS c, MAX(received_at) AS last FROM monerium_webhook_events
-      WHERE signature_ok = 0 AND received_at >= ? AND ${t.sql}`,
+      WHERE signature_ok = 0 AND event_type IS NOT 'unknown_tenant' AND received_at >= ? AND ${t.sql}`,
   ).bind(now() - 86400, ...t.args).first<{ c: number; last: number | null }>();
   if (sig && sig.c > 0) {
     items.push({
@@ -284,6 +284,26 @@ export async function getAttention(env: Env, scope: Scope, fmtAmount: (c: number
       cta: 'Pogledaj',
       at: sig.last ?? 0,
     });
+  }
+  // Webhook na URL tenanta kojeg nema: potpis se ni ne provjerava (nema čijim
+  // tajnim ključem), pa to nije „neispravan potpis” nego krivo postavljen URL.
+  // tenant_id je NULL, pa se vidi samo u produkcijskom prikazu (zadani tenant).
+  if (scope.mode === 'production') {
+    const ut = await env.DB.prepare(
+      `SELECT COUNT(*) AS c, MAX(received_at) AS last, MAX(processing_note) AS note FROM monerium_webhook_events
+        WHERE event_type = 'unknown_tenant' AND received_at >= ?`,
+    ).bind(now() - 86400).first<{ c: number; last: number | null; note: string | null }>();
+    if (ut && ut.c > 0) {
+      items.push({
+        kind: 'unknown_tenant',
+        severity: 'warn',
+        title: `Webhook na nepoznat tenant ×${ut.c}`,
+        sub: `${(ut.note ?? '').replace(/^unknown_tenant:\s*/, '').slice(0, 64)} · zadnja 24 h · krivo postavljen URL pretplate`,
+        href: '/admin/v2/developers?tab=events&sig=0',
+        cta: 'Pogledaj',
+        at: ut.last ?? 0,
+      });
+    }
   }
   const ob = await env.DB.prepare(
     `SELECT COUNT(*) AS c, MAX(created_at) AS last FROM webhook_outbox
