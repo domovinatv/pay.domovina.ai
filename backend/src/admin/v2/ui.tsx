@@ -393,6 +393,64 @@ const JS = `
       })
       .catch(function(x){ btn.disabled = false; btn.textContent = label; if (err) { err.textContent = 'Mreža: ' + x.message; err.hidden = false; } });
   });
+  // Ljudski tekst za česte kodove /admin/api/tenants/* (kod ostaje u zagradi).
+  var API_ERR = {
+    suspend_first: 'Prvo suspendiraj tenanta.',
+    rail_not_verified: 'Rail nije verificiran — pokreni provjeru.',
+    tenant_exists: 'Tenant s tim ID-om već postoji.',
+    reserved_tenant_id: 'Prefiks sbx- je rezerviran za sandbox.',
+    invalid_tenant_id: 'ID: mala slova, brojke i crtica.',
+    invalid_iban: 'IBAN nije ispravan.',
+    profile_in_use: 'Taj Monerium profil već koristi drugi tenant.',
+    campaign_owned_by_other_tenant: 'Taj projekt pripada drugom tenantu.',
+    not_found_or_already_revoked: 'Već je opozvano.',
+    router_exists: 'Router ključ već postoji.',
+    sandbox_tenant_has_no_rail: 'Sandbox tenant nema rail.',
+    account_already_registered: 'Taj račun je već upisan.'
+  };
+  function errText(res){ var c = res.j.error || res.j.result || ''; return (API_ERR[c] ? API_ERR[c] + ' ' : 'Greška ' + res.status + ': ') + '(' + c + ')' + (res.j.detail ? ' ' + res.j.detail : ''); }
+  function arm(b){
+    if (!b || !b.dataset.confirm || b.hasAttribute('data-armed')) return false;
+    b.dataset.label = b.textContent; b.setAttribute('data-armed',''); b.textContent = b.dataset.confirm;
+    setTimeout(function(){ if (b.hasAttribute('data-armed')) { b.removeAttribute('data-armed'); b.textContent = b.dataset.label; } }, 4000);
+    return true;
+  }
+  // <form data-api="/admin/api/…" data-method="PUT">: polja kao JSON. Gumb s
+  // data-confirm traži drugi klik. data-redirect="/…/{tenant_id}" ide na
+  // stranicu iz odgovora, data-show="key" prikaže vrijednost jednom (ne reload).
+  document.addEventListener('submit', function(e){
+    var f = e.target; if (!f.matches || !f.matches('form[data-api]')) return;
+    e.preventDefault();
+    var sb = e.submitter || f.querySelector('button[type=submit]');
+    if (arm(sb)) return;
+    var o = {}; new FormData(f).forEach(function(v, k){ o[k] = typeof v === 'string' ? v.trim() : v; });
+    var label = (sb && (sb.dataset.label || sb.textContent)) || ''; if (sb) { sb.removeAttribute('data-armed'); sb.disabled = true; sb.textContent = '…'; }
+    fetch(f.dataset.api, { method: f.dataset.method || 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(o) })
+      .then(function(r){ return r.json().catch(function(){ return {}; }).then(function(j){ return { ok: r.ok, status: r.status, j: j }; }); })
+      .then(function(res){
+        if (sb) { sb.disabled = false; sb.textContent = label; }
+        if (!res.ok) { toast(errText(res)); return; }
+        if (f.dataset.show) {
+          var out = f.querySelector('[data-out]'); if (!out) return;
+          out.textContent = ''; var st = document.createElement('strong'); st.textContent = 'Spremi odmah — više se ne može pročitati: ';
+          var code = document.createElement('code'); code.className = 'mono'; code.style.userSelect = 'all'; code.textContent = String(res.j[f.dataset.show] || '');
+          out.appendChild(st); out.appendChild(code); out.hidden = false; f.reset(); return;
+        }
+        if (f.dataset.redirect) { location.href = f.dataset.redirect.replace(/\\{(\\w+)\\}/g, function(_, k){ return encodeURIComponent(res.j[k] || ''); }); return; }
+        toast(f.dataset.done || 'Spremljeno.'); setTimeout(function(){ location.reload(); }, 1000);
+      })
+      .catch(function(x){ if (sb) { sb.disabled = false; sb.textContent = label; } toast('Mreža: ' + x.message); });
+  });
+  // <form data-check="/admin/api/tenants/x/check/">: GET + adresa, rezultat u [data-out].
+  document.addEventListener('submit', function(e){
+    var f = e.target; if (!f.matches || !f.matches('form[data-check]')) return;
+    e.preventDefault();
+    var out = f.querySelector('[data-out]'); var a = f.elements.address.value.trim();
+    fetch(f.dataset.check + encodeURIComponent(a), { headers: { accept: 'application/json' } })
+      .then(function(r){ return r.json(); })
+      .then(function(j){ if (!out) return; out.textContent = j.error ? ('Greška: ' + j.error) : (j.allowed ? '✓ Prolazi (izvor: ' + j.source + ')' : '✕ Ne prolazi — nije na whitelisti ni u drugom izvoru.'); out.style.color = j.allowed ? 'var(--ok)' : 'var(--bad)'; })
+      .catch(function(x){ if (out) out.textContent = 'Mreža: ' + x.message; });
+  });
   function toast(msg){ var d=document.createElement('div'); d.className='toast'; d.textContent=msg; document.body.appendChild(d); setTimeout(function(){d.remove();}, 6000); }
   // Akcije: <button data-post="/admin/api/..." data-confirm="Tekst">. Prvi klik
   // naoruža gumb (bez blokirajućih confirm() dijaloga), drugi u 4 s izvrši.
@@ -412,11 +470,11 @@ const JS = `
       return;
     }
     b.removeAttribute('data-armed'); b.disabled = true; var label = b.dataset.label || b.textContent; b.textContent = '…';
-    fetch(b.dataset.post, { method: 'POST', headers: { 'content-type': 'application/json' }, body: body })
+    fetch(b.dataset.post, { method: b.dataset.method || 'POST', headers: { 'content-type': 'application/json' }, body: body })
       .then(function(r){ return r.json().catch(function(){ return {}; }).then(function(j){ return { ok: r.ok, status: r.status, j: j }; }); })
       .then(function(res){
         b.disabled = false; b.textContent = label;
-        if (!res.ok) { toast('Greška ' + res.status + ': ' + (res.j.error || res.j.result || '')); return; }
+        if (!res.ok) { toast(errText(res)); return; }
         if (b.dataset.render === 'verify' && res.j.checks) {
           var box = document.getElementById('verifyOut');
           if (box) { box.innerHTML = ''; res.j.checks.forEach(function(c){ var row=document.createElement('div'); row.className='check';

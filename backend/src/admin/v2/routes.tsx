@@ -7,7 +7,7 @@ import type { Context, Hono } from 'hono';
 import type { Env } from '../../types';
 import { adminSession } from '../auth/mount';
 import {
-  getAttention, getNewIntentOptions, getOverview, getPaymentBundle, getResolveBundle, getTenantDetail, getWebhookEvent, listAuditV2, listInbox, listOutbox,
+  getAttention, getNewIntentOptions, getOverview, getPaymentBundle, getResolveBundle, getTenantDetail, getWebhookEvent, listTenantAddresses, listAuditV2, listInbox, listOutbox,
   listParkedForwards, listPayments, listPayouts, listTenantStats, listWebhookEvents, PAY_STATUSES, search,
   type PaymentFilter, type PayStatus,
 } from './data';
@@ -17,6 +17,7 @@ import {
 } from './pages';
 import { loadScope, MODE_COOKIE, modeFromCookie, type Mode, type Scope } from './scope';
 import { fmtEur, Layout, type NavKey } from './ui';
+import { KeysPage, NewTenantPage, RailPage, RecipientsPage } from './tenantPages';
 import { defaultTenantId } from '../../tenants/whitelist';
 import { getTenantRail } from '../../tenants/rail';
 import { listOffRailLegs, makeOffRailDeps, type OffRailLeg } from '../../monerium/offrail';
@@ -64,7 +65,7 @@ export function mountAdminV2(app: Hono<{ Bindings: Env }>): void {
     const next = c.req.query('next') ?? '';
     // Samo unutar v2; detalj uplate/tenanta iz drugog okruženja vodi na listu.
     // Forma za novi intent ostaje forma (tenant se bira iz novog okruženja).
-    const target = /^\/admin\/v2(\/(payments|tenants|developers\/events)\/[^?]+)/.test(next) && !next.startsWith('/admin/v2/payments/new')
+    const target = /^\/admin\/v2(\/(payments|tenants|developers\/events)\/[^?]+)/.test(next) && !/^\/admin\/v2\/(payments|tenants)\/new(\?|$)/.test(next)
       ? next.replace(/^(\/admin\/v2\/(payments|tenants|developers)).*$/, '$1')
       : next.startsWith('/admin/v2') && !next.startsWith('//') ? next : '/admin/v2';
     const secure = new URL(c.req.url).protocol === 'https:' ? '; Secure' : '';
@@ -165,6 +166,43 @@ export function mountAdminV2(app: Hono<{ Bindings: Env }>): void {
     const scope = await scopeOf(c);
     const stats = await listTenantStats(c.env, scope);
     return page(c, scope, 'Tenanti', 'tenants', <TenantsPage scope={scope} stats={stats} />);
+  });
+
+  // Novi tenant: forma → postojeći POST /admin/api/tenants. Prije /:id.
+  app.get('/admin/v2/tenants/new', async (c) => {
+    const scope = await scopeOf(c);
+    return page(c, scope, 'Novi tenant', 'tenants', <NewTenantPage />);
+  });
+
+  // Uređivanje tenanta (primatelji, rail i status, ključevi i računi). Samo
+  // prikaz; akcije zovu postojeće /admin/api/tenants/* rute.
+  const tenantSub = async (c: Ctx) => {
+    const id = c.req.param('id') ?? '';
+    let scope = await scopeOf(c);
+    const t = scope.byId(id);
+    if (t && t.sandbox !== (scope.mode === 'sandbox')) scope = await loadScope(c.env, t.sandbox ? 'sandbox' : 'production');
+    const d = await getTenantDetail(c.env, id);
+    return { id, scope, d, missing: !d.tenant && !d.rail };
+  };
+  const notFound = (c: Ctx, scope: Scope, id: string) =>
+    page(c, scope, 'Nije pronađeno', 'tenants', <div class="empty">Tenant „{id}” ne postoji. <a href="/admin/v2/tenants">Natrag</a></div>);
+
+  app.get('/admin/v2/tenants/:id/recipients', async (c) => {
+    const { id, scope, d, missing } = await tenantSub(c);
+    if (missing) return notFound(c, scope, id);
+    const addresses = await listTenantAddresses(c.env, id);
+    return page(c, scope, `${d.tenant?.name ?? id} · primatelji`, 'tenants', <RecipientsPage id={id} d={d} addresses={addresses} showRevoked={c.req.query('all') === '1'} />);
+  });
+  app.get('/admin/v2/tenants/:id/rail', async (c) => {
+    const { id, scope, d, missing } = await tenantSub(c);
+    if (missing) return notFound(c, scope, id);
+    if (d.tenant?.sandbox) return c.redirect(`/admin/v2/tenants/${encodeURIComponent(id)}`, 302);
+    return page(c, scope, `${d.tenant?.name ?? id} · rail`, 'tenants', <RailPage id={id} d={d} />);
+  });
+  app.get('/admin/v2/tenants/:id/keys', async (c) => {
+    const { id, scope, d, missing } = await tenantSub(c);
+    if (missing) return notFound(c, scope, id);
+    return page(c, scope, `${d.tenant?.name ?? id} · ključevi`, 'tenants', <KeysPage id={id} d={d} />);
   });
 
   app.get('/admin/v2/tenants/:id', async (c) => {
