@@ -7,16 +7,20 @@ import type { Context, Hono } from 'hono';
 import type { Env } from '../../types';
 import { adminSession } from '../auth/mount';
 import {
-  getAttention, getOverview, getPaymentBundle, getTenantDetail, getWebhookEvent, listAuditV2, listInbox, listOutbox,
+  getAttention, getOverview, getPaymentBundle, getResolveBundle, getTenantDetail, getWebhookEvent, listAuditV2, listInbox, listOutbox,
   listParkedForwards, listPayments, listPayouts, listTenantStats, listWebhookEvents, PAY_STATUSES, search,
   type PaymentFilter, type PayStatus,
 } from './data';
 import {
-  DevelopersPage, EventDetailPage, HomePage, PaymentDetailPage, PaymentsPage, PayoutsPage, SearchPage, TenantDetailPage,
+  DevelopersPage, EventDetailPage, HomePage, PaymentDetailPage, PaymentsPage, PayoutsPage, ResolvePage, SearchPage, TenantDetailPage,
   TenantsPage, type DevTab,
 } from './pages';
 import { loadScope, MODE_COOKIE, modeFromCookie, type Mode, type Scope } from './scope';
 import { fmtEur, Layout, type NavKey } from './ui';
+import { defaultTenantId } from '../../tenants/whitelist';
+import { getTenantRail } from '../../tenants/rail';
+import { listOffRailLegs, makeOffRailDeps, type OffRailLeg } from '../../monerium/offrail';
+import { eurToWei } from '../../monerium/forward';
 
 type Ctx = Context<{ Bindings: Env }>;
 
@@ -122,6 +126,27 @@ export function mountAdminV2(app: Hono<{ Bindings: Env }>): void {
     const status = c.req.query('status') || undefined;
     const [r, parked] = await Promise.all([listPayouts(c.env, scope, { status }), listParkedForwards(c.env, scope, 50)]);
     return page(c, scope, 'Isplate', 'payouts', <PayoutsPage scope={scope} status={status} items={r.items} total={r.total} parked={parked} />);
+  });
+
+  // Riješi zapelu uplatu. Čita (D1 + na ?tx= EURe transfere iz Safea na lancu);
+  // akcije na stranici zovu postojeće /admin/api/orders/:id/* POST rute.
+  app.get('/admin/v2/payouts/order/:id', async (c) => {
+    const scope = await scopeOf(c);
+    const id = c.req.param('id');
+    const b = await getResolveBundle(c.env, id, defaultTenantId(c.env));
+    if (!b) return page(c, scope, 'Nije pronađeno', 'payouts', <div class="empty">Order „{id}” ne postoji. <a href="/admin/v2/payouts">Natrag</a></div>);
+    const t = scope.byId(b.tenantId);
+    const view = t && t.sandbox !== (scope.mode === 'sandbox') ? await loadScope(c.env, t.sandbox ? 'sandbox' : 'production') : scope;
+    const tx = (c.req.query('tx') ?? '').trim();
+    let legs: OffRailLeg[] | null | undefined;
+    if (tx && b.parked) {
+      const rail = await getTenantRail(c.env, b.tenantId);
+      legs = rail ? await listOffRailLegs(makeOffRailDeps(c.env, rail), tx).catch(() => null) : null;
+    }
+    let orderWei = '0';
+    try { orderWei = eurToWei(b.order.amount).toString(); } catch { /* neispravan iznos: nijedan leg nije „isti” */ }
+    return page(c, view, `Riješi ${fmtEur(b.amountCents)}`, 'payouts',
+      <ResolvePage scope={view} b={b} chain={b.order.chain ?? t?.chain ?? null} orderWei={orderWei} tx={tx || undefined} legs={legs} />);
   });
 
   app.get('/admin/v2/tenants', async (c) => {

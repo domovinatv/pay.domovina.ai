@@ -244,7 +244,9 @@ h2{margin:0;font-size:15px;font-weight:600}
 .card-b{padding:16px 20px}
 .btn{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--line);background:#fff;color:var(--text);border-radius:8px;padding:0 14px;min-height:36px;font:inherit;font-weight:500;cursor:pointer;white-space:nowrap}
 .btn:hover{text-decoration:none;border-color:#C4CBD6}
-.acts{display:inline-flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+.acts{display:inline-flex;gap:6px;flex-wrap:wrap;justify-content:flex-end;align-items:center}
+input.reason{border:1px solid var(--line);border-radius:8px;padding:0 10px;min-height:36px;font:inherit;min-width:0}
+input.reason:focus{outline:0;border-color:var(--navy);box-shadow:0 0 0 3px var(--navy-bg)}
 .btn.primary{background:var(--navy);border-color:var(--navy);color:#fff;font-weight:600;min-height:40px}
 .btn.danger{color:var(--bad)}.btn[data-armed]{background:var(--bad);border-color:var(--bad);color:#fff}
 .btn:disabled{opacity:.55;cursor:default}
@@ -344,13 +346,20 @@ const JS = `
   document.addEventListener('click', function(e){
     var b = e.target.closest('button[data-post]'); if (!b) return;
     e.preventDefault();
+    // data-reason="<id inputa>": pisani razlog (min. 10 znakova) → force + reason (SR-02, OF-02).
+    var body = b.dataset.body || '{}';
+    if (b.dataset.reason) {
+      var inp = document.getElementById(b.dataset.reason); var why = inp ? inp.value.trim() : '';
+      if (why.length < 10) { toast('Upiši razlog (najmanje 10 znakova).'); if (inp) inp.focus(); return; }
+      var o = JSON.parse(body); o.force = true; o.reason = why; body = JSON.stringify(o);
+    }
     if (b.dataset.confirm && !b.hasAttribute('data-armed')) {
       b.dataset.label = b.textContent; b.setAttribute('data-armed',''); b.textContent = b.dataset.confirm;
       setTimeout(function(){ if (b.hasAttribute('data-armed')) { b.removeAttribute('data-armed'); b.textContent = b.dataset.label; } }, 4000);
       return;
     }
     b.removeAttribute('data-armed'); b.disabled = true; var label = b.dataset.label || b.textContent; b.textContent = '…';
-    fetch(b.dataset.post, { method: 'POST', headers: { 'content-type': 'application/json' }, body: b.dataset.body || '{}' })
+    fetch(b.dataset.post, { method: 'POST', headers: { 'content-type': 'application/json' }, body: body })
       .then(function(r){ return r.json().catch(function(){ return {}; }).then(function(j){ return { ok: r.ok, status: r.status, j: j }; }); })
       .then(function(res){
         b.disabled = false; b.textContent = label;

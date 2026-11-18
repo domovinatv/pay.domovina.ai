@@ -3,7 +3,8 @@
 
 import type { Child, FC } from 'hono/jsx';
 
-import type { AttentionItem, Overview, ParkedForward, PaymentBundle, PaymentFilter, PaymentListRow, PayStatus, SearchHit } from './data';
+import type { AttentionItem, Overview, ParkedForward, PaymentBundle, PaymentFilter, PaymentListRow, PayStatus, ResolveBundle, SearchHit } from './data';
+import type { OffRailLeg } from '../../monerium/offrail';
 import { PAY_STATUSES } from './data';
 import type { Scope } from './scope';
 import {
@@ -271,7 +272,7 @@ export const PaymentDetailPage: FC<{ scope: Scope; b: PaymentBundle }> = ({ scop
         </div>
         <div class="chips">
           {fwd?.status === 'failed' ? <button class="btn primary" data-post={`/admin/api/forwards/${fwd.id}/retry`} data-confirm="Potvrdi ponovni broadcast" data-done="Forward ponovno pokrenut.">Pokušaj ponovno</button> : null}
-          {parked ? <a class="btn" href={`/admin/forwards?status=${fwd.status}`}>Preusmjeri / riješi ručno (v1)</a> : null}
+          {parked ? <a class="btn" href={`/admin/v2/payouts/order/${encodeURIComponent(fwd.order_id)}`}>Preusmjeri / riješi ručno</a> : null}
           <a class="btn" href={`/admin/intents?sid=${encodeURIComponent(i.sid)}`}>Otvori u v1</a>
         </div>
       </div>
@@ -378,7 +379,7 @@ export const PayoutsPage: FC<{ scope: Scope; status?: string; items: Array<Parke
             <tbody>{items.map((f) => {
               const chain = scope.byId(f.tenant_id)?.chain;
               return (
-                <tr class={f.sid ? 'click' : ''} data-href={f.sid ? `/admin/v2/payments/${encodeURIComponent(f.sid)}` : undefined}>
+                <tr class={f.sid || parkedIds.has(f.id) ? 'click' : ''} data-href={parkedIds.has(f.id) ? `/admin/v2/payouts/order/${encodeURIComponent(f.order_id)}` : f.sid ? `/admin/v2/payments/${encodeURIComponent(f.sid)}` : undefined}>
                   <td class="amt">{fmtEur(f.amount_cents)}</td>
                   <td><span class="two"><FwdPill status={f.status} />{parkedIds.has(f.id) ? <span class="small" style="color:var(--warn)">zapelo</span> : null}</span></td>
                   <td><span class="two"><Mono>{short(f.target_address, 8, 6)}</Mono>{f.error ? <span class="small dim">{f.error.slice(0, 80)}</span> : null}</span></td>
@@ -388,7 +389,8 @@ export const PayoutsPage: FC<{ scope: Scope; status?: string; items: Array<Parke
                   <td class="r dim" style="white-space:nowrap">{fmtDate(f.updated_at)}</td>
                   <td class="r">{parkedIds.has(f.id) ? <span class="acts">
                     {f.error?.includes('mint_address_mismatch') ? <button class="btn primary" data-post={`/admin/api/orders/${encodeURIComponent(f.order_id)}/minted-at-destination`} data-confirm="Potvrdi: provjeri mint na lancu" data-done="Zatvoreno: mint je na odredištu." title="Monerium je mintao izravno na adresu iz reference; provjera mint tx-a na lancu, novac se ne miče">Mint je već na odredištu</button> : null}
-                    <a class="btn" href={`/admin/forwards?status=${f.status}`}>{f.status === 'failed' ? 'Ponovi' : 'Riješi'} (v1)</a>
+                    <a class="btn" href={`/admin/v2/payouts/order/${encodeURIComponent(f.order_id)}`}>{f.status === 'failed' ? 'Ponovi' : 'Riješi'} →</a>
+                    <a class="small" href={`/admin/forwards?status=${f.status}`}>v1</a>
                   </span> : null}</td>
                 </tr>
               );
@@ -702,3 +704,169 @@ export const SearchPage: FC<{ q: string; hits: SearchHit[] }> = ({ q, hits }) =>
     ) : null}
   </>
 );
+
+// ---------------------------------------------------------------------------
+// Riješi zapelu uplatu — preusmjeri / riješeno ručno / mint na odredištu / ponovi
+// ---------------------------------------------------------------------------
+
+const weiToCents = (wei: string) => Number(BigInt(wei) / 10n ** 16n);
+
+export const ResolvePage: FC<{
+  scope: Scope; b: ResolveBundle; chain: string | null; orderWei: string;
+  tx?: string; legs?: OffRailLeg[] | null;
+}> = ({ scope, b, chain, orderWei, tx, legs }) => {
+  const o = b.order;
+  const f = b.latest;
+  const mintElsewhere = !!f?.error?.includes('mint_address_mismatch');
+  const oid = encodeURIComponent(o.id);
+  let txs: string[] = [];
+  try { txs = o.tx_hashes ? (JSON.parse(o.tx_hashes) as string[]) : []; } catch { txs = []; }
+  return (
+    <>
+      <a href="/admin/v2/payouts" class="small">← Isplate</a>
+      <div class="row" style="align-items:flex-start;padding-bottom:20px;border-bottom:1px solid var(--line)">
+        <div class="two" style="gap:8px">
+          <span class="dim small">Zapela uplata · {tenantLabel(scope, b.tenantId)}</span>
+          <span style="display:flex;gap:12px;align-items:center;flex-wrap:wrap">
+            <span style="font-size:32px;font-weight:700" class="num">{fmtEur(b.amountCents)}</span>
+            {f ? <FwdPill status={f.status} /> : null}
+          </span>
+          <Mono>order {o.id}</Mono>
+        </div>
+        <div class="chips"><a class="btn" href={`/admin/orders/${oid}`}>Sirovi JSON (v1)</a></div>
+      </div>
+
+      {!b.parked ? (
+        <div class="callout info" role="status"><strong>Nije zapelo.</strong><span>{f ? `Zadnji forward je #${f.id} (${f.status}); nema što rješavati.` : 'Za ovaj order nema forwarda.'}</span></div>
+      ) : mintElsewhere ? (
+        <div class="callout warn" role="status"><strong>Novac nije u MPT Safeu.</strong>
+          <span>Monerium je mintao izravno na <Mono>{short(o.address ?? '', 8, 6)}</Mono>, ne na Safe tenanta, pa nema što proslijediti. Preusmjeravanje bi platilo iz tuđeg novca u Safeu — zato je ovdje samo zatvaranje uz provjeru minta na lancu.</span></div>
+      ) : f!.status === 'blocked' ? (
+        <div class="callout warn" role="status"><strong>Novac je u MPT Safeu, ali nije proslijeđen.</strong>
+          <span>{f!.error ? <>Razlog: <Mono>{f!.error}</Mono>. </> : 'Odredište nije u odobrenom skupu tenanta. '}Preusmjeri na intent kojem uplata pripada, ili zatvori ako je novac već ručno isplaćen.</span></div>
+      ) : (
+        <div class="callout bad" role="status"><strong>Broadcast nije uspio.</strong><span>{f!.error ?? 'nepoznata greška'}. „Pokušaj ponovno” ide istim putem kao webhook.</span></div>
+      )}
+
+      <div class="cols">
+        <section style="flex:3 1 520px;min-width:0;display:flex;flex-direction:column;gap:20px">
+          {b.parked && mintElsewhere ? (
+            <section class="card">
+              <div class="card-h"><h2>Mint je već na odredištu</h2></div>
+              <div class="card-b two" style="gap:12px">
+                <span class="small dim">Server provjeri da u orderovom tx-u postoji EURe mint (Transfer od 0x0) na <Mono>{o.address}</Mono> točno na {fmtEur(b.amountCents)}. Zapisuje se kao riješeno izvan raila; novac se ne miče.</span>
+                <span><button class="btn primary" data-post={`/admin/api/orders/${oid}/minted-at-destination`} data-confirm="Potvrdi: provjeri mint na lancu" data-done="Zatvoreno: mint je na odredištu.">Zatvori — mint je na odredištu</button></span>
+              </div>
+            </section>
+          ) : null}
+
+          {b.parked && f!.status === 'failed' ? (
+            <section class="card">
+              <div class="card-h"><h2>Pokušaj ponovno</h2></div>
+              <div class="card-b two" style="gap:12px">
+                <span class="small dim">Isti put kao webhook; server odbije ako je stari tx još živ ili ga je zamijenio noviji forward.</span>
+                <span><button class="btn primary" data-post={`/admin/api/forwards/${f!.id}/retry`} data-confirm="Potvrdi ponovni broadcast" data-done="Forward ponovno pokrenut.">Pokušaj ponovno</button></span>
+              </div>
+            </section>
+          ) : null}
+
+          {b.parked && !mintElsewhere ? (
+            <section class="card">
+              <div class="card-h"><h2>Preusmjeri na intent</h2><span class="dim small">otvoreni ili istekli intenti tenanta oko vremena uplate, isti iznos prvi</span></div>
+              {b.candidates.length ? (
+                <div class="tbl"><table>
+                  <thead><tr><th>Intent</th><th>Iznos</th><th>Stanje</th><th>Odredište</th><th class="r"></th></tr></thead>
+                  <tbody>{b.candidates.map((c) => {
+                    const same = c.amount_cents === b.amountCents;
+                    const needsReason = !same || !c.trusted;
+                    const rid = `rr-${c.sid}`;
+                    return (
+                      <tr>
+                        <td><span class="two"><Mono>{c.sid}</Mono>{c.label ? <span class="small dim">{c.label}</span> : null}{!c.trusted ? <span class="small" style="color:var(--warn)" title="odredište nije na statičnoj whitelisti tenanta i intent nije stvoren tajnim ključem">wallet — bilo tko ga je mogao otvoriti</span> : null}</span></td>
+                        <td class="amt">{same ? fmtEur(c.amount_cents) : <Pill tone="warn">{fmtEur(c.amount_cents)}</Pill>}</td>
+                        <td class="dim small">{c.state} · {fmtDate(c.created_at)}</td>
+                        <td><a href={explorerAddr(chain, c.target_address)} target="_blank" rel="noopener"><Mono>{short(c.target_address, 8, 6)}</Mono></a></td>
+                        <td class="r"><span class="acts">
+                          {needsReason ? <input id={rid} class="reason" placeholder={!same ? 'iznos se razlikuje — razlog' : 'nepouzdano odredište — razlog'} aria-label="Razlog (min. 10 znakova)" /> : null}
+                          <button class="btn" data-post={`/admin/api/orders/${oid}/reroute`} data-body={JSON.stringify({ sid: c.sid })} data-reason={needsReason ? rid : undefined} data-confirm="Potvrdi preusmjeravanje" data-done="Preusmjereno — forward ide (~75 s).">Preusmjeri</button>
+                        </span></td>
+                      </tr>
+                    );
+                  })}</tbody>
+                </table></div>
+              ) : <Empty>Nema otvorenih ni nedavno isteklih intenata tog tenanta u prozoru uplate.</Empty>}
+            </section>
+          ) : null}
+
+          {b.parked && !mintElsewhere ? (
+            <section class="card">
+              <div class="card-h"><h2>Riješeno ručno (izvan raila)</h2></div>
+              <div class="card-b two" style="gap:12px">
+                <span class="small dim">Novac su već poslali 2/3 vlasnici Safea. Upiši tx; server pročita EURe transfere iz Safea na lancu, a ti odabereš onaj koji je platio ovaj order. Nakon toga se order više ne može preusmjeriti.</span>
+                <form method="get" action={`/admin/v2/payouts/order/${oid}`} class="acts" style="justify-content:flex-start">
+                  <input name="tx" class="reason mono" style="flex:1 1 360px" placeholder="0x… tx hash ručnog transfera" value={tx ?? ''} aria-label="Tx hash" />
+                  <button class="btn" type="submit">Dohvati transfere</button>
+                </form>
+                {tx ? (legs === null || legs === undefined ? <span class="small" style="color:var(--bad)">Tx ne postoji, nije uspio ili nije ispravan hash.</span>
+                  : !legs.length ? <span class="small" style="color:var(--bad)">Tx ne miče EURe iz Safea ovog tenanta.</span>
+                  : (
+                    <div class="tbl"><table>
+                      <thead><tr><th>Leg</th><th>Primatelj</th><th>Iznos</th><th class="r"></th></tr></thead>
+                      <tbody>{legs.map((l) => {
+                        const same = l.valueWei === orderWei;
+                        const rid = `of-${l.logIndex}`;
+                        return (
+                          <tr>
+                            <td class="mono">#{l.logIndex}</td>
+                            <td><a href={explorerAddr(chain, l.to)} target="_blank" rel="noopener"><Mono>{short(l.to, 8, 6)}</Mono></a></td>
+                            <td class="amt">{same ? fmtEur(weiToCents(l.valueWei)) : <Pill tone="warn">{fmtEur(weiToCents(l.valueWei))}</Pill>}</td>
+                            <td class="r">{l.used ? <span class="dim small">već iskorišten</span> : <span class="acts">
+                              {!same ? <input id={rid} class="reason" placeholder="iznos se razlikuje — razlog" aria-label="Razlog (min. 10 znakova)" /> : null}
+                              <button class="btn" data-post={`/admin/api/orders/${oid}/resolved-offrail`} data-body={JSON.stringify({ tx_hash: tx, log_index: l.logIndex })} data-reason={!same ? rid : undefined} data-confirm="Potvrdi: označi riješenim" data-done="Označeno riješenim izvan raila.">Označi riješenim</button>
+                            </span>}</td>
+                          </tr>
+                        );
+                      })}</tbody>
+                    </table></div>
+                  )) : null}
+              </div>
+            </section>
+          ) : null}
+
+          <section class="card">
+            <div class="card-h"><h2>Pokušaji forwarda</h2><span class="dim small">{b.forwards.length}</span></div>
+            {b.forwards.length ? <div class="tbl"><table>
+              <thead><tr><th>#</th><th>Status</th><th>Odredište</th><th>Intent</th><th>TX</th><th class="r">Ažurirano</th></tr></thead>
+              <tbody>{b.forwards.map((x) => (
+                <tr>
+                  <td class="mono dim">#{x.id}</td>
+                  <td><span class="two"><FwdPill status={x.status} />{x.error ? <span class="small dim">{x.error.slice(0, 80)}</span> : null}</span></td>
+                  <td><Mono>{short(x.target_address, 8, 6)}</Mono></td>
+                  <td>{x.sid ? <a class="mono" href={`/admin/v2/payments/${encodeURIComponent(x.sid)}`}>{x.sid}</a> : <span class="dim">—</span>}{x.memo_prefix ? <span class="dim small"> · {x.memo_prefix}</span> : null}</td>
+                  <td>{x.tx_hash ? <a href={explorerTx(chain, x.tx_hash)} target="_blank" rel="noopener" class="mono">{short(x.tx_hash, 8, 4)} ↗</a> : '—'}</td>
+                  <td class="r dim" style="white-space:nowrap">{fmtDateSec(x.updated_at)}</td>
+                </tr>
+              ))}</tbody>
+            </table></div> : <Empty>Nema forwarda.</Empty>}
+          </section>
+        </section>
+
+        <aside class="card" style="flex:2 1 300px;min-width:0">
+          <div class="card-h"><h2>Uplata (Monerium order)</h2></div>
+          <div class="card-b"><dl class="kv">
+            <dt>Tenant</dt><dd><a href={`/admin/v2/tenants/${encodeURIComponent(b.tenantId)}`}>{tenantLabel(scope, b.tenantId)}</a></dd>
+            <dt>Iznos</dt><dd>{fmtEur(b.amountCents)}</dd>
+            <dt>Stanje</dt><dd>{o.kind} · {o.state}</dd>
+            <dt>Uplatitelj</dt><dd>{o.counterpart_name ?? '—'}</dd>
+            <dt>IBAN</dt><dd><Mono>{o.counterpart_iban ?? '—'}</Mono></dd>
+            <dt>Opis</dt><dd><Mono>{o.memo ?? '—'}</Mono></dd>
+            <dt>Mintano na</dt><dd>{o.address ? <a href={explorerAddr(chain, o.address)} target="_blank" rel="noopener"><Mono>{short(o.address, 8, 6)}</Mono></a> : '—'}</dd>
+            <dt>Mint tx</dt><dd>{txs.length ? txs.map((t) => <a href={explorerTx(chain, t)} target="_blank" rel="noopener" class="mono" style="display:block">{short(t, 10, 6)} ↗</a>) : '—'}</dd>
+            <dt>Zaprimljeno</dt><dd>{fmtIso(o.placed_at)}</dd>
+            <dt>Obrađeno</dt><dd>{fmtIso(o.processed_at)}</dd>
+          </dl></div>
+        </aside>
+      </div>
+    </>
+  );
+};
