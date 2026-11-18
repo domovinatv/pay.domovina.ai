@@ -193,4 +193,40 @@ describe('admin v2', () => {
     expect(sbx).not.toContain('rail/verify');
     expect((await s.get('/admin/v2/tenants/nema')).status).toBe(200);
   });
+  it('tenant: verify_report u obliku iz onboarding.ts ({ checks }) ne ruši stranicu', async () => {
+    s.raw.prepare(`UPDATE tenant_rail SET verified_at = ?, verify_report = ? WHERE tenant_id = 'italk'`).run(
+      NOW - 60,
+      JSON.stringify({ checks: [{ key: 'monerium_profile', ok: true, detail: 'ok' }, { key: 'webhook', ok: false, detail: 'nema pretplate' }] }),
+    );
+    const h = await s.html('/admin/v2/tenants/italk');
+    expect(h).toContain('1/2');
+  });
+
+  it('webhook na nepoznat tenant nije „neispravan potpis”, nego zasebna stavka', async () => {
+    s.raw.prepare(`INSERT INTO monerium_webhook_events (order_id, event_type, signature_ok, payload, received_at, processing_note, tenant_id)
+                   VALUES (NULL, 'unknown_tenant', 0, '{}', ?, 'unknown_tenant: swan-probe-20261117', NULL),
+                          (NULL, 'unknown_tenant', 0, '{}', ?, 'unknown_tenant: swan-probe-20261117', NULL)`).run(NOW - 200, NOW - 100);
+    const h = await s.html('/admin/v2');
+    expect(h).toContain('Neispravan potpis webhooka ×1');
+    expect(h).toContain('Webhook na nepoznat tenant ×2');
+    expect(h).toContain('swan-probe-20261117');
+    expect(await s.html('/admin/v2', 'sandbox')).not.toContain('nepoznat tenant');
+    expect(await s.html('/admin/v2/developers?tab=events')).toContain('nepoznat tenant');
+  });
+
+  it('isplate: zapeli forward ima akciju (v1), a mint izravno nije „proslijeđeno”', async () => {
+    const h = await s.html('/admin/v2/payouts?status=blocked');
+    expect(h).toContain('/admin/forwards?status=blocked');
+    s.raw.prepare(`INSERT INTO monerium_forwards (order_id, target_address, amount_wei, amount_cents, sid, status, error, attempts, created_at, updated_at, tenant_id)
+                   VALUES ('ord-direct', '0x7a1c00000000000000000000000000000000e9b2', '0', 1000, 'paidprod0001', 'confirmed', 'direct_mint', 0, ?, ?, 'italk')`).run(NOW - 1800, NOW - 1800);
+    const d = await s.html('/admin/v2/payments/paidprod0001');
+    expect(d).toContain('Mint izravno na odredište');
+    expect(d).not.toContain('Proslijeđeno na odredište');
+  });
+
+  it('broj tenanata se sklanja', async () => {
+    const { tenantCount } = await import('../src/admin/v2/ui');
+    expect([1, 2, 5, 11, 12, 21, 22, 25].map(tenantCount)).toEqual(
+      ['1 tenant', '2 tenanta', '5 tenanata', '11 tenanata', '12 tenanata', '21 tenant', '22 tenanta', '25 tenanata']);
+  });
 });
