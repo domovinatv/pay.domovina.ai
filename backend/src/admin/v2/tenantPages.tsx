@@ -66,7 +66,9 @@ export const RecipientsPage: FC<{ id: string; d: TenantDetailData; addresses: Ad
     <>
       <TenantHead id={id} d={d} tab="recipients" />
       <div class="callout info" role="note">
-        <span>{direct
+        <span>{d.tenant?.sandbox
+          ? <><strong>Sandbox tenant (ADR 0024):</strong> nema raila ni novca; whitelist i projekti ovdje služe samo za probu integracije.</>
+          : direct
           ? <><strong>Direct tenant:</strong> intent smije ići samo na aktivni projektni Safe. Whitelist se za intente ne gleda.</>
           : <><strong>Forward tenant:</strong> forward ide samo na adresu s whiteliste{walletRegistry ? ' ili na DOMOVINA wallet (wallet_registry)' : ''}. Provjera se ponavlja u trenutku forwarda.</>}
         </span>

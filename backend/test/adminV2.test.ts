@@ -398,4 +398,10 @@ describe('admin v2', () => {
     const r2 = await s.get('/admin/v2/mode/sandbox?next=' + encodeURIComponent('/admin/v2/tenants/italk/rail'));
     expect(r2.headers.get('location')).toBe('/admin/v2/tenants');
   });
+
+  it('primatelji: sandbox tenant ne piše „Forward tenant”', async () => {
+    const h = await s.html('/admin/v2/tenants/sbx-abc/recipients', 'sandbox');
+    expect(h).toContain('Sandbox tenant (ADR 0024):');
+    expect(h).not.toContain('Forward tenant:');
+  });
 });
