@@ -209,7 +209,7 @@ export const NewIntentPage: FC<{
         <Empty>Nema aktivnog tenanta u ovom okruženju.</Empty>
       ) : (
         <section class="card" style="max-width:640px">
-          <div class="card-h"><h2>{t.name ?? t.id}</h2><span class="dim small">{t.sandbox ? 'sandbox · uplata se simulira' : `${t.monerium_env ?? '—'} · ${t.chain ?? '—'} · ${opts.mode ?? 'forward'}`}</span></div>
+          <div class="card-h"><h2>{t.name ?? t.id}</h2><span class="dim small">{t.monerium_env ? `Monerium ${t.monerium_env} · ${t.chain ?? '—'} · ${opts.mode ?? 'forward'}` : t.sandbox ? 'sandbox (ADR 0024) · uplata se simulira' : '—'}</span></div>
           <form class="card-b form" id="intentForm" data-intent-form>
             <input type="hidden" name="tenant_id" value={t.id} />
             <div id="intentErr" class="callout bad" role="alert" hidden></div>
@@ -348,6 +348,7 @@ export const PaymentDetailPage: FC<{ scope: Scope; b: PaymentBundle }> = ({ scop
         <div class="chips">
           {fwd?.status === 'failed' ? <button class="btn primary" data-post={`/admin/api/forwards/${fwd.id}/retry`} data-confirm="Potvrdi ponovni broadcast" data-done="Forward ponovno pokrenut.">Pokušaj ponovno</button> : null}
           {parked ? <a class="btn" href={`/admin/v2/payouts/order/${encodeURIComponent(fwd.order_id)}`}>Preusmjeri / riješi ručno</a> : null}
+          {i.state === 'pending' && i.v2_status === 'pending' ? <a class="btn" href={`/checkout/${encodeURIComponent(i.sid)}`} target="_blank" rel="noopener">Otvori checkout</a> : null}
           <a class="btn" href={`/admin/intents?sid=${encodeURIComponent(i.sid)}`}>Otvori u v1</a>
         </div>
       </div>
