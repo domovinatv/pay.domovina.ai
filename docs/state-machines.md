@@ -35,12 +35,14 @@ stateDiagram-v2
   state "parked (blocked | failed · no_routing_target)" as parked
   state "failed (failed)" as failed
   state "resolved_offrail (resolved_offrail)" as resolved_offrail
+  state "dismissed (resolved_offrail · sandbox_dismissed)" as dismissed
   [*] --> broadcasting: authorised
   [*] --> owed: direct_owed
   [*] --> settled_noop: noop
   [*] --> contribution: contribution
   [*] --> parked: park
   [*] --> resolved_offrail: offrail
+  [*] --> dismissed: dismiss
   broadcasting --> submitted: broadcast_ok
   broadcasting --> failed: broadcast_failed
   owed --> submitted: owners_transfer
@@ -53,6 +55,7 @@ stateDiagram-v2
   parked --> [*]
   failed --> [*]
   resolved_offrail --> [*]
+  dismissed --> [*]
 ```
 <!-- /generated:forward -->
 
@@ -77,9 +80,10 @@ Pravila:
 | `parked` | `blocked` (ili `failed` · `no_routing_target`, povijesno) | gate `park`, alarm |
 | `failed` | `failed` | broadcast greška, revert, ispao iz mempoola → admin retry |
 | `resolved_offrail` | `resolved_offrail` | operater, prijenos provjeren on-chain |
+| `dismissed` | `resolved_offrail` · `sandbox_dismissed` | samo sandbox rail: operater zatvara bez isplate uz pisani razlog; novac ostaje gdje je mintan, potvrde ga preskaču |
 
 Nastavci na razini ordera (novi red): `failed` → admin retry; `parked` → admin reroute (u načinu
-direct završava kao `owed`); `parked`/`failed` → `resolved_offrail`.
+direct završava kao `owed`); `parked`/`failed` → `resolved_offrail`; na sandbox railu i `parked`/`failed` → `dismissed`.
 
 ## Intent
 

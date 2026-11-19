@@ -313,7 +313,7 @@ function buildSteps(b: PaymentBundle, chain: string | null): Step[] {
     const tone: StepTone = fwd.status === 'confirmed' || fwd.status === 'resolved_offrail' ? 'ok' : fwd.status === 'blocked' ? 'warn' : fwd.status === 'failed' ? 'bad' : 'wait';
     steps.push({
       tone,
-      title: fwd.status === 'confirmed' && fwd.error === 'direct_mint' ? 'Mint izravno na odredište' : fwd.status === 'confirmed' && fwd.error === 'self_target_noop' ? 'Mint na Safe tenanta (nema forwarda)' : fwd.status === 'confirmed' ? 'Proslijeđeno na odredište' : fwd.status === 'blocked' ? 'Forward blokiran' : fwd.status === 'failed' ? 'Forward neuspio' : fwd.status === 'resolved_offrail' ? 'Riješeno ručno (izvan raila)' : 'Forward u letu',
+      title: fwd.status === 'confirmed' && fwd.error === 'direct_mint' ? 'Mint izravno na odredište' : fwd.status === 'confirmed' && fwd.error === 'self_target_noop' ? 'Mint na Safe tenanta (nema forwarda)' : fwd.status === 'confirmed' ? 'Proslijeđeno na odredište' : fwd.status === 'blocked' ? 'Forward blokiran' : fwd.status === 'failed' ? 'Forward neuspio' : fwd.status === 'resolved_offrail' && fwd.error === 'sandbox_dismissed' ? 'Zatvoreno bez isplate (sandbox)' : fwd.status === 'resolved_offrail' ? 'Riješeno ručno (izvan raila)' : 'Forward u letu',
       sub: <>{fmtEur(fwd.amount_cents)} → <a href={explorerAddr(chain, fwd.target_address)} target="_blank" rel="noopener"><Mono>{short(fwd.target_address, 8, 6)}</Mono></a>{fwd.error ? ` · ${fwd.error}` : ''}{b.forwards.length > 1 ? ` · ${b.forwards.length} pokušaja` : ''}</>,
       ref: fwd.tx_hash ? <a href={explorerTx(chain, fwd.tx_hash)} target="_blank" rel="noopener"><Mono>tx {short(fwd.tx_hash, 10, 6)} ↗</Mono></a> : <Mono>forward #{fwd.id}</Mono>,
       at: fmtDateSec(fwd.updated_at),
@@ -402,7 +402,7 @@ export const PaymentDetailPage: FC<{ scope: Scope; b: PaymentBundle }> = ({ scop
               </details>
             ))}
             {b.forwards.map((f) => (
-              <details class="rel"><summary><span><strong>Safe forward</strong> <span class="dim">· </span><FwdPill status={f.status} /></span><Mono>#{f.id}</Mono></summary>
+              <details class="rel"><summary><span><strong>Safe forward</strong> <span class="dim">· </span><FwdPill status={f.status} error={f.error} /></span><Mono>#{f.id}</Mono></summary>
                 <div class="in"><dl class="kv">
                   <dt>Odredište</dt><dd><Mono>{f.target_address}</Mono></dd>
                   <dt>Iznos</dt><dd>{fmtEur(f.amount_cents)}</dd>
@@ -469,7 +469,7 @@ export const PayoutsPage: FC<{ scope: Scope; status?: string; items: Array<Parke
               return (
                 <tr class={f.sid || parkedIds.has(f.id) ? 'click' : ''} data-href={parkedIds.has(f.id) ? `/admin/v2/payouts/order/${encodeURIComponent(f.order_id)}` : f.sid ? `/admin/v2/payments/${encodeURIComponent(f.sid)}` : undefined}>
                   <td class="amt">{fmtEur(f.amount_cents)}</td>
-                  <td><span class="two"><FwdPill status={f.status} />{parkedIds.has(f.id) ? <span class="small" style="color:var(--warn)">zapelo</span> : null}</span></td>
+                  <td><span class="two"><FwdPill status={f.status} error={f.error} />{parkedIds.has(f.id) ? <span class="small" style="color:var(--warn)">zapelo</span> : null}</span></td>
                   <td><span class="two"><Mono>{short(f.target_address, 8, 6)}</Mono>{f.error ? <span class="small dim">{f.error.slice(0, 80)}</span> : null}</span></td>
                   <td>{f.sid ? <a class="mono" href={`/admin/v2/payments/${encodeURIComponent(f.sid)}`}>{f.sid}</a> : <span class="dim small">bez reference · {short(f.order_id, 8, 4)}</span>}</td>
                   <td class="dim">{tenantLabel(scope, f.tenant_id)}</td>
@@ -811,6 +811,7 @@ export const ResolvePage: FC<{
   const f = b.latest;
   const mintElsewhere = !!f?.error?.includes('mint_address_mismatch');
   const oid = encodeURIComponent(o.id);
+  const sandbox = Boolean(scope.byId(b.tenantId)?.sandbox);
   let txs: string[] = [];
   try { txs = o.tx_hashes ? (JSON.parse(o.tx_hashes) as string[]) : []; } catch { txs = []; }
   return (
@@ -821,7 +822,7 @@ export const ResolvePage: FC<{
           <span class="dim small">{b.parked ? 'Zapela uplata' : 'Isplata'} · {tenantLabel(scope, b.tenantId)}</span>
           <span style="display:flex;gap:12px;align-items:center;flex-wrap:wrap">
             <span style="font-size:32px;font-weight:700" class="num">{fmtEur(b.amountCents)}</span>
-            {f ? <FwdPill status={f.status} /> : null}
+            {f ? <FwdPill status={f.status} error={f.error} /> : null}
           </span>
           <Mono>order {o.id}</Mono>
         </div>
@@ -925,6 +926,20 @@ export const ResolvePage: FC<{
             </section>
           ) : null}
 
+          {b.parked && sandbox && !mintElsewhere ? (
+            <section class="card">
+              <div class="card-h"><h2>Zatvori bez isplate</h2><Pill tone="warn">samo sandbox</Pill></div>
+              <div class="card-b two" style="gap:12px">
+                <span class="small dim">Test EURe na sandbox railu kojem nijedna akcija iznad ne pristaje. Novac ostaje gdje ga je Monerium mintao
+                  (<Mono>{short(o.address ?? '', 8, 6)}</Mono>); u audit ide tvoj razlog. Order se nakon toga ne može preusmjeriti ni ponoviti.</span>
+                <span class="acts" style="justify-content:flex-start">
+                  <input id="dismiss-reason" class="reason" style="flex:1 1 360px" placeholder="razlog, npr. test iz uvođenja whitelista" aria-label="Razlog (min. 10 znakova)" />
+                  <button class="btn danger" data-post={`/admin/api/orders/${oid}/sandbox-dismiss`} data-reason="dismiss-reason" data-confirm="Potvrdi zatvaranje" data-done="Zatvoreno bez isplate.">Zatvori bez isplate</button>
+                </span>
+              </div>
+            </section>
+          ) : null}
+
           <section class="card">
             <div class="card-h"><h2>Pokušaji forwarda</h2><span class="dim small">{b.forwards.length}</span></div>
             {b.forwards.length ? <div class="tbl"><table>
@@ -932,7 +947,7 @@ export const ResolvePage: FC<{
               <tbody>{b.forwards.map((x) => (
                 <tr>
                   <td class="mono dim">#{x.id}</td>
-                  <td><span class="two"><FwdPill status={x.status} />{x.error ? <span class="small dim">{x.error.slice(0, 80)}</span> : null}</span></td>
+                  <td><span class="two"><FwdPill status={x.status} error={x.error} />{x.error ? <span class="small dim">{x.error.slice(0, 80)}</span> : null}</span></td>
                   <td><Mono>{short(x.target_address, 8, 6)}</Mono></td>
                   <td>{x.sid ? <a class="mono" href={`/admin/v2/payments/${encodeURIComponent(x.sid)}`}>{x.sid}</a> : <span class="dim">—</span>}{x.memo_prefix ? <span class="dim small"> · {x.memo_prefix}</span> : null}</td>
                   <td>{x.tx_hash ? <a href={explorerTx(chain, x.tx_hash)} target="_blank" rel="noopener" class="mono">{short(x.tx_hash, 8, 4)} ↗</a> : '—'}</td>

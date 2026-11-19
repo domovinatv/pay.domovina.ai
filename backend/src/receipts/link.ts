@@ -114,7 +114,7 @@ async function coverable(env: Env, iban: string, after: string | null, before: s
         AND (?3 IS NULL OR o.placed_at > ?3)
         AND NOT EXISTS (SELECT 1 FROM receipt_leaves l WHERE l.order_id = o.id)
         AND EXISTS (SELECT 1 FROM monerium_forwards f
-                     WHERE f.order_id = o.id AND f.status IN ('confirmed', 'resolved_offrail'))
+                     WHERE f.order_id = o.id AND f.status IN ('confirmed', 'resolved_offrail') AND COALESCE(f.error, '') <> 'sandbox_dismissed')
         AND NOT EXISTS (SELECT 1 FROM monerium_forwards f
                          WHERE f.order_id = o.id AND ${RECEIPT_SID_SQL} AND ${MEMO_CARRIED}
                            AND f.status IN ('pending', 'submitted', 'confirmed'))

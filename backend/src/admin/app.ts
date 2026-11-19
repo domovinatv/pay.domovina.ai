@@ -15,7 +15,7 @@ import { listIntents, listRerouteCandidates } from '../intents/db';
 import { checkReroute, eurToWei, handleForward, makeForwardDeps, maybeForward } from '../monerium/forward';
 import { STRAY_LOOKBACK_SECONDS } from '../monerium/strayResolver';
 import type { MoneriumOrder } from '../monerium/types';
-import { getTenantRail, type TenantRail } from '../tenants/rail';
+import { getTenantRail, getTenantRailRow, type TenantRail } from '../tenants/rail';
 import { defaultTenantId } from '../tenants/whitelist';
 import { getTenant, writeAudit } from '../tenants/db';
 import { tenantProviders } from '../inflow/provider';
@@ -35,7 +35,7 @@ import { actorOf, mountAdminAuth } from './auth/mount';
 import { loadTenantTags, tenantWhere } from './tenantTags';
 import { buildHpbOps, buildMoneriumOps } from './opsRoutes';
 import { mountAdminV2 } from './v2/routes';
-import { listOffRailLegs, makeMintedDirectDeps, makeOffRailDeps, markMintedAtDestination, markResolvedOffRail } from '../monerium/offrail';
+import { listOffRailLegs, makeMintedDirectDeps, makeOffRailDeps, markMintedAtDestination, markResolvedOffRail, markSandboxDismissed } from '../monerium/offrail';
 import {
   renderEventDetailPage,
   renderEventsPage,
@@ -236,6 +236,19 @@ export function mountAdminUi(
     if ('error' in loaded) return c.json({ error: loaded.error }, 404);
     const r = await markMintedAtDestination(makeMintedDirectDeps(c.env, loaded.rail), loaded.order, actorOf(c));
     return r.ok ? c.json(r) : c.json(r, 409);
+  });
+  // Sandbox only: close a parked test order without a payout (written reason).
+  // The money stays where Monerium minted it; refused on a production rail.
+  app.post('/admin/api/orders/:id/sandbox-dismiss', async (c) => {
+    const body = await c.req.json<{ reason?: string }>().catch(() => ({} as { reason?: string }));
+    const loaded = await loadParkedOrder(c.env, c.req.param('id'));
+    if ('error' in loaded) return c.json({ error: loaded.error }, 404);
+    const [railRow, tenant] = await Promise.all([getTenantRailRow(c.env, loaded.tenantId), getTenant(c.env, loaded.tenantId)]);
+    const sandbox = railRow?.monerium_env === 'sandbox' || tenant?.sandbox === 1;
+    const r = await markSandboxDismissed(c.env, {
+      order: loaded.order, tenantId: loaded.tenantId, sandbox, actor: actorOf(c), reason: body.reason ?? '',
+    });
+    return r.ok ? c.json(r) : c.json(r, r.error === 'reason_required' ? 400 : 409);
   });
   // Outbound merchant webhook outbox (migration 0015).
   app.get('/admin/api/outbox', async (c) => {
