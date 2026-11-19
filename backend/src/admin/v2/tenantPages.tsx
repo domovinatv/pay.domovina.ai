@@ -131,6 +131,25 @@ export const RecipientsPage: FC<{ id: string; d: TenantDetailData; addresses: Ad
         </form>
       </section>
 
+      {d.tenant && !d.tenant.sandbox ? (
+        <section class="card">
+          <div class="card-h"><h2>Dinamički izvori whiteliste</h2>
+            {walletRegistry ? <Pill tone="warn">wallet_registry uključen</Pill> : <Pill tone="muted">samo statična whitelist</Pill>}
+          </div>
+          <div class="card-b">
+            <p class="small"><Mono>wallet_registry</Mono>: forward smije ići i na <strong>svaki</strong> Safe registriran na wallet.domovina.ai, bez upisa u
+              whitelist. Promjena ide u audit log i alert kanal.{direct ? ' Direct tenant: za intente se ne gleda (vrijedi samo za forward).' : ''}</p>
+            <div class="acts" style="justify-content:flex-start">
+              {walletRegistry
+                ? <button class="btn danger" data-post={`${base}/allow-sources`} data-method="PUT" data-body='{"sources":[]}'
+                  data-confirm="Potvrdi isključivanje" data-done="wallet_registry isključen.">Isključi wallet_registry</button>
+                : <button class="btn" data-post={`${base}/allow-sources`} data-method="PUT" data-body='{"sources":["wallet_registry"]}'
+                  data-confirm="Potvrdi: svaki DOMOVINA wallet postaje primatelj" data-done="wallet_registry uključen.">Uključi wallet_registry</button>}
+            </div>
+          </div>
+        </section>
+      ) : null}
+
       <section class="card">
         <form class="card-b form" data-check={`${base}/check/`}>
           <h2>Bi li ova adresa sad prošla?</h2>

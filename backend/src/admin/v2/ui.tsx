@@ -95,7 +95,7 @@ export const Empty: FC<{ children?: Child }> = ({ children }) => <div class="emp
 // Layout
 // ---------------------------------------------------------------------------
 
-export type NavKey = 'home' | 'payments' | 'payouts' | 'tenants' | 'webhooks' | 'inbox' | 'outbox' | 'audit' | 'search';
+export type NavKey = 'home' | 'payments' | 'payouts' | 'tenants' | 'webhooks' | 'inbox' | 'outbox' | 'audit' | 'search' | 'wallets' | 'sybil' | 'settings';
 
 interface LayoutProps {
   title: string;
@@ -154,12 +154,11 @@ export const Layout: FC<LayoutProps> = ({ title, nav, scope, email, path, childr
             </div>
             <div class="navgroup">
               <span class="navhead">Wallet (domovina.ai)</span>
-              <NavLink href="/admin/wallets" active={false} ext>Walleti</NavLink>
-              <NavLink href="/admin/sybil" active={false} ext>Sybil signali</NavLink>
+              <NavLink href="/admin/v2/wallets" active={nav === 'wallets'}>Walleti</NavLink>
+              <NavLink href="/admin/v2/wallets/sybil" active={nav === 'sybil'}>Sybil signali</NavLink>
             </div>
             <div class="navgroup foot">
-              <NavLink href="/admin/passkeys" active={false} ext>Passkeyi</NavLink>
-              <NavLink href="/admin/whitelist" active={false} ext>Alert kanal</NavLink>
+              <NavLink href="/admin/v2/settings" active={nav === 'settings'}>Postavke (alert, passkeyi)</NavLink>
               <a class="nav" href="/admin/">← Stari admin (v1)</a>
               <form method="post" action="/admin/logout" class="logout">
                 <span class="dim small">{email ?? ''}</span>
@@ -323,6 +322,7 @@ body.sandbox .ava{background:var(--sbx)}
 .form input,.form select{border:1px solid var(--line);border-radius:8px;padding:0 10px;min-height:38px;font:inherit;font-weight:400;background:#fff;color:var(--text);min-width:0}
 .form input:focus,.form select:focus{outline:0;border-color:var(--navy);box-shadow:0 0 0 3px var(--navy-bg)}
 [hidden]{display:none!important}
+.msg{margin-top:8px;color:var(--ok)}.msg.bad{color:var(--bad)}
 .toast{position:fixed;right:20px;bottom:20px;background:var(--text);color:#fff;padding:12px 16px;border-radius:10px;font-size:13px;max-width:420px;box-shadow:0 8px 24px rgba(0,0,0,.18)}
 @media (max-width:720px){.top,.main{padding-left:16px;padding-right:16px}.sbxbar{padding:8px 16px}.kpi{border-right:0;border-bottom:1px solid var(--line)}
 .side{flex:1 1 100%;max-width:none;flex-direction:row;align-items:center;gap:4px;padding:8px 16px;overflow-x:auto;border-right:0;border-bottom:1px solid var(--line);position:sticky;top:0;z-index:5}
@@ -409,7 +409,8 @@ const JS = `
     not_found_or_already_revoked: 'Već je opozvano.',
     router_exists: 'Router ključ već postoji.',
     sandbox_tenant_has_no_rail: 'Sandbox tenant nema rail.',
-    account_already_registered: 'Taj račun je već upisan.'
+    account_already_registered: 'Taj račun je već upisan.',
+    unknown_allow_source: 'Nepoznat izvor whiteliste.'
   };
   function errText(res){ var c = res.j.error || res.j.result || ''; return (API_ERR[c] ? API_ERR[c] + ' ' : 'Greška ' + res.status + ': ') + '(' + c + ')' + (res.j.detail ? ' ' + res.j.detail : ''); }
   function arm(b){
@@ -477,6 +478,12 @@ const JS = `
       .then(function(r){ return r.json().catch(function(){ return {}; }).then(function(j){ return { ok: r.ok, status: r.status, j: j }; }); })
       .then(function(res){
         b.disabled = false; b.textContent = label;
+        if (b.dataset.render === 'alert') {
+          var ao = document.getElementById('alertOut'); var j = res.j;
+          var txt = j.ok ? '✓ Poruka je stigla u Telegram.' : (j.configured === false ? '✕ Secreti nisu postavljeni.' : '✕ ' + (j.error || ('HTTP ' + (j.status || res.status)))) + (j.hint ? ' ' + j.hint : '');
+          if (ao) { ao.textContent = txt; ao.style.color = j.ok ? 'var(--ok)' : 'var(--bad)'; }
+          toast(j.ok ? 'Alert test prošao.' : 'Alert test nije prošao.'); return;
+        }
         if (!res.ok) { toast(errText(res)); return; }
         if (b.dataset.render === 'verify' && res.j.checks) {
           var box = document.getElementById('verifyOut');
