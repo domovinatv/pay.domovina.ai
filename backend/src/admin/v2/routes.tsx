@@ -18,6 +18,8 @@ import {
 import { loadScope, MODE_COOKIE, modeFromCookie, type Mode, type Scope } from './scope';
 import { fmtEur, Layout, type NavKey } from './ui';
 import { KeysPage, NewTenantPage, RailPage, RecipientsPage } from './tenantPages';
+import { SettingsPage, SybilPage, WalletsPage, type AdminPasskeyRow, type SybilWalletRow } from './globalPages';
+import { countWallets, listPhoneBindingsForCredentials, listSybilClusters, listWallets, listWalletsSharingPhone } from '../../wallets/db';
 import { defaultTenantId } from '../../tenants/whitelist';
 import { getTenantRail } from '../../tenants/rail';
 import { listOffRailLegs, makeOffRailDeps, type OffRailLeg } from '../../monerium/offrail';
@@ -246,6 +248,58 @@ export function mountAdminV2(app: Hono<{ Bindings: Env }>): void {
     const e = Number.isInteger(id) ? await getWebhookEvent(c.env, id) : null;
     if (!e) return page(c, scope, 'Nije pronađeno', 'webhooks', <div class="empty">Event ne postoji.</div>);
     return page(c, scope, `Event #${e.id}`, 'webhooks', <EventDetailPage scope={scope} e={e} />);
+  });
+
+  // Globalno (wallet.domovina.ai): walleti i sybil signali; ne ovise o okruženju.
+  app.get('/admin/v2/wallets', async (c) => {
+    const scope = await scopeOf(c);
+    const limit = 50;
+    const offRaw = Number(c.req.query('offset') ?? '0');
+    const offset = Number.isFinite(offRaw) && offRaw > 0 ? Math.floor(offRaw) : 0;
+    const phoneOnly = c.req.query('phone') === '1';
+    const [rows, counts, clusters] = await Promise.all([
+      listWallets(c.env, { limit, offset }),
+      countWallets(c.env),
+      listSybilClusters(c.env, { limit: 500, offset: 0 }),
+    ]);
+    const shown = phoneOnly ? rows.filter((r) => r.phone_hash !== null) : rows;
+    const bindings = await listPhoneBindingsForCredentials(c.env, shown.map((r) => r.credential_id));
+    const list = shown.map((r) => ({
+      credential_id: r.credential_id, safe_address: r.safe_address, signer_address: r.signer_address, rp_id: r.rp_id,
+      recovery_owner: r.recovery_owner ?? null, created_at: r.created_at, phones: bindings.get(r.credential_id) ?? [],
+    }));
+    return page(c, scope, 'Walleti', 'wallets', <WalletsPage rows={list} total={counts.total} withPhone={counts.withPhone}
+      phoneOnly={phoneOnly} offset={offset} limit={limit} shared={new Set(clusters.map((k) => k.phone_hash))} />);
+  });
+
+  app.get('/admin/v2/wallets/sybil', async (c) => {
+    const scope = await scopeOf(c);
+    const clusters = await listSybilClusters(c.env, { limit: 200, offset: 0 });
+    const phone = (c.req.query('phone') ?? '').toLowerCase();
+    let drill: SybilWalletRow[] | undefined;
+    if (/^[0-9a-f]{64}$/.test(phone)) {
+      const ws = await listWalletsSharingPhone(c.env, phone);
+      const safes = new Map<string, string>();
+      if (ws.length) {
+        const r = await c.env.DB.prepare(`SELECT credential_id, safe_address FROM wallet_registry WHERE credential_id IN (${ws.map(() => '?').join(',')})`)
+          .bind(...ws.map((w) => w.credential_id)).all<{ credential_id: string; safe_address: string }>();
+        for (const x of r.results ?? []) safes.set(x.credential_id, x.safe_address);
+      }
+      drill = ws.map((w) => ({ ...w, safe_address: safes.get(w.credential_id) ?? null }));
+    }
+    return page(c, scope, 'Sybil signali', 'sybil', <SybilPage clusters={clusters} phone={drill ? phone : undefined} drill={drill} />);
+  });
+
+  // Postavke: alert test (POST /admin/api/alert-test) i vlastiti admin passkeyi
+  // (upis kroz /admin/static/passkey.js, brisanje kroz /admin/passkeys/:id/delete).
+  app.get('/admin/v2/settings', async (c) => {
+    const scope = await scopeOf(c);
+    const email = adminSession(c)?.email ?? null;
+    const passkeys = email
+      ? (await c.env.DB.prepare('SELECT id, label, created_at, last_used_at FROM admin_passkeys WHERE email = ? ORDER BY created_at')
+        .bind(email).all<AdminPasskeyRow>()).results ?? []
+      : [];
+    return page(c, scope, 'Postavke', 'settings', <SettingsPage email={email} passkeys={passkeys} />);
   });
 
   app.get('/admin/v2/search', async (c) => {

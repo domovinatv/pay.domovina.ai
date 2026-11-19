@@ -15,6 +15,8 @@ import {
   listPayoutAddresses,
   listTenants,
   KEY_ID_LEN,
+  KNOWN_ALLOW_SOURCES,
+  parseAllowSources,
   resolveApiKeyRef,
   revokeApiKey,
   revokeCampaign,
@@ -23,7 +25,7 @@ import {
   writeAudit,
 } from './db';
 import { generateApiKey } from './auth';
-import { trySendAlert } from '../alerts';
+import { sendAlert, trySendAlert } from '../alerts';
 import { renderWhitelistPage } from '../admin/views';
 import { mountRailAdmin } from './railAdmin';
 import { mountSetupPages } from '../setup/routes';
@@ -105,6 +107,45 @@ export function mountTenantAdmin(app: Hono<{ Bindings: Env }>): void {
 
   /// "Would this address be allowed right now, and why?" — the check an
   /// operator runs before telling a customer their payment will work.
+  /// Dynamic whitelist sources (tenants.allow_sources). `wallet_registry`
+  /// widens a forward tenant's payout set to every registered DOMOVINA
+  /// wallet, so a change is audited with before/after and alerted like any
+  /// other new way for money to leave. Unknown names are refused (not
+  /// silently dropped), so a typo can't look saved.
+  app.put('/admin/api/tenants/:id/allow-sources', async (c) => {
+    const tenantId = c.req.param('id');
+    const tenant = await getTenant(c.env, tenantId);
+    if (!tenant) return c.json({ error: 'tenant_not_found' }, 404);
+    const body = (await c.req.json().catch(() => null)) as { sources?: unknown } | null;
+    const raw = body?.sources;
+    if (!Array.isArray(raw) || raw.some((s) => typeof s !== 'string')) return c.json({ error: 'invalid_sources' }, 400);
+    const unknown = (raw as string[]).filter((s) => !(KNOWN_ALLOW_SOURCES as readonly string[]).includes(s));
+    if (unknown.length) return c.json({ error: 'unknown_allow_source', detail: unknown.join(', ') }, 400);
+    const after = KNOWN_ALLOW_SOURCES.filter((s) => (raw as string[]).includes(s));
+    const before = parseAllowSources(tenant.allow_sources);
+    if (before.length === after.length && before.every((s) => after.includes(s))) {
+      return c.json({ ok: true, tenant_id: tenantId, allow_sources: after, changed: false });
+    }
+    await c.env.DB.prepare('UPDATE tenants SET allow_sources = ?, updated_at = ? WHERE id = ?')
+      .bind(JSON.stringify(after), Math.floor(Date.now() / 1000), tenantId)
+      .run();
+    const actor = actorOf(c);
+    await writeAudit(c.env, {
+      tenantId,
+      action: 'tenant.allow_sources',
+      actor,
+      detail: JSON.stringify({ before, after }),
+    });
+    await sendAlert(
+      c.env,
+      `🧩 <b>Izvori whiteliste promijenjeni</b>\n` +
+        `tenant: <code>${tenantId}</code>\n` +
+        `prije: <code>${before.join(', ') || '-'}</code> → sada: <code>${after.join(', ') || '-'}</code>\n` +
+        `pokrenuo: <code>${actor}</code>`,
+    ).catch(() => {});
+    return c.json({ ok: true, tenant_id: tenantId, allow_sources: after, changed: true });
+  });
+
   app.get('/admin/api/tenants/:id/check/:address', async (c) => {
     const tenantId = c.req.param('id');
     const address = c.req.param('address');
