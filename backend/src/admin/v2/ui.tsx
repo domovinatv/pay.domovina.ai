@@ -82,8 +82,8 @@ export const Pill: FC<{ tone: Tone; children?: Child }> = ({ tone, children }) =
 
 export const PayPill: FC<{ status: PayStatus }> = ({ status }) => <Pill tone={PAY_TONE[status]}>{PAY_LABEL[status]}</Pill>;
 
-export const FwdPill: FC<{ status: string }> = ({ status }) => {
-  const [l, t] = FWD_LABEL[status] ?? [status, 'muted' as Tone];
+export const FwdPill: FC<{ status: string; error?: string | null }> = ({ status, error }) => {
+  const [l, t] = status === 'resolved_offrail' && error === 'sandbox_dismissed' ? ['Zatvoreno bez isplate', 'muted' as Tone] : FWD_LABEL[status] ?? [status, 'muted' as Tone];
   return <Pill tone={t}>{l}</Pill>;
 };
 

@@ -28,7 +28,8 @@ export type ForwardState =
   | 'contribution'     // direct mode D6: minted straight into a project Safe, no intent
   | 'parked'           // refused by the gate; EURe stays where Monerium minted it
   | 'failed'           // broadcast error, on-chain revert or dropped tx
-  | 'resolved_offrail'; // an operator moved the money by hand; verified on-chain
+  | 'resolved_offrail' // an operator moved the money by hand; verified on-chain
+  | 'dismissed';       // sandbox only: operator closed it without a payout (written reason)
 
 export interface StateInfo {
   /// DB status this state is stored as.
@@ -48,6 +49,10 @@ export const NOOP_ERRORS = ['self_target_noop', 'direct_mint'];
 export const CONTRIBUTION_ERROR = 'direct_contribution';
 /// Parks predating the whitelist keep status 'failed' (admin filters on it).
 export const LEGACY_PARK_ERROR = 'no_routing_target';
+/// Sandbox (test EURe) order closed by an operator without moving money.
+/// Stored as `resolved_offrail` so every closed-order guard (retry, reroute,
+/// maybeForward, off-rail) already refuses it; receipts exclude it.
+export const DISMISSED_ERROR = 'sandbox_dismissed';
 
 export const FORWARD_STATES: Record<ForwardState, StateInfo> = {
   broadcasting: { status: 'pending', terminal: false, note: 'gate je pustio, rail šalje tx' },
@@ -65,6 +70,7 @@ export const FORWARD_STATES: Record<ForwardState, StateInfo> = {
   },
   failed: { status: 'failed', terminal: true, note: 'broadcast/revert/dropped, može retry' },
   resolved_offrail: { status: 'resolved_offrail', terminal: true, note: 'operater ručno, provjereno on-chain' },
+  dismissed: { status: 'resolved_offrail', errors: [DISMISSED_ERROR], terminal: true, note: 'samo sandbox: zatvoreno bez isplate, uz razlog' },
 };
 
 /// How a row is born (handleForward, park, markResolvedOffRail).
@@ -74,7 +80,8 @@ export type ForwardCreation =
   | 'noop'            // gate: self_noop / direct_settle
   | 'contribution'    // gate: direct_contribution (D6)
   | 'park'            // gate: park (incl. legacy no_routing_target → status failed)
-  | 'offrail';        // operator: resolved_offrail
+  | 'offrail'         // operator: resolved_offrail
+  | 'dismiss';        // operator, sandbox tenant only: close without payout
 
 export const CREATIONS: Record<ForwardCreation, ForwardState> = {
   authorised: 'broadcasting',
@@ -83,6 +90,7 @@ export const CREATIONS: Record<ForwardCreation, ForwardState> = {
   contribution: 'contribution',
   park: 'parked',
   offrail: 'resolved_offrail',
+  dismiss: 'dismissed',
 };
 
 export type ForwardEvent =
@@ -116,6 +124,8 @@ export const FOLLOW_UPS: Array<{ from: ForwardState; action: string; creates: Fo
   { from: 'parked', action: 'admin reroute (direct)', creates: 'direct_owed' },
   { from: 'parked', action: 'resolved_offrail', creates: 'offrail' },
   { from: 'failed', action: 'resolved_offrail', creates: 'offrail' },
+  { from: 'parked', action: 'sandbox dismiss', creates: 'dismiss' },
+  { from: 'failed', action: 'sandbox dismiss', creates: 'dismiss' },
 ];
 
 /// Logical state of a stored row. Unknown combinations map to the plain
@@ -130,7 +140,7 @@ export function logicalForwardState(row: Pick<MoneriumForwardRow, 'status' | 'er
       return 'forwarded';
     case 'blocked': return 'parked';
     case 'failed': return row.error === LEGACY_PARK_ERROR ? 'parked' : 'failed';
-    case 'resolved_offrail': return 'resolved_offrail';
+    case 'resolved_offrail': return row.error === DISMISSED_ERROR ? 'dismissed' : 'resolved_offrail';
   }
 }
 
@@ -146,7 +156,8 @@ export function stateSql(s: ForwardState): string {
     case 'contribution': return `status = 'confirmed' AND error = '${CONTRIBUTION_ERROR}'`;
     case 'parked': return `(status = 'blocked' OR (status = 'failed' AND error = '${LEGACY_PARK_ERROR}'))`;
     case 'failed': return `status = 'failed' AND COALESCE(error, '') <> '${LEGACY_PARK_ERROR}'`;
-    case 'resolved_offrail': return `status = 'resolved_offrail'`;
+    case 'resolved_offrail': return `status = 'resolved_offrail' AND COALESCE(error, '') <> '${DISMISSED_ERROR}'`;
+    case 'dismissed': return `status = 'resolved_offrail' AND error = '${DISMISSED_ERROR}'`;
   }
 }
 

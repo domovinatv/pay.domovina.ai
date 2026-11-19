@@ -316,3 +316,51 @@ export function makeMintedDirectDeps(env: Env, rail: TenantRail): MintedDirectDe
     alert: base.alert,
   };
 }
+
+// ---------------------------------------------------------------------------
+// Sandbox: zatvori bez isplate (19. 11. 2026.)
+// ---------------------------------------------------------------------------
+//
+// Parkirani test orderi na sandbox railu (Monerium sandbox, test EURe) kojima
+// nijedna istinita akcija ne pristaje: novac je u prihvatnom Safeu, nitko ga
+// nije ručno poslao, a preusmjeravanje bi samo micalo test novac. Operater ih
+// zatvara uz pisani razlog; novac ostaje gdje je mintan. Red je
+// `resolved_offrail` + error `sandbox_dismissed` (stanje `dismissed`), pa ga
+// svi čuvari zatvorenog ordera već odbijaju, a potvrde o uplati ga preskaču.
+// Produkcijski rail ovo nikad ne dobiva: tamo je novac stvaran.
+
+export type SandboxDismissResult =
+  | { ok: true; forwardId: number }
+  | { ok: false; error: 'not_sandbox' | 'reason_required' | 'not_parked' | 'already_forwarded' | 'already_resolved' };
+
+export async function markSandboxDismissed(
+  env: Env,
+  args: { order: MoneriumOrder; tenantId: string; sandbox: boolean; actor: string; reason: string },
+): Promise<SandboxDismissResult> {
+  if (!args.sandbox) return { ok: false, error: 'not_sandbox' };
+  const reason = args.reason.trim();
+  if (reason.length < 10) return { ok: false, error: 'reason_required' };
+  const existing = await getForwardByOrder(env, args.order.id);
+  if (existing && LIVE.has(existing.status)) return { ok: false, error: 'already_forwarded' };
+  if (existing?.status === 'resolved_offrail') return { ok: false, error: 'already_resolved' };
+  if (!existing || !PARKED.has(existing.status)) return { ok: false, error: 'not_parked' };
+  const forwardId = await insertForward(env, {
+    orderId: args.order.id,
+    targetAddress: existing.target_address ?? '',
+    amountWei: '0',
+    amountCents: parseAmountCents(args.order.amount),
+    sid: existing.sid ?? null,
+    memoPrefix: 'dismiss',
+    status: 'resolved_offrail',
+    error: 'sandbox_dismissed',
+    tenantId: args.tenantId,
+  });
+  await writeAudit(env, {
+    tenantId: args.tenantId,
+    action: 'forward.sandbox_dismissed',
+    address: existing.target_address || null,
+    actor: args.actor,
+    detail: JSON.stringify({ order_id: args.order.id, forward_id: forwardId, previous: { id: existing.id, status: existing.status, error: existing.error }, reason }),
+  });
+  return { ok: true, forwardId };
+}

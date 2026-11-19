@@ -59,11 +59,11 @@ async function leavesFor(env: Env, sid: string): Promise<LeafRow[]> {
   const rows = await env.DB.prepare(
     `SELECT l.id, l.kind, l.sid, l.order_id, l.tx_hash, l.amount_cents, l.placed_at, l.leaf_hash, l.anchor_id,
             (SELECT f.target_address FROM monerium_forwards f
-              WHERE f.order_id = l.order_id AND f.status IN ('confirmed', 'resolved_offrail')
+              WHERE f.order_id = l.order_id AND f.status IN ('confirmed', 'resolved_offrail') AND COALESCE(f.error, '') <> 'sandbox_dismissed'
               ORDER BY f.id DESC LIMIT 1) AS target_address,
             COALESCE(
               (SELECT f.tenant_id FROM monerium_forwards f
-                WHERE f.order_id = l.order_id AND f.status IN ('confirmed', 'resolved_offrail')
+                WHERE f.order_id = l.order_id AND f.status IN ('confirmed', 'resolved_offrail') AND COALESCE(f.error, '') <> 'sandbox_dismissed'
                 ORDER BY f.id DESC LIMIT 1),
               (SELECT o.tenant_id FROM monerium_orders o WHERE o.id = l.order_id)) AS tenant_id
        FROM receipt_leaves l WHERE l.sid = ? ORDER BY l.placed_at, l.id`,
