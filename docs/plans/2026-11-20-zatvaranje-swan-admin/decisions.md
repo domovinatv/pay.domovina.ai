@@ -135,3 +135,52 @@ i navodi koju. Blokovi po sesiji: S1 100–199, S2 200–299 … S8 800–899.
      (`swan_bosci_6a7e…`, `credit_event_id` vezan), 0 novih `swan_` ordera i forwarda. `changes()` u D1
      batchu radi (odluka 301). Ovaj sandbox tenant nema merchant webhook, pa outbox ni prije ni sada
      nema redova; jednakost payloada dokazuje zlatni test (odluka 303).
+
+## S4 (2026-11-20)
+
+400. **Preduvjet ponovljen (odluka 100).** Upiti 1 i 2 u prodi 20. 11. u 20:15: i dalje jedina Monerium
+     uplata nakon #155 je `sq6x4g29kx8e` (notified 5 + booked 6, `intent_settlements.credit_event_id` = 6).
+     Upit 3 (neusklađenost `monerium_order_id` ⇔ settlement) daje 5 = 5 Swan namira bez
+     `monerium_order_id` od S3 (odluka 301), dakle očekivano. S4 smije krenuti.
+401. **Jedna jezgra, dva ulaza.** `inflow/matcher.ts` `matchReferenceless` (kratka referenca → stray) je
+     jedini kod koji odlučuje kojem intentu pripada uplata bez reference. `matchCreditEvent` (fiat) i
+     `matchMoneriumOrder` (Monerium) ga zovu; `forward.ts` više nema vlastito traženje
+     (`matchShortRef`, `isStray` i blok resolvera su uklonjeni). Razlike koje ostaju su ulazne, ne
+     logičke: Monerium čita memo pa `referenceNumber` (`shortRefFromOrder`), prozor stray resolvera
+     sidri na `placedAt` (ne na `processedAt` booked događaja, inače bi se prozor pomaknuo), a resolver
+     radi samo uz `STRAY_RESOLVER=1` (dep izostaje). Swan ostaje isti (`stray` uvijek uključen).
+402. **Memo rutiranje nije pogađanje.** Ako remittance imenuje sid, adresu ili kampanju
+     (`isReferenceless` = ne), matcher vraća `{kind:'memo'}` i ništa ne traži; o tome odlučuje gate
+     `authorizeForward` kao i dosad (tenant, whitelist, mint adresa, latch). Swan sid grana
+     (`sid_other_tenant`, `sid_already_settled`) ostaje samo za fiat jer fiat nema gate.
+403. **Matcher ne prenosi novac i ne bira konačni sid sam.** Za stray vraća cijeli redoslijed claimova
+     (`sids`); `forward.ts` `claimForward` uzima prvi slobodan (latch 0018), kao prije. Zato je
+     „tko je dobio uplatu” poznat tek nakon claima.
+404. **`credit_events.matched_sid` = izvršena odluka.** Nakon uspješnog claima forward upisuje na
+     `<order>:booked` događaj `matched_sid` = preuzeti sid, `matched_by` = `sid` | `short_ref` |
+     `stray` | `manual` (reroute), a za višeznačan stray bilješku `stray_ambiguous: <sids>` (isti oblik
+     kao Swan). Park upisuje `matched_sid` NULL i `park: <razlog>`, pa se parkirana uplata vidi među
+     nevezanima u admin v2 i kad je memo imao sid. Notified događaj i zapis u webhooku
+     (`recordMoneriumCredit`, `stray_preview`) se ne mijenjaju. Upis je `ForwardDeps.recordMatch`
+     (opcionalan, `safely`): pad upisa nikad ne zaustavlja forward. Cron reconcile koji forwarda order bez
+     inbox reda nema što ažurirati.
+405. **Bez promjene ponašanja na putu novca.** Forward redovi, potpisi, park razlozi, alerti, merchant
+     webhookovi i namire su isti; jedina nova stvar su stupci `matched_*` na booked događaju (podatak za
+     admin, nijedan stari test ga ne čita). Dokaz: `scripts/compat-check.sh` zelen bez oznake
+     (backend, shopify/worker, wallet; base 5e52bbd) i replay `test/moneriumReplay.test.ts` (odluka 406).
+406. **Replay.** `test/moneriumReplay.test.ts` vozi 22 scenarija kroz pravi `handleMoneriumWebhook` (stvarni
+     D1, potpisane isporuke, mockan samo `router/safe`): sid paid/underpaid/late, kratka referenca
+     (trusted, untrusted → stray), stray (jedan, višeznačan, konflikt, nema, resolver isključen), dvostruki
+     webhook (isti i novi webhook-id, sid i stray), created → processed i stale created, `mint_address_mismatch`,
+     `resolved_offrail`, goli `0x`/`gnosis:`, direct mode (D4 owed, `direct_settle`), reroute. Zlatni izlaz
+     `test/fixtures/monerium/replay-pre-s4.json` snimljen je na `origin/main` 5e52bbd (`CAPTURE_PRE_S4=1`);
+     S4 kod daje identičan `compared` (namire, intenti, forwardi, potpisi, alerti, merchant webhookovi,
+     outbox, odgovor handlera). `creditMatch` se snima, ali ne uspoređuje; razlika pre/post je točno
+     odluka 404 (npr. 04a `stray_preview: coded…` → `short_ref`, parkovi → `park: <razlog>`, reroute → `manual`).
+     Nije pokriveno: neuspjeli broadcast/revert/nonce, krivi profil, `cmp:`/`direct_contribution`, `rcpt1`.
+407. **Zatečeno ponašanje, zapisano, ne mijenjano u S4** (replay ga čuva; svaka promjena = `behavior-change`):
+     preview na ponovljenoj isporuci straya pali „zaprimljeno” na drugom kandidatu (09b); preview radi i
+     prije parka zbog `mint_address_mismatch` (11); `payment.received` ide samo kad je sid u memou, pa ga
+     stray i kratka referenca nikad ne šalju (04a, 05, 06, 14a); parkirani order sa sid-om pošalje
+     `payment.received` pa `forward.blocked` (11, 12, 13c); nakon reroutea stari `failed` red ostaje uz novi.
+     Kandidati za S7 ili zaseban PR.
