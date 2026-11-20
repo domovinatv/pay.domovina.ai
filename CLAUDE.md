@@ -52,3 +52,9 @@ current code) must pass, or the change is a deliberate behaviour change with
 the PR labelled `behavior-change` and every broken old test explained.
 Never edit an existing test's assertions to make new code pass — adapt only
 the test double (new required deps field). Details: `docs/testing.md`.
+
+## Lanac sesija: zatvaranje Swan / ADR 0032 i admin v2
+
+Plan i handoffi: `docs/plans/2026-11-20-zatvaranje-swan-admin/` (`TODO.md`, `plan.md`,
+`decisions.md`, `handoffs/`). „Nastavi zatvaranje swan” znači prvi otvoreni red u „Stanje lanca”
+u `handoffs/README.md`; prompt je sadržaj tog `SN.md`.
