@@ -184,3 +184,5 @@ i navodi koju. Blokovi po sesiji: S1 100–199, S2 200–299 … S8 800–899.
      stray i kratka referenca nikad ne šalju (04a, 05, 06, 14a); parkirani order sa sid-om pošalje
      `payment.received` pa `forward.blocked` (11, 12, 13c); nakon reroutea stari `failed` red ostaje uz novi.
      Kandidati za S7 ili zaseban PR.
+
+408. **Matija je odobrio vrata S4 (20. 11. u sesiji):** merge #173, deploy backenda (bez migracije) i živa Monerium sandbox uplata.
