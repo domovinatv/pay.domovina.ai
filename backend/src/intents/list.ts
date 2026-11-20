@@ -1,5 +1,5 @@
 import type { Env } from '../types';
-import type { PaymentIntentRow } from './db';
+import { settledSql, type PaymentIntentRow } from './db';
 
 /// Merchant-facing intent listing (ADR 0024 D8): one tenant's intents, newest
 /// first, keyset-paginated so a page never shifts under concurrent inserts.
@@ -103,9 +103,9 @@ export async function tenantIntentStats(
   const res = await env.DB.prepare(
     `SELECT CASE
               WHEN state = 'paid' THEN 'paid'
-              WHEN state = 'expired' AND monerium_order_id IS NOT NULL THEN 'late'
+              WHEN state = 'expired' AND ${settledSql('payment_intents')} THEN 'late'
               WHEN state = 'expired' THEN 'expired'
-              WHEN monerium_order_id IS NOT NULL THEN 'underpaid'
+              WHEN ${settledSql('payment_intents')} THEN 'underpaid'
               ELSE 'pending'
             END AS bucket,
             COUNT(*) AS count,

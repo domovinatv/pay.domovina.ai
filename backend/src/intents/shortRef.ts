@@ -1,6 +1,6 @@
 import type { Env } from '../types';
 import { STRAY_LOOKBACK_SECONDS } from '../monerium/strayResolver';
-import { TRUSTED_CANDIDATE_SQL } from './db';
+import { settledSql, TRUSTED_CANDIDATE_SQL } from './db';
 
 /// Short intent reference (ADR 0028): a body of 3 digits plus one Damm check
 /// digit ("0076"), unique among the LIVE intents of one tenant. When Revolut
@@ -163,7 +163,7 @@ export async function findIntentByShortRef(
        FROM intent_short_refs r
        JOIN payment_intents i ON i.sid = r.sid
       WHERE r.tenant_id = ? AND r.short_ref = ? AND ${LIVE_HOLD_SQL}
-        AND i.state IN ('pending', 'expired') AND i.monerium_order_id IS NULL
+        AND i.state IN ('pending', 'expired') AND NOT ${settledSql('i')}
         AND NOT EXISTS (
           SELECT 1 FROM monerium_forwards f
            WHERE f.sid = i.sid
