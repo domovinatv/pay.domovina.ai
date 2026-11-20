@@ -128,3 +128,10 @@ i navodi koju. Blokovi po sesiji: S1 100–199, S2 200–299 … S8 800–899.
        „bez reda u intent_settlements čita se kao prije” se oslanja na sintetski order kao rezervu.
        Ono što je S2 tim testovima dokazivao (čitatelji ne trebaju sintetski red) sada pokriva
        `fiatSettleNoSynthetic.test.ts`, gdje redova nema od početka.
+308. **Živa provjera (20. 11.):** deploy `bdcd7f0b` + migracija 0037 (u prodi 0 `swan_` ordera, 0
+     `fiat_notify` forwarda, 4 Swan namire ostaju; stari `vmwjxqts8ajj` i dalje vraća isti
+     `monerium_order_id` i `settled`). Novi intent `x22x58fvjk8s` (admin v2, `sbx-d166d9a98b`, 12,34 €)
+     → gumb „Simuliraj uplatu (Swan)” → `paid`, `monerium_order_id` NULL, red u `intent_settlements`
+     (`swan_bosci_6a7e…`, `credit_event_id` vezan), 0 novih `swan_` ordera i forwarda. `changes()` u D1
+     batchu radi (odluka 301). Ovaj sandbox tenant nema merchant webhook, pa outbox ni prije ni sada
+     nema redova; jednakost payloada dokazuje zlatni test (odluka 303).

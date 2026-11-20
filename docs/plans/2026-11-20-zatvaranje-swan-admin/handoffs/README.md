@@ -27,7 +27,7 @@ zadnji handoff”); to znači prvi otvoreni red u „Stanje lanca”.
 | S0 | Plan | gotovo | e96296e | backend 889 | plan, koda nema |
 | S1 | Mjerenje inboxa + guardovi | gotovo | 0515534 (#170) | backend 896 | deploy df9f84b9; inbox vezan (1 uplata), odstupanja 0 prije i poslije; `settledSql` OR (odl. 101) |
 | S2 | Čitatelji fiat namire | gotovo | 37e3972 (#171) | backend 905 | deploy c1888f30; `fiatSettlementOrder` u statusu i v2 detalju; prod 4/4 Swan isto (odl. 200–206) |
-| S3 | settleFiat bez sintetskog ordera | otvoreno | | | vrata |
+| S3 | settleFiat bez sintetskog ordera | gotovo | f95d74e (#172) | backend 916 | vrata odobrena 20. 11.; deploy bdcd7f0b + mig. 0037 (4+4 reda obrisana); živa Swan sandbox `x22x58fvjk8s` → paid, 0 `swan_` ordera, namira vezana (odl. 300–308) |
 | S4 | Monerium kroz matcher | otvoreno | | | vrata |
 | S5 | Flutter fiat tekstovi | otvoreno | | | paralelno |
 | S6 | Swan IBAN/secret u v2 | otvoreno | | | vrata (tajne) |
