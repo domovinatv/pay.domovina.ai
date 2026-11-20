@@ -15,7 +15,7 @@ Legenda: `[x]` gotovo · `[ ]` otvoreno · `[~]` u radu · `(!)` traži Matiju �
 - [x] `intents/db.ts` `findStrayCandidates` (~r. 367, 406) i `intents/shortRef.ts` (~r. 166) na `intent_settlements` → S1
 - [x] `intents/list.ts` bucketi late/underpaid (~r. 106–108) i `payers/api.ts` (~r. 90) na `intent_settlements` → S1 (payers ostaje, odluka 102)
 - [x] Test usklađenosti: za svaki put namire `monerium_order_id IS NOT NULL` ⇔ red u `intent_settlements` (paid, underpaid, late, sandbox, swan) → S1 (`test/settlementGuards.test.ts`)
-- [ ] compat-check zelen bez oznake `behavior-change`, PR mergan, deploy → S1
+- [x] compat-check zelen bez oznake `behavior-change`, PR mergan, deploy → S1 (#170, 0515534, deploy df9f84b9)
 
 ## F1: fiat bez sintetskog Monerium ordera
 
