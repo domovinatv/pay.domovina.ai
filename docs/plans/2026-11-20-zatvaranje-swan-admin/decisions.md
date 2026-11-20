@@ -186,3 +186,9 @@ i navodi koju. Blokovi po sesiji: S1 100–199, S2 200–299 … S8 800–899.
      Kandidati za S7 ili zaseban PR.
 
 408. **Matija je odobrio vrata S4 (20. 11. u sesiji):** merge #173, deploy backenda (bez migracije) i živa Monerium sandbox uplata.
+409. **Živa provjera nije završena (20. 11.).** Nakon deploya `26c3ccde` intenti `yks2cbuti8cd` (`italk-sandbox`) i
+     `x2dz9i9ujkmz` (`crosulja-staging`), oba 1,00 € iz admin v2, dobili su `monerium-sandbox-transfer` → `ok`,
+     ali ni nakon 7+ min nema nijedne isporuke u `monerium_webhook_events` (zadnja id 507, 19. 11.), ni s krivim
+     potpisom. Handler zapisuje svaku isporuku prije obrade, pa novi kod nije pozvan; zastoj je kod Monerium
+     sandboxa (obrada ili webhook pretplata). I dva `italk-sandbox` intenta otvorena prije deploya
+     (`228z6xgkmzt7`, `es4nz7ff2sjk`) stoje u `pending`. Nastavak: vrh `S5.md`.

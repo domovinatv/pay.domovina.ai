@@ -26,9 +26,9 @@ Legenda: `[x]` gotovo · `[ ]` otvoreno · `[~]` u radu · `(!)` traži Matiju �
 
 ## F2: Monerium kroz zajednički matcher
 
-- [ ] Monerium `issue` događaj ide `credit_events` → `inflow/matcher.ts`; forward.ts/strayResolver samo izvršavaju odluku matchera → S4
-- [ ] Replay testovi: svi postojeći Monerium scenariji (sid, kratka referenca, stray po iznosu/vremenu, underpaid, late, dvostruki webhook) daju isti ishod → S4
-- [ ] (!) Deploy na putu novca; živa sandbox uplata (`/api/intents/<sid>/monerium-sandbox-transfer`) → `paid` → S4
+- [x] Monerium `issue` događaj ide `credit_events` → `inflow/matcher.ts`; forward.ts/strayResolver samo izvršavaju odluku matchera → S4
+- [x] Replay testovi: svi postojeći Monerium scenariji (sid, kratka referenca, stray po iznosu/vremenu, underpaid, late, dvostruki webhook) daju isti ishod → S4
+- [ ] (!) Deploy na putu novca (✅ 26c3ccde); živa sandbox uplata (`/api/intents/<sid>/monerium-sandbox-transfer`) → `paid` → S4
 
 ## F3: Flutter fiat tekstovi (paralelno s F0–F2)
 
