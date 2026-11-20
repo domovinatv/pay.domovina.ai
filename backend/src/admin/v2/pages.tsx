@@ -291,7 +291,10 @@ function buildSteps(b: PaymentBundle, chain: string | null): Step[] {
       tone: rejected ? 'bad' : 'ok',
       title: rejected ? 'Uplata odbijena' : provider === 'swan' ? 'Uplata stigla na Swan račun' : provider === 'sandbox' ? 'Simulirana uplata' : 'SEPA uplata primljena (Monerium)',
       sub: [b.order ? `order ${b.order.state}` : credit ? `${credit.provider} · ${credit.finality}` : provider, who ? `uplatitelj ${who}` : null, iban].filter(Boolean).join(' · '),
-      ref: b.order ? <a href={`/admin/orders/${encodeURIComponent(b.order.id)}`}><Mono>order {short(b.order.id, 10, 6)}</Mono></a> : credit ? <Mono>{credit.provider_ref}</Mono> : <Mono>{b.settlement?.settlement_ref}</Mono>,
+      // Fiat (Swan): the order is a view of the credit event, there is no
+      // Monerium order behind it and v1 /admin/orders would 404 (S3).
+      ref: b.order && isFiatProvider(provider) ? <Mono>{credit?.provider_ref ?? b.order.id}</Mono>
+        : b.order ? <a href={`/admin/orders/${encodeURIComponent(b.order.id)}`}><Mono>order {short(b.order.id, 10, 6)}</Mono></a> : credit ? <Mono>{credit.provider_ref}</Mono> : <Mono>{b.settlement?.settlement_ref}</Mono>,
       at: b.order ? fmtIso(b.order.processed_at ?? b.order.placed_at) : credit ? fmtDateSec(credit.occurred_at) : fmtDateSec(b.settlement?.created_at),
     });
   } else {
@@ -341,6 +344,7 @@ export const PaymentDetailPage: FC<{ scope: Scope; b: PaymentBundle }> = ({ scop
   const t = scope.byId(i.tenant_id);
   const chain = t?.chain ?? 'gnosis';
   const steps = buildSteps(b, chain);
+  const fiatOrder = isFiatProvider(b.settlement?.provider ?? i.provider);
   const fwd = b.forwards[b.forwards.length - 1];
   const parked = fwd && (fwd.status === 'failed' || fwd.status === 'blocked');
   let meta: string | null = null;
@@ -388,12 +392,12 @@ export const PaymentDetailPage: FC<{ scope: Scope; b: PaymentBundle }> = ({ scop
           <h2 style="font-size:16px;margin-top:8px">Povezani zapisi</h2>
           <div class="card">
             {b.order ? (
-              <details class="rel"><summary><span><strong>Monerium order</strong> <span class="dim">· {b.order.kind} · {b.order.state} · {fmtAmountStr(b.order.amount)}</span></span><Mono>{short(b.order.id, 10, 6)}</Mono></summary>
+              <details class="rel"><summary><span><strong>{fiatOrder ? `Uplata (${b.settlement?.provider ?? i.provider})` : 'Monerium order'}</strong> <span class="dim">· {b.order.kind} · {b.order.state} · {fmtAmountStr(b.order.amount)}</span></span><Mono>{short(b.order.id, 10, 6)}</Mono></summary>
                 <div class="in"><dl class="kv">
                   <dt>Uplatitelj</dt><dd>{b.order.counterpart_name ?? '—'} · <Mono>{b.order.counterpart_iban ?? '—'}</Mono></dd>
                   <dt>Memo</dt><dd><Mono>{b.order.memo ?? '—'}</Mono></dd>
                   <dt>Placed / processed</dt><dd>{fmtIso(b.order.placed_at)} · {fmtIso(b.order.processed_at)}</dd>
-                </dl><p class="small"><a href={`/admin/orders/${encodeURIComponent(b.order.id)}`}>Sirovi JSON (v1) →</a></p></div>
+                </dl>{fiatOrder ? null : <p class="small"><a href={`/admin/orders/${encodeURIComponent(b.order.id)}`}>Sirovi JSON (v1) →</a></p>}</div>
               </details>
             ) : null}
             {b.events.map((e) => (

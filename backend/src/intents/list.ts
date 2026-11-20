@@ -59,7 +59,9 @@ export async function listTenantIntents(
   }
   // One extra row tells whether there is a next page.
   const res = await env.DB.prepare(
-    `SELECT * FROM payment_intents WHERE ${where.join(' AND ')}
+    // settlement_ref: a fiat intent's `monerium_order_id` in the response (S3).
+    `SELECT *, (SELECT s.settlement_ref FROM intent_settlements s WHERE s.sid = payment_intents.sid) AS settlement_ref
+       FROM payment_intents WHERE ${where.join(' AND ')}
       ORDER BY created_at DESC, sid DESC LIMIT ?`,
   )
     .bind(...args, q.limit + 1)

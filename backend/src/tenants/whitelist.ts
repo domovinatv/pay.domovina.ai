@@ -74,6 +74,7 @@ export interface AuthorizeDeps {
     state?: string;
     amount_cents?: number;
     monerium_order_id?: string | null;
+    settlement_ref?: string | null;
   } | null>;
   getCampaignById(
     campaignId: string,
@@ -118,6 +119,7 @@ export function makeAuthorizeDeps(env: Env, rail: TenantRail): AuthorizeDeps {
             state: row.state,
             amount_cents: row.amount_cents,
             monerium_order_id: row.monerium_order_id,
+            settlement_ref: row.settlement_ref ?? null,
           }
         : null;
     },

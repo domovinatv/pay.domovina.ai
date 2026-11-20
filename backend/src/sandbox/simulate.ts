@@ -4,7 +4,7 @@ import { insertForward, recordMoneriumWebhookEvent, upsertMoneriumOrder } from '
 import { makeConfirmDeps, settleNonRoutedPaid } from '../intents/confirm';
 import { emitOrderLifecycleWebhook } from '../intents/outbound';
 import { publishIntentChange } from '../intents/stream';
-import { getIntent, type PaymentIntentRow } from '../intents/db';
+import { getIntent, isSettled, type PaymentIntentRow } from '../intents/db';
 import { intentReference } from '../tenants/rail';
 
 /// Simulated payment for a sandbox intent (ADR 0024 D4). Nothing here is
@@ -101,7 +101,7 @@ export async function simulatePayment(
   outcome: SimOutcome,
   requestedCents: number | null,
 ): Promise<SimResult> {
-  if (intent.monerium_order_id) return { ok: false, error: 'already_settled' };
+  if (isSettled(intent)) return { ok: false, error: 'already_settled' };
   const amountCents = simulatedAmountCents(intent.amount_cents, outcome, requestedCents);
   if (amountCents === null) return { ok: false, error: 'invalid_amount' };
 
