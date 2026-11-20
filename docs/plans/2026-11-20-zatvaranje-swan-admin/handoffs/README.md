@@ -24,7 +24,7 @@ zadnji handoff”); to znači prvi otvoreni red u „Stanje lanca”.
 
 | Sesija | Paket | Stanje | Commit | Testovi | Napomena |
 | --- | --- | --- | --- | --- | --- |
-| S0 | Plan | gotovo | (S0) | backend 889 | plan, koda nema |
+| S0 | Plan | gotovo | e96296e | backend 889 | plan, koda nema |
 | S1 | Mjerenje inboxa + guardovi | otvoreno | | | |
 | S2 | Čitatelji fiat namire | otvoreno | | | |
 | S3 | settleFiat bez sintetskog ordera | otvoreno | | | vrata |
