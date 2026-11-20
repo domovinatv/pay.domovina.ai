@@ -169,7 +169,13 @@ async function drain(pending: Promise<unknown>[]) {
     const batch = pending.splice(0);
     let done = false;
     const all = Promise.allSettled(batch).then((r) => { done = true; return r; });
-    for (let i = 0; i < 500 && !done; i++) await vi.advanceTimersByTimeAsync(1_000);
+    // Real macrotask yields first (setImmediate is not faked): D1/crypto work
+    // must finish before the fake clock moves, or a slow machine (CI) runs
+    // out of iterations and the clock lands somewhere else.
+    for (let i = 0; i < 500 && !done; i++) {
+      for (let j = 0; j < 20 && !done; j++) await new Promise((r) => setImmediate(r));
+      if (!done) await vi.advanceTimersByTimeAsync(1_000);
+    }
     if (!done) throw new Error('replay: waitUntil promises never settled');
     for (const r of await all) if (r.status === 'rejected') throw r.reason;
   }
