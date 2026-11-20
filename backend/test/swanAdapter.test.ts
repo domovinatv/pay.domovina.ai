@@ -123,7 +123,7 @@ describe('normalizeSwanTransaction', () => {
 });
 
 describe('POST /api/swan/webhook/t/:tenantId', () => {
-  it('re-reads the transaction, matches the sid and settles the intent paid', async () => {
+  it('re-reads the transaction, matches the sid and settles through intent_settlements (no synthetic order, S3)', async () => {
     const { env, raw, graphql } = await setup();
     const res = await post(env, 'swant');
     expect(res.status).toBe(200);
@@ -131,25 +131,26 @@ describe('POST /api/swan/webhook/t/:tenantId', () => {
     expect(graphql).toEqual([{ auth: 'Bearer tok', id: 'bosci_faa953a6862562e3ed9493e1015cddee' }]);
 
     const intent = raw.prepare(`SELECT state, amount_received_cents, monerium_order_id FROM payment_intents WHERE sid = 'swanprobe01'`).get() as Record<string, unknown>;
-    expect(intent).toEqual({ state: 'paid', amount_received_cents: 1234, monerium_order_id: 'swan_bosci_2c2198a642650d5571594e9da743a757' });
+    expect(intent).toEqual({ state: 'paid', amount_received_cents: 1234, monerium_order_id: null });
     const ev = raw.prepare(`SELECT provider, tenant_id, matched_sid, matched_by, scheme, finality, settlement_ref FROM credit_events`).all();
     expect(ev).toEqual([{
       provider: 'swan', tenant_id: 'swant', matched_sid: 'swanprobe01', matched_by: 'sid', scheme: 'sepa_inst',
       finality: 'booked', settlement_ref: 'swan_bosci_2c2198a642650d5571594e9da743a757',
     }]);
-    const order = raw.prepare(`SELECT state, counterpart_iban, counterpart_name, tenant_id FROM monerium_orders`).get();
-    expect(order).toEqual({ state: 'processed', counterpart_iban: 'HR1210010051863000160', counterpart_name: 'Ivan Horvat', tenant_id: 'swant' });
-    const fwd = raw.prepare(`SELECT status, error, sid FROM monerium_forwards`).get();
-    expect(fwd).toEqual({ status: 'confirmed', error: 'fiat_notify', sid: 'swanprobe01' });
+    expect(raw.prepare(`SELECT sid, provider, settlement_ref FROM intent_settlements`).all()).toEqual([
+      { sid: 'swanprobe01', provider: 'swan', settlement_ref: 'swan_bosci_2c2198a642650d5571594e9da743a757' },
+    ]);
+    expect(raw.prepare(`SELECT COUNT(*) AS n FROM monerium_orders`).get()).toEqual({ n: 0 });
+    expect(raw.prepare(`SELECT COUNT(*) AS n FROM monerium_forwards`).get()).toEqual({ n: 0 });
   });
 
-  it('a redelivery is deduplicated on the inbox and settles nothing twice', async () => {
+  it('a redelivery is deduplicated on the inbox and settles once (one intent_settlements row)', async () => {
     const { env, raw } = await setup();
     await post(env, 'swant');
     const again = await post(env, 'swant');
     expect(await again.json()).toMatchObject({ ok: true, dedup: true });
     expect(raw.prepare(`SELECT COUNT(*) AS n FROM credit_events`).get()).toEqual({ n: 1 });
-    expect(raw.prepare(`SELECT COUNT(*) AS n FROM monerium_forwards`).get()).toEqual({ n: 1 });
+    expect(raw.prepare(`SELECT COUNT(*) AS n FROM intent_settlements`).get()).toEqual({ n: 1 });
   });
 
   it('a transaction on another Swan account is ignored', async () => {

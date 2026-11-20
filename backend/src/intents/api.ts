@@ -1,7 +1,7 @@
 import { Hono, type Context } from 'hono';
 
 import type { Env } from '../types';
-import { countOpenIntentsForTarget, createIntent, getIntent, isTrustedTarget } from './db';
+import { countOpenIntentsForTarget, createIntent, getIntent, isTrustedTarget, settlementId } from './db';
 import { generateSid } from './sid';
 import { allocateShortRef, SHORT_REF_HOLD_SECONDS } from './shortRef';
 import { isReceiptSid } from '../receipts/sid';
@@ -487,7 +487,7 @@ export function intentResponseJson(
     created_at: isoFromUnix(intent.created_at),
     expires_at: isoFromUnix(intent.expires_at),
     paid_at: intent.paid_at ? isoFromUnix(intent.paid_at) : null,
-    monerium_order_id: intent.monerium_order_id,
+    monerium_order_id: settlementId(intent),
     forward_tx_hash: intent.forward_tx_hash,
     amount_received_cents: intent.amount_received_cents,
     return_url: intent.return_url ?? null,

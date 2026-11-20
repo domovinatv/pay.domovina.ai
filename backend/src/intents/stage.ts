@@ -198,8 +198,9 @@ export function computeStage(input: StageInput): StageResult {
 }
 
 /// Fiat provider (Swan): the credit is booked straight on the tenant's own
-/// account (inflow/settleFiat.ts writes it as a synthetic order: `pending` =
-/// announced, `processed` = booked). Two steps, both told as they are: the
+/// account. `order` is the view inflow/settleFiat.ts fiatSettlementOrder()
+/// builds from the settlement + booked credit event (`pending` = announced,
+/// `processed` = booked); nothing is stored as an order since S3. Two steps, both told as they are: the
 /// payer's bank, then the recipient's account at the provider.
 function computeFiatStage(
   intent: StageIntent,

@@ -16,7 +16,7 @@ import {
   STRAY_LOOKBACK_SECONDS,
   type StrayCandidate,
 } from './strayResolver';
-import { findStrayCandidates } from '../intents/db';
+import { findStrayCandidates, isSettled } from '../intents/db';
 import { findIntentByShortRef, shortRefFromOrder } from '../intents/shortRef';
 import { forwardViaSafe, simulateForwardViaSafe, type ForwardArgs, type ForwardResult } from '../router/safe';
 import {
@@ -899,7 +899,7 @@ export async function checkReroute(
   if (existing?.status === 'resolved_offrail') return 'resolved_offrail';
   const intent = await deps.authorize.getIntentBySid(sid);
   if (!intent) return 'unknown_sid';
-  if (intent.state === 'paid' || intent.monerium_order_id) return 'already_settled';
+  if (intent.state === 'paid' || isSettled(intent)) return 'already_settled';
   if (!opts.force && intent.amount_cents !== parseAmountCents(order.amount)) return 'amount_mismatch';
   return null;
 }

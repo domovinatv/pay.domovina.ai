@@ -1,7 +1,7 @@
 import type { Env } from '../types';
 import type { MoneriumOrder } from '../monerium/types';
 import { parseAmountCentsFromOrder } from '../monerium/orderState';
-import type { PaymentIntentRow } from './db';
+import { settlementId, type PaymentIntentRow } from './db';
 import { enqueueWebhook, type OutboxEvent } from './outbox';
 
 /// Outbound merchant webhooks. pinka.finance consumes them through the
@@ -122,7 +122,7 @@ function settledIntentFields(
         : 0,
     currency: intent.currency,
     target_address: intent.target_address,
-    monerium_order_id: intent.monerium_order_id,
+    monerium_order_id: settlementId(intent),
     forward_tx_hash: intent.forward_tx_hash,
     paid_at: intent.paid_at,
     // SEPA sender (Monerium counterpart) → merchant derives bank-verified /

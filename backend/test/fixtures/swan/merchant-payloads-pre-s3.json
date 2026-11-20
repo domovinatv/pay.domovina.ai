@@ -1,0 +1,216 @@
+{
+  "swant": {
+    "intent": {
+      "sid": "swanprobe01",
+      "state": "paid",
+      "amount_eur": "12.34",
+      "amount_cents": 1234,
+      "currency": "EUR",
+      "provider": "swan",
+      "target_address": null,
+      "label": null,
+      "metadata": null,
+      "memo": "sid:swanprobe01",
+      "iban": "FR7699999002002131653013357",
+      "beneficiary_name": "MPT Probe d.o.o.",
+      "bic": "",
+      "epc_qr_data": "BCD\n001\n1\nSCT\n\nMPT Probe d.o.o.\nFR7699999002002131653013357\nEUR12.34\nOTHR\nsid:swanprobe01",
+      "hub3_data": null,
+      "tenant_id": "swant",
+      "checkout_url": "https://api.mpt.hr/checkout/swanprobe01",
+      "status_url": "https://api.mpt.hr/api/intents/swanprobe01",
+      "status_stream_url": "https://api.mpt.hr/api/intents/swanprobe01/stream",
+      "created_at": "2026-11-20T11:59:00.000Z",
+      "expires_at": "2026-11-20T12:15:00.000Z",
+      "paid_at": "2026-11-20T12:00:00.000Z",
+      "monerium_order_id": "swan_bosci_2c2198a642650d5571594e9da743a757",
+      "forward_tx_hash": null,
+      "amount_received_cents": 1234,
+      "return_url": null,
+      "short_ref": null,
+      "status": {
+        "stage": "settled",
+        "provider": "swan",
+        "settlement": "fiat",
+        "steps": [
+          {
+            "key": "payment",
+            "custodian": "bank",
+            "status": "proven",
+            "at": 1794951343
+          },
+          {
+            "key": "settled",
+            "custodian": "recipient",
+            "status": "proven",
+            "at": 1794951343
+          }
+        ],
+        "elapsed_seconds": 60,
+        "seconds_in_stage": 224657,
+        "forward_expected": false,
+        "order_id": "swan_bosci_2c2198a642650d5571594e9da743a757",
+        "order_state": "processed",
+        "mint_tx_hashes": [],
+        "forward_status": null,
+        "forward_tx_hash": null,
+        "forward_error": null,
+        "rejected_reason": null,
+        "review_expected": null,
+        "amount_mismatch": null,
+        "amount_received_cents": 1234
+      }
+    },
+    "outbox": [
+      {
+        "id": "int_swanprobe01",
+        "type": "intent.paid",
+        "tenant_id": "swant",
+        "payload": {
+          "type": "intent.paid",
+          "event_id": "int_swanprobe01",
+          "occurred_at": "2026-11-20T12:00:00.000Z",
+          "sid": "swanprobe01",
+          "state": "paid",
+          "amount_cents": 1234,
+          "amount_received_cents": 1234,
+          "overpaid_cents": 0,
+          "currency": "EUR",
+          "target_address": "0x0000000000000000000000000000000000000000",
+          "monerium_order_id": "swan_bosci_2c2198a642650d5571594e9da743a757",
+          "forward_tx_hash": null,
+          "paid_at": 1795176000,
+          "sender_iban": "HR1210010051863000160",
+          "sender_name": "Ivan Horvat",
+          "metadata": null
+        }
+      },
+      {
+        "id": "rcv_swan_bosci_2c2198a642650d5571594e9da743a757",
+        "type": "payment.received",
+        "tenant_id": "swant",
+        "payload": {
+          "type": "payment.received",
+          "event_id": "rcv_swan_bosci_2c2198a642650d5571594e9da743a757",
+          "occurred_at": "2026-11-17T21:35:43.000Z",
+          "sid": "swanprobe01",
+          "campaign_id": null,
+          "monerium_order_id": "swan_bosci_2c2198a642650d5571594e9da743a757",
+          "amount_received_cents": 1234,
+          "currency": "eur",
+          "funds_location": "monerium",
+          "settlement": "pending",
+          "review_expected": null
+        }
+      }
+    ]
+  },
+  "sbx-swan01": {
+    "intent": {
+      "sid": "sbxswanpr01",
+      "state": "paid",
+      "amount_eur": "12.34",
+      "amount_cents": 1234,
+      "currency": "EUR",
+      "provider": "swan",
+      "target_address": null,
+      "label": null,
+      "metadata": null,
+      "memo": "sid:sbxswanpr01",
+      "iban": null,
+      "beneficiary_name": null,
+      "bic": null,
+      "epc_qr_data": null,
+      "hub3_data": null,
+      "tenant_id": "sbx-swan01",
+      "checkout_url": "https://api.mpt.hr/checkout/sbxswanpr01",
+      "status_url": "https://api.mpt.hr/api/intents/sbxswanpr01",
+      "status_stream_url": "https://api.mpt.hr/api/intents/sbxswanpr01/stream",
+      "created_at": "2026-11-20T11:59:00.000Z",
+      "expires_at": "2026-11-20T12:15:00.000Z",
+      "paid_at": "2026-11-20T12:00:00.000Z",
+      "monerium_order_id": "swan_bosci_2c2198a642650d5571594e9da743a757",
+      "forward_tx_hash": null,
+      "amount_received_cents": 1234,
+      "return_url": null,
+      "short_ref": null,
+      "sandbox": true,
+      "simulate_url": "https://api.mpt.hr/api/intents/sbxswanpr01/simulate",
+      "status": {
+        "stage": "settled",
+        "provider": "swan",
+        "settlement": "fiat",
+        "steps": [
+          {
+            "key": "payment",
+            "custodian": "bank",
+            "status": "proven",
+            "at": 1794951343
+          },
+          {
+            "key": "settled",
+            "custodian": "recipient",
+            "status": "proven",
+            "at": 1794951343
+          }
+        ],
+        "elapsed_seconds": 60,
+        "seconds_in_stage": 224657,
+        "forward_expected": false,
+        "order_id": "swan_bosci_2c2198a642650d5571594e9da743a757",
+        "order_state": "processed",
+        "mint_tx_hashes": [],
+        "forward_status": null,
+        "forward_tx_hash": null,
+        "forward_error": null,
+        "rejected_reason": null,
+        "review_expected": null,
+        "amount_mismatch": null,
+        "amount_received_cents": 1234
+      }
+    },
+    "outbox": [
+      {
+        "id": "int_sbxswanpr01",
+        "type": "intent.paid",
+        "tenant_id": "sbx-swan01",
+        "payload": {
+          "type": "intent.paid",
+          "event_id": "int_sbxswanpr01",
+          "occurred_at": "2026-11-20T12:00:00.000Z",
+          "sid": "sbxswanpr01",
+          "state": "paid",
+          "amount_cents": 1234,
+          "amount_received_cents": 1234,
+          "overpaid_cents": 0,
+          "currency": "EUR",
+          "target_address": "0x0000000000000000000000000000000000000000",
+          "monerium_order_id": "swan_bosci_2c2198a642650d5571594e9da743a757",
+          "forward_tx_hash": null,
+          "paid_at": 1795176000,
+          "sender_iban": "HR1210010051863000160",
+          "sender_name": "Ivan Horvat",
+          "metadata": null
+        }
+      },
+      {
+        "id": "rcv_swan_bosci_2c2198a642650d5571594e9da743a757",
+        "type": "payment.received",
+        "tenant_id": "sbx-swan01",
+        "payload": {
+          "type": "payment.received",
+          "event_id": "rcv_swan_bosci_2c2198a642650d5571594e9da743a757",
+          "occurred_at": "2026-11-17T21:35:43.000Z",
+          "sid": "sbxswanpr01",
+          "campaign_id": null,
+          "monerium_order_id": "swan_bosci_2c2198a642650d5571594e9da743a757",
+          "amount_received_cents": 1234,
+          "currency": "eur",
+          "funds_location": "monerium",
+          "settlement": "pending",
+          "review_expected": null
+        }
+      }
+    ]
+  }
+}

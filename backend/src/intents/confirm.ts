@@ -13,7 +13,7 @@ import { sendAlert } from '../alerts';
 import { publishIntentChange } from './stream';
 import { parseCampaignIdFromText, type SenderInfo } from '../monerium/sid';
 import type { PaymentIntentRow } from './db';
-import { getIntent, markIntentLate, markIntentPaid, markIntentUnderpaid } from './db';
+import { getIntent, markIntentLate, markIntentPaid, markIntentUnderpaid, type SettleArgs } from './db';
 import {
   emitCampaignContributionWebhook,
   emitPaymentUnderpaidWebhook,
@@ -56,35 +56,20 @@ export interface ConfirmDeps {
   getIntent(sid: string): Promise<PaymentIntentRow | null>;
   markIntentPaid(
     sid: string,
-    args: {
-      moneriumOrderId: string;
-      forwardId: number;
-      forwardTxHash: string | null;
-      amountReceivedCents: number | null;
-    },
+    args: SettleArgs,
   ): Promise<boolean>;
   /// Record a settlement for less than the intent amount on a still-pending
   /// intent (BW-01; no state change). True only for the first caller.
   markIntentUnderpaid(
     sid: string,
-    args: {
-      moneriumOrderId: string;
-      forwardId: number;
-      forwardTxHash: string | null;
-      amountReceivedCents: number | null;
-    },
+    args: SettleArgs,
   ): Promise<boolean>;
   /// Record settlement on an intent that had already EXPIRED (no state
   /// change). True only for the first caller — same single-fire contract as
   /// markIntentPaid.
   markIntentLate(
     sid: string,
-    args: {
-      moneriumOrderId: string;
-      forwardId: number;
-      forwardTxHash: string | null;
-      amountReceivedCents: number | null;
-    },
+    args: SettleArgs,
   ): Promise<boolean>;
   emitIntentPaid(intent: PaymentIntentRow, sender: SenderInfo): Promise<void>;
   emitPaymentLate(intent: PaymentIntentRow, sender: SenderInfo): Promise<void>;
@@ -224,6 +209,32 @@ export async function settleNonRoutedPaid(
   return flipped;
 }
 
+/// Fiat settlement (`fiat_notify`, ADR 0032 §3–4, S3): the money is booked on
+/// the tenant's own account. No order, no forward: the claim writes the
+/// intent + `intent_settlements` row named by `settlementRef`, the rest
+/// (paid / underpaid / late + merchant webhook) is the same as above.
+export async function settleFiatPaid(
+  deps: ConfirmDeps,
+  args: {
+    sid: string;
+    settlementRef: string;
+    amountCents: number | null;
+    sender: SenderInfo;
+  },
+): Promise<boolean> {
+  const flipped = await flipPaidAndNotify(deps, {
+    sid: args.sid,
+    orderId: null,
+    forwardId: null,
+    forwardTxHash: null,
+    settlementRef: args.settlementRef,
+    amountCents: args.amountCents,
+    sender: args.sender,
+  });
+  await deps.publish?.(args.sid);
+  return flipped;
+}
+
 /// Primary confirmation path: poll the receipt right after broadcast, inside
 /// the same waitUntil that ran the forward. Returns what happened so the
 /// caller can log it; 'timeout' leaves the row `submitted` for the cron.
@@ -289,19 +300,22 @@ async function flipPaidAndNotify(
   deps: ConfirmDeps,
   args: {
     sid: string;
-    orderId: string;
-    forwardId: number;
+    orderId: string | null;
+    forwardId: number | null;
     forwardTxHash: string | null;
+    settlementRef?: string | null;
     amountCents: number | null;
     sender: SenderInfo;
   },
 ): Promise<boolean> {
-  const flipped = await deps.markIntentPaid(args.sid, {
+  const settlement: SettleArgs = {
     moneriumOrderId: args.orderId,
     forwardId: args.forwardId,
     forwardTxHash: args.forwardTxHash,
     amountReceivedCents: args.amountCents,
-  });
+    ...(args.settlementRef ? { settlementRef: args.settlementRef } : {}),
+  };
+  const flipped = await deps.markIntentPaid(args.sid, settlement);
   // Merchant webhook rides the pending→paid flip: markIntentPaid is an
   // atomic conditional UPDATE, so at most one caller ever sees flipped=true
   // — late SEPA after expiry (state='expired') never resurrects to paid.
@@ -310,12 +324,6 @@ async function flipPaidAndNotify(
     if (intent) await deps.emitIntentPaid(intent, args.sender);
     return true;
   }
-  const settlement = {
-    moneriumOrderId: args.orderId,
-    forwardId: args.forwardId,
-    forwardTxHash: args.forwardTxHash,
-    amountReceivedCents: args.amountCents,
-  };
   // Not flipped because the payer sent LESS than asked (BW-01): record it on
   // the still-pending intent and tell the merchant — never `paid`.
   if (await deps.markIntentUnderpaid(args.sid, settlement)) {

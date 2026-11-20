@@ -85,3 +85,46 @@ i navodi koju. Blokovi po sesiji: S1 100–199, S2 200–299 … S8 800–899.
      - admin v2 isplate (`listForwards`) prikazuju `fiat_notify` forwarde; v2 detalj linka na v1
        `/admin/orders/swan_…`, koji bez reda vraća 404.
 206. **S2 bez subagenata** (kao 104): 4 izvorne datoteke, 1 test.
+
+## S3 (2026-11-20)
+
+300. **Matija je odobrio vrata S3 (20. 11. u sesiji):** fiat namira prestaje pisati sintetske
+     `monerium_orders`/`monerium_forwards` redove, a odobrenje uključuje i deploy nakon merga. Stari
+     redovi (4 `swan_` ordera + 4 `fiat_notify` forwarda u prodi, svi na sandbox tenantu) **brišu se
+     migracijom** `0037_fiat_bez_sintetskog_ordera.sql`.
+301. **Claim bez ordera.** `markIntentPaid/Underpaid/Late` primaju `SettleArgs`. Kod fiata su
+     `moneriumOrderId` i `forwardId` NULL, a `settlementRef` (`<provider>_<txId>`) imenuje uplatu. Red
+     u `intent_settlements` piše se u istom batchu kao i dosad. Uvjet „claim je prošao” za fiat je
+     `WHERE changes() > 0` (prethodna naredba iste transakcije), jer na intentu nema ničega što bi se
+     ponovno pročitalo. Monerium put ostaje doslovno isti SQL. Revizija: ako živa Swan uplata nakon
+     deploya nema red u `intent_settlements`, `changes()` u D1 batchu ne radi kako je pretpostavljeno.
+302. **Učitani red nosi namiru.** `getIntent` i `listTenantIntents` vraćaju i `settlement_ref`
+     (podupit). JS provjere iz odluke 102 idu kroz `isSettled(row)`: `matcher.ts` `settleable`,
+     `intentStates.ts` `logicalIntentState`, `forward.ts` reroute (preko `whitelist.ts`
+     `getIntentBySid`) i `simulate.ts`. SQL tekst `getIntent` i dalje sadrži
+     `FROM payment_intents WHERE sid`, jer test doubleovi (`tenantIsolation` i drugi) prepoznaju upit
+     po tom nizu.
+303. **Merchant vidi isto.** `monerium_order_id` u `intent.paid`/`payment.underpaid`/`payment.late`
+     payloadu i u `GET /api/intents/:sid` (i listi) je `settlementId(row)` = `monerium_order_id ??
+     settlement_ref`, dakle za fiat isti `swan_…` kao prije. `payment.received` (`rcv_<ref>`) se i dalje
+     gradi iz `buildSyntheticOrder`, samo se više ne sprema. Dokaz:
+     `test/fixtures/swan/merchant-payloads-pre-s3.json` je snimljen istim testom
+     (`fiatSettleNoSynthetic.test.ts`, `CAPTURE_PRE_S3=1`) na `origin/main` 17dd3c9; S3 kod daje
+     identičan izlaz (outbox id/tip/payload + javni GET) za živi i sandbox tenant.
+304. **Admin v2 detalj za fiat:** nema linka na v1 `/admin/orders/…` (u koraku stoji `provider_ref`
+     događaja, a blok je „Uplata (swan)” bez „Sirovi JSON (v1)”). Korak „Proslijeđeno na odredište →
+     0x000…0000 · fiat_notify” nestaje jer forwarda više nema (odluka 203).
+305. **Sweep (`sandbox/db.ts`) se ne mijenja.** Novi `swan_` redovi više ne nastaju, a stare briše 0037.
+     Sweep i dalje briše `intent_settlements` i `credit_events` sandbox tenanta. `simulate.ts` dobiva
+     samo `isSettled` (odluka 302); `sim_` put ostaje (odluka 200).
+306. **Migracija 0037** stare Swan intente svodi na novi oblik (`monerium_order_id`, `forward_id` → NULL)
+     samo ako postoji red u `intent_settlements` s istim refom (u prodi 4/4 vezano, upit 20. 11.). Zatim
+     briše `fiat_notify` forwarde i `swan_` ordere na koje više ne pokazuje nijedan intent.
+307. **Behavior-change, stari testovi koji padaju (10):**
+     - `swanAdapter.test.ts` „re-reads the transaction…” traži `monerium_order_id = swan_…`,
+       sintetski order i `fiat_notify` forward; „a redelivery…” traži 1 forward. Sada ih nema (odluka 300).
+     - `fiatSettlementReaders.test.ts` (S2, 4 testa × 2 tenanta): `deleteSynthetic` očekuje da postoji
+       po jedan sintetski order i forward, test „pogled = sintetski red” čita spremljeni order, a test
+       „bez reda u intent_settlements čita se kao prije” se oslanja na sintetski order kao rezervu.
+       Ono što je S2 tim testovima dokazivao (čitatelji ne trebaju sintetski red) sada pokriva
+       `fiatSettleNoSynthetic.test.ts`, gdje redova nema od početka.

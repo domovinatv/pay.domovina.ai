@@ -2,7 +2,7 @@ import type { Env } from '../types';
 import type { CreditEvent } from './creditEvent';
 import { parseSidFromText } from '../monerium/sid';
 import { parseShortRef, findIntentByShortRef } from '../intents/shortRef';
-import { findStrayCandidates, getIntent, type PaymentIntentRow } from '../intents/db';
+import { findStrayCandidates, getIntent, isSettled, type PaymentIntentRow } from '../intents/db';
 import {
   resolveStray,
   STRAY_CLOCK_SKEW_SECONDS,
@@ -40,7 +40,7 @@ export function makeMatcherDeps(env: Env, tenantId: string): MatcherDeps {
 }
 
 function settleable(intent: PaymentIntentRow): boolean {
-  return (intent.state === 'pending' || intent.state === 'expired') && !intent.monerium_order_id;
+  return (intent.state === 'pending' || intent.state === 'expired') && !isSettled(intent);
 }
 
 export async function matchCreditEvent(deps: MatcherDeps, ev: CreditEvent): Promise<MatchResult> {
