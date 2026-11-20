@@ -8,6 +8,7 @@ import { mountAdminV2 } from '../src/admin/v2/routes';
 import { createReceivingAccount } from '../src/inflow/receivingAccounts';
 import { encryptSecret, importKeks } from '../src/tenants/secrets';
 import { FIAT_TARGET_PLACEHOLDER } from '../src/inflow/provider';
+import { fiatSettlementOrder } from '../src/inflow/settleFiat';
 import { SWAN_GRAPHQL_URL, SWAN_OAUTH_URL, type SwanTransaction } from '../src/providers/swan/client';
 import type { Env } from '../src/types';
 import { migratedD1 } from './helpers/sqliteD1';
@@ -289,4 +290,15 @@ describe('migracija 0037: stari sintetski redovi', () => {
     expect(raw.prepare(`SELECT order_id FROM monerium_forwards ORDER BY order_id`).all()).toEqual([{ order_id: 'ord-1' }, { order_id: 'swan_y' }]);
     expect(raw.prepare(`SELECT settlement_ref FROM intent_settlements WHERE sid = 'old'`).get()).toEqual({ settlement_ref: 'swan_x' });
   });
+});
+
+// Iz fiatSettlementReaders.test.ts (S2), nepromijenjen.
+it('Monerium intent ne ide kroz fiat čitač', async () => {
+  const { db, raw } = migratedD1();
+  raw.prepare(`INSERT INTO payment_intents (sid, target_address, amount_cents, state, created_at, expires_at, monerium_order_id)
+               VALUES ('monsid00001', '0x1', 500, 'paid', 0, 1, 'ord-1')`).run();
+  raw.prepare(`INSERT INTO intent_settlements (sid, provider, settlement_ref, created_at) VALUES ('monsid00001', 'monerium', 'ord-1', 0)`).run();
+  const env = { DB: db } as unknown as Env;
+  expect(await fiatSettlementOrder(env, { sid: 'monsid00001', provider: null, target_address: '0x1' })).toBeNull();
+  expect(await fiatSettlementOrder(env, { sid: 'monsid00001', provider: 'monerium', target_address: '0x1' })).toBeNull();
 });
