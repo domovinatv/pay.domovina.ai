@@ -134,6 +134,15 @@ export function settlementProvider(orderId: string): string {
   return 'monerium';
 }
 
+/// „Intent je namiren”: ima red u `intent_settlements` (ADR 0032 §4) ili, za
+/// redove iz vremena prije 0036 / fixtureove, `monerium_order_id`. Dok se oboje
+/// piše u istom batchu (runSettlementClaim) to je isto; S3 (fiat bez sintetskog
+/// ordera) ostavlja `monerium_order_id` NULL pa je red u `intent_settlements`
+/// jedini signal. `alias` = tablica/alias za payment_intents u upitu.
+export function settledSql(alias: string): string {
+  return `(${alias}.monerium_order_id IS NOT NULL OR EXISTS (SELECT 1 FROM intent_settlements s WHERE s.sid = ${alias}.sid))`;
+}
+
 /// ADR 0032 §4: the settlement row is written in the SAME D1 transaction as
 /// the intent's `monerium_order_id`, and only when the claim actually landed
 /// (the SELECT re-reads the row the UPDATE just wrote). The two can never
@@ -209,7 +218,8 @@ export async function markIntentPaid(
 /// the recipient (the forward does not look at the intent amount), so the
 /// settlement data is recorded, but the intent stays `pending` — the merchant
 /// gets `payment.underpaid` and decides. No paid_at. Single-fire: only the
-/// first caller sees true (monerium_order_id IS NULL).
+/// first caller sees true (not yet settledSql; the
+/// claim runs before the batch's settlement INSERT, so it sees the old state).
 export async function markIntentUnderpaid(
   env: Env,
   sid: string,
@@ -228,7 +238,7 @@ export async function markIntentUnderpaid(
             amount_received_cents = ?
       WHERE sid = ?
         AND state = 'pending'
-        AND monerium_order_id IS NULL
+        AND NOT ${settledSql('payment_intents')}
         AND (? IS NULL OR ? < amount_cents)`,
   )
     .bind(
@@ -246,7 +256,8 @@ export async function markIntentUnderpaid(
 /// Settlement landed on an intent that had already EXPIRED. The state stays
 /// 'expired' (expiry is final for the intent), but the settlement data is
 /// recorded so the status timeline and admin can show where the money went.
-/// Single-fire: only the first caller sees true (monerium_order_id IS NULL).
+/// Single-fire: only the first caller sees true (not yet settledSql; the
+/// claim runs before the batch's settlement INSERT, so it sees the old state).
 export async function markIntentLate(
   env: Env,
   sid: string,
@@ -267,7 +278,7 @@ export async function markIntentLate(
             amount_received_cents = ?
       WHERE sid = ?
         AND state = 'expired'
-        AND monerium_order_id IS NULL`,
+        AND NOT ${settledSql('payment_intents')}`,
   )
     .bind(
       now,
@@ -364,7 +375,7 @@ export async function findStrayCandidates(
       WHERE COALESCE(i.tenant_id, ?) = ?
         AND i.amount_cents = ?
         AND i.created_at BETWEEN ? AND ?
-        AND i.state IN ('pending', 'expired') AND i.monerium_order_id IS NULL
+        AND i.state IN ('pending', 'expired') AND NOT ${settledSql('i')}
         AND NOT EXISTS (
           SELECT 1 FROM monerium_forwards f
            WHERE f.sid = i.sid
@@ -403,7 +414,7 @@ export async function listRerouteCandidates(
        FROM payment_intents i
       WHERE COALESCE(i.tenant_id, ?) = ?
         AND i.created_at BETWEEN ? AND ?
-        AND i.state IN ('pending', 'expired') AND i.monerium_order_id IS NULL
+        AND i.state IN ('pending', 'expired') AND NOT ${settledSql('i')}
         AND NOT EXISTS (
           SELECT 1 FROM monerium_forwards f
            WHERE f.sid = i.sid
