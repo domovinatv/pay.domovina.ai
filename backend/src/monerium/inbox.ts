@@ -4,9 +4,10 @@ import { insertCreditEvent, recordMatch, type CreditEvent, type CreditFinality }
 import { orderState, parseAmountCents } from './orderState';
 
 /// ADR 0032 redoslijed 1: a verified Monerium `issue` order is also written to
-/// the provider-neutral inbox (`credit_events`). This is a record, not a
-/// driver: matching, forwarding and settlement still run on the Monerium path
-/// exactly as before, and a failure here never fails the webhook.
+/// the provider-neutral inbox (`credit_events`), and a failure here never fails
+/// the webhook. Matching is `inflow/matcher.ts` (`matchMoneriumOrder`), the
+/// same core as fiat; forward.ts executes it and writes the outcome back onto
+/// the `booked` event (`recordMoneriumMatch`).
 ///
 /// Finality (ADR 0032 §2): `placed`/`pending` → `notified`, `processed` →
 /// `booked`. `rejected` and `redeem` orders are not money in, so no event.
@@ -73,4 +74,21 @@ export async function recordMoneriumCredit(
     settlementRef: order.id,
   });
   return id;
+}
+
+/// The executed decision for an order, onto its `booked` event: the intent
+/// the forward claimed (`by` = sid | short_ref | stray | manual), or no intent
+/// with the park reason. No row (inbox write failed, or a cron reconcile
+/// forwarded an order the webhook never recorded) = nothing to update.
+export async function recordMoneriumMatch(
+  env: Env,
+  orderId: string,
+  m: { sid: string | null; by: string | null; note: string | null },
+): Promise<void> {
+  await env.DB.prepare(
+    `UPDATE credit_events SET matched_sid = ?, matched_by = ?, match_note = ?
+      WHERE provider = 'monerium' AND provider_ref = ?`,
+  )
+    .bind(m.sid, m.by, m.note, `${orderId}:booked`)
+    .run();
 }

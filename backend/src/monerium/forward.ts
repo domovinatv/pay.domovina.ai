@@ -9,15 +9,11 @@ import {
   type RoutingTarget,
   type SenderInfo,
 } from './sid';
-import {
-  placedAtUnix,
-  resolveStray,
-  STRAY_CLOCK_SKEW_SECONDS,
-  STRAY_LOOKBACK_SECONDS,
-  type StrayCandidate,
-} from './strayResolver';
+import type { StrayCandidate } from './strayResolver';
 import { findStrayCandidates, isSettled } from '../intents/db';
-import { findIntentByShortRef, shortRefFromOrder } from '../intents/shortRef';
+import { findIntentByShortRef } from '../intents/shortRef';
+import { matchMoneriumOrder, moneriumMatchedBy } from '../inflow/matcher';
+import { recordMoneriumMatch } from './inbox';
 import { forwardViaSafe, simulateForwardViaSafe, type ForwardArgs, type ForwardResult } from '../router/safe';
 import {
   makeConfirmDeps,
@@ -96,6 +92,9 @@ export interface ForwardDeps {
   findByShortRef?(code: string, nowUnix: number): Promise<{ sid: string; target_address: string; trusted: boolean } | null>;
   /// Clock for the resolver window; defaults to Date.now().
   nowUnix?(): number;
+  /// ADR 0032: write the executed decision onto the order's `booked` inbox
+  /// event (credit_events). Optional and never fatal.
+  recordMatch?(orderId: string, m: { sid: string | null; by: string | null; note: string | null }): Promise<void>;
   /// Poke the intent's SSE stream (ADR 0017). Optional, fail-soft.
   publish?(sid: string | null): Promise<void>;
   audit(entry: {
@@ -159,6 +158,7 @@ export function makeForwardDeps(env: Env, rail: TenantRail): ForwardDeps {
       nowUnix,
       defaultTenantId: defaultTenantId(env),
     }),
+    recordMatch: (orderId, m) => recordMoneriumMatch(env, orderId, m),
     publish: (sid) => publishIntentChange(env, sid),
     audit: (entry) => writeAudit(env, entry),
     emitBlocked: (args) => emitForwardBlockedWebhook(env, args),
@@ -218,14 +218,14 @@ export async function handleForward(
   const sender = extractSenderFromOrder(order);
   const amountCents = parseAmountCents(order.amount);
 
-  // ---- Reference-less payment → find the intent it paid. ----
-  // The resolver only ever proposes an intent's own, tenant-authorised
-  // target; the synthesised routing then faces the same gate as a memo.
+  // ---- Which intent did it pay? The matcher decides (ADR 0032 §5). ----
+  // It only ever proposes an intent's own, tenant-authorised target; the
+  // synthesised routing then faces the same gate as a memo. This function
+  // only executes the decision.
   let claimSids: string[] | null = null;
   let via: ResolvedVia | null = null;
   let strayNote: string | null = null;
   let ambiguousIntent = false;
-  const coded = manual ? null : await matchShortRef(deps, order, routing);
   if (manual) {
     const intent = await deps.authorize.getIntentBySid(manual.sid);
     if (intent) {
@@ -233,39 +233,42 @@ export async function handleForward(
       claimSids = [manual.sid];
       via = 'manual';
     }
-  } else if (coded) {
-    // The payer named the intent themselves: no guessing, one candidate.
-    routing = resolvedRouting(coded.target_address, coded.sid);
-    claimSids = [coded.sid];
-    via = 'code';
-  } else if (isStray(routing) && deps.findStrayCandidates && amountCents !== null) {
-    const now = deps.nowUnix?.() ?? Math.floor(Date.now() / 1000);
-    const placed = placedAtUnix(order.meta?.placedAt, now);
-    const candidates = await deps.findStrayCandidates({
-      amountCents,
-      createdFrom: placed - STRAY_LOOKBACK_SECONDS,
-      createdTo: placed + STRAY_CLOCK_SKEW_SECONDS,
-    });
-    const res = resolveStray(candidates, placed);
-    if (res.kind === 'match') {
-      routing = resolvedRouting(res.target, res.sids[0]);
-      claimSids = res.sids;
+  } else {
+    const { match } = await matchMoneriumOrder(deps, order);
+    if (match.kind === 'short_ref') {
+      // The payer named the intent themselves: no guessing, one candidate.
+      routing = resolvedRouting(match.hit.target_address, match.hit.sid);
+      claimSids = [match.hit.sid];
+      via = 'code';
+    } else if (match.kind === 'stray') {
+      routing = resolvedRouting(match.target, match.sids[0]);
+      claimSids = match.sids;
       via = 'auto';
-      ambiguousIntent = res.ambiguousIntent;
-    } else if (res.kind === 'conflict') {
+      ambiguousIntent = match.ambiguousIntent;
+    } else if (match.kind === 'conflict') {
       strayNote =
         `kandidati s istim iznosom vode na RAZLIČITE adrese — ručno odabrati:\n` +
-        res.candidates
+        match.candidates
           .slice(0, 5)
           .map((c) => `• <code>${c.sid}</code> → <code>${c.target_address}</code> (${c.state})`)
           .join('\n');
-    } else {
-      strayNote = res.untrusted
-        ? `nema pouzdanog kandidata; ${res.untrusted} intent(a) s tim iznosom vodi na wallet adresu ` +
+    } else if (match.kind === 'none' && match.resolverRan) {
+      strayNote = match.untrusted
+        ? `nema pouzdanog kandidata; ${match.untrusted} intent(a) s tim iznosom vodi na wallet adresu ` +
           `koja nije na statičnoj whitelisti — ručno preusmjeriti ako je to prava uplata`
         : 'nema otvorenog/nedavno isteklog intenta s tim iznosom (48 h)';
     }
   }
+  // Inbox (credit_events) record of the decision, once the forward row is
+  // claimed: which intent the matcher's decision actually settled.
+  const recordClaim = (sid: string | null, sids: string[] | null) =>
+    sid
+      ? safely(deps.recordMatch?.(order.id, {
+          sid,
+          by: moneriumMatchedBy(via),
+          note: ambiguousIntent && sids ? `stray_ambiguous: ${sids.join(',')}` : null,
+        }) ?? Promise.resolve())
+      : Promise.resolve();
 
   // BW-23: only EUR issue orders become EURe forwards. Checked before the
   // gate (whose order of checks stays as it is).
@@ -321,6 +324,7 @@ export async function handleForward(
       console.log(`forward ${order.id} self_noop already claimed by a concurrent delivery`);
       return;
     }
+    await recordClaim(claimed.sid, claimSids);
     if (claimed.sid) {
       await deps.settleNonRoutedPaid({
         sid: claimed.sid,
@@ -389,6 +393,7 @@ export async function handleForward(
       console.log(`forward ${order.id} direct_owed already claimed by a concurrent delivery`);
       return;
     }
+    await recordClaim(claimed.sid, claimSids);
     for (const other of claimSids ?? []) {
       if (other !== claimed.sid) await safely(deps.publish?.(other) ?? Promise.resolve());
     }
@@ -452,6 +457,7 @@ export async function handleForward(
     return;
   }
   const forwardId = claimed.forwardId;
+  await recordClaim(claimed.sid, claimSids);
   // From here on the sid is the CLAIMED one — for a resolved stray it may be
   // a later candidate than the one the gate was asked about (same target).
   routing = { ...routing, sid: claimed.sid };
@@ -719,6 +725,9 @@ async function park(
     status,
     error: reason === 'no_routing_target' ? 'no_routing_target' : `not_whitelisted:${reason}`,
   });
+  // Inbox: the booked event is NOT settled to any intent, whatever the memo
+  // named — it shows up among unmatched payments in admin v2.
+  await safely(deps.recordMatch?.(order.id, { sid: null, by: null, note: `park: ${reason}` }) ?? Promise.resolve());
 
   const amountEur = amountCents !== null ? (amountCents / 100).toFixed(2) : '?';
   console.warn(
@@ -782,51 +791,10 @@ export async function previewStraySid(
   order: MoneriumOrder,
 ): Promise<string | null> {
   if (order.kind !== 'issue' || order.state === 'rejected') return null;
-  const routing = extractRoutingFromOrder(order);
-  const coded = await matchShortRef(deps, order, routing);
-  if (coded) return coded.sid;
-  if (!deps.findStrayCandidates || !isStray(routing)) return null;
-  const amountCents = parseAmountCents(order.amount);
-  if (amountCents === null) return null;
-  const now = deps.nowUnix?.() ?? Math.floor(Date.now() / 1000);
-  const placed = placedAtUnix(order.meta?.placedAt, now);
-  const candidates = await deps.findStrayCandidates({
-    amountCents,
-    createdFrom: placed - STRAY_LOOKBACK_SECONDS,
-    createdTo: placed + STRAY_CLOCK_SKEW_SECONDS,
-  });
-  const res = resolveStray(candidates, placed);
-  return res.kind === 'match' ? res.sids[0] : null;
-}
-
-/// ADR 0028: a reference-less order whose remittance carries one valid short
-/// code held by a live, unsettled intent of this tenant. Only TRUSTED intents
-/// (SR-01, same rule as the stray resolver): anyone may open a keyless intent
-/// to a self-registered wallet, and a payer's typo with a valid check digit
-/// must not land on it. A miss falls through to the stray resolver.
-async function matchShortRef(
-  deps: Pick<ForwardDeps, 'findByShortRef' | 'nowUnix'>,
-  order: MoneriumOrder,
-  routing: RoutingTarget,
-): Promise<{ sid: string; target_address: string } | null> {
-  if (!deps.findByShortRef || !isStray(routing)) return null;
-  const code = shortRefFromOrder(order);
-  if (!code) return null;
-  const now = deps.nowUnix?.() ?? Math.floor(Date.now() / 1000);
-  const hit = await deps.findByShortRef(code, now);
-  if (!hit) return null;
-  if (!hit.trusted) {
-    console.warn(`short_ref ${code} → intent ${hit.sid} is not a trusted candidate, ignored`);
-    return null;
-  }
-  return hit;
-}
-
-/// No address, no sid, no campaign — nothing in the remittance to route on.
-/// (A bare 0x / gnosis: memo is NOT a stray: the payer named a destination we
-/// refuse, and guessing a different one would be worse than parking.)
-function isStray(r: RoutingTarget): boolean {
-  return !r.target && !r.diagnosticTarget && !r.sid && !r.campaignId;
+  const { match } = await matchMoneriumOrder(deps, order);
+  if (match.kind === 'short_ref') return match.hit.sid;
+  if (match.kind === 'stray') return match.sids[0];
+  return null;
 }
 
 function resolvedRouting(target: string, sid: string): RoutingTarget {

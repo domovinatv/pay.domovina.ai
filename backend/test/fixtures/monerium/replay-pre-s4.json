@@ -1,0 +1,3709 @@
+{
+  "note": "Captured on origin/main 5e52bbd (pre-S4) by test/moneriumReplay.test.ts with CAPTURE_PRE_S4=1. `compared` is asserted with toEqual; `creditMatch` is recorded only (S4 changes it on purpose).",
+  "scenarios": {
+    "01_sid_exact_paid": {
+      "compared": {
+        "responses": [
+          {
+            "status": 200,
+            "body": {
+              "ok": true
+            }
+          }
+        ],
+        "payment_intents": [
+          {
+            "sid": "sidexact01",
+            "state": "paid",
+            "monerium_order_id": "ord-01",
+            "amount_received_cents": 100,
+            "forward_tx_hash": "0xfffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
+            "forward_id_set": 1,
+            "paid_set": 1
+          }
+        ],
+        "intent_settlements": [
+          {
+            "sid": "sidexact01",
+            "provider": "monerium",
+            "settlement_ref": "ord-01",
+            "has_credit_event": 1
+          }
+        ],
+        "monerium_forwards": [
+          {
+            "order_id": "ord-01",
+            "sid": "sidexact01",
+            "status": "confirmed",
+            "error": null,
+            "memo_prefix": "mpt",
+            "target_address": "0xa11ce00000000000000000000000000000000001",
+            "amount_cents": 100,
+            "amount_wei": "1000000000000000000",
+            "tx_hash": "0xfffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
+            "attempts": 1,
+            "tenant_id": "italk"
+          }
+        ],
+        "monerium_orders": [
+          {
+            "id": "ord-01",
+            "state": "processed",
+            "tenant_id": "italk"
+          }
+        ],
+        "monerium_webhook_events": [
+          {
+            "order_id": "ord-01",
+            "event_type": "order.updated",
+            "signature_ok": 1,
+            "sid_extracted": "sidexact01",
+            "sid_resolved": null,
+            "processing_note": null,
+            "amount_cents": 100,
+            "tenant_id": "italk"
+          }
+        ],
+        "credit_events": [
+          {
+            "provider": "monerium",
+            "provider_ref": "ord-01:booked",
+            "tenant_id": "italk",
+            "receiving_account_id": null,
+            "receiving_iban": null,
+            "amount_cents": 100,
+            "currency": "EUR",
+            "remittance": "mpt:0xa11ce00000000000000000000000000000000001?sid=sidexact01",
+            "end_to_end_id": null,
+            "debtor_name": "Ana Platiša",
+            "debtor_account": "HR1210010051863000160",
+            "scheme": null,
+            "finality": "booked",
+            "occurred_at": 1795175980,
+            "settlement_ref": "ord-01"
+          }
+        ],
+        "webhook_outbox": [
+          {
+            "id": "int_sidexact01",
+            "type": "intent.paid",
+            "tenant_id": "italk",
+            "status": "delivered",
+            "attempts": 1,
+            "payload": {
+              "type": "intent.paid",
+              "event_id": "int_sidexact01",
+              "occurred_at": "<iso>",
+              "sid": "sidexact01",
+              "state": "paid",
+              "amount_cents": 100,
+              "amount_received_cents": 100,
+              "overpaid_cents": 0,
+              "currency": "EUR",
+              "target_address": "0xa11ce00000000000000000000000000000000001",
+              "monerium_order_id": "ord-01",
+              "forward_tx_hash": "0xfffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
+              "paid_at": "<t>",
+              "sender_iban": "HR1210010051863000160",
+              "sender_name": "Ana Platiša",
+              "metadata": null
+            }
+          },
+          {
+            "id": "rcv_ord-01",
+            "type": "payment.received",
+            "tenant_id": "italk",
+            "status": "delivered",
+            "attempts": 1,
+            "payload": {
+              "type": "payment.received",
+              "event_id": "rcv_ord-01",
+              "occurred_at": "<iso>",
+              "sid": "sidexact01",
+              "campaign_id": null,
+              "monerium_order_id": "ord-01",
+              "amount_received_cents": 100,
+              "currency": "eur",
+              "funds_location": "monerium",
+              "settlement": "pending",
+              "review_expected": true
+            }
+          }
+        ],
+        "merchant_posts": [
+          "int_sidexact01",
+          "rcv_ord-01"
+        ],
+        "tenant_audit_log": [],
+        "forwardViaSafe": [
+          {
+            "safe": "0x449abcef4e29a7dd8d98db451af2c463561baf2e",
+            "target": "0xa11ce00000000000000000000000000000000001",
+            "amountWei": "1000000000000000000",
+            "sessionId": "sidexact01",
+            "kind": null
+          }
+        ],
+        "alerts": []
+      },
+      "creditMatch": [
+        {
+          "provider_ref": "ord-01:booked",
+          "matched_sid": "sidexact01",
+          "matched_by": "sid",
+          "match_note": null
+        }
+      ]
+    },
+    "02_sid_underpaid": {
+      "compared": {
+        "responses": [
+          {
+            "status": 200,
+            "body": {
+              "ok": true
+            }
+          }
+        ],
+        "payment_intents": [
+          {
+            "sid": "sidunder02",
+            "state": "pending",
+            "monerium_order_id": "ord-02",
+            "amount_received_cents": 100,
+            "forward_tx_hash": "0xfffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
+            "forward_id_set": 1,
+            "paid_set": 0
+          }
+        ],
+        "intent_settlements": [
+          {
+            "sid": "sidunder02",
+            "provider": "monerium",
+            "settlement_ref": "ord-02",
+            "has_credit_event": 1
+          }
+        ],
+        "monerium_forwards": [
+          {
+            "order_id": "ord-02",
+            "sid": "sidunder02",
+            "status": "confirmed",
+            "error": null,
+            "memo_prefix": "mpt",
+            "target_address": "0xa11ce00000000000000000000000000000000001",
+            "amount_cents": 100,
+            "amount_wei": "1000000000000000000",
+            "tx_hash": "0xfffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
+            "attempts": 1,
+            "tenant_id": "italk"
+          }
+        ],
+        "monerium_orders": [
+          {
+            "id": "ord-02",
+            "state": "processed",
+            "tenant_id": "italk"
+          }
+        ],
+        "monerium_webhook_events": [
+          {
+            "order_id": "ord-02",
+            "event_type": "order.updated",
+            "signature_ok": 1,
+            "sid_extracted": "sidunder02",
+            "sid_resolved": null,
+            "processing_note": null,
+            "amount_cents": 100,
+            "tenant_id": "italk"
+          }
+        ],
+        "credit_events": [
+          {
+            "provider": "monerium",
+            "provider_ref": "ord-02:booked",
+            "tenant_id": "italk",
+            "receiving_account_id": null,
+            "receiving_iban": null,
+            "amount_cents": 100,
+            "currency": "EUR",
+            "remittance": "mpt:0xa11ce00000000000000000000000000000000001?sid=sidunder02",
+            "end_to_end_id": null,
+            "debtor_name": "Ana Platiša",
+            "debtor_account": "HR1210010051863000160",
+            "scheme": null,
+            "finality": "booked",
+            "occurred_at": 1795175980,
+            "settlement_ref": "ord-02"
+          }
+        ],
+        "webhook_outbox": [
+          {
+            "id": "rcv_ord-02",
+            "type": "payment.received",
+            "tenant_id": "italk",
+            "status": "delivered",
+            "attempts": 1,
+            "payload": {
+              "type": "payment.received",
+              "event_id": "rcv_ord-02",
+              "occurred_at": "<iso>",
+              "sid": "sidunder02",
+              "campaign_id": null,
+              "monerium_order_id": "ord-02",
+              "amount_received_cents": 100,
+              "currency": "eur",
+              "funds_location": "monerium",
+              "settlement": "pending",
+              "review_expected": true
+            }
+          },
+          {
+            "id": "undp_sidunder02",
+            "type": "payment.underpaid",
+            "tenant_id": "italk",
+            "status": "delivered",
+            "attempts": 1,
+            "payload": {
+              "type": "payment.underpaid",
+              "event_id": "undp_sidunder02",
+              "occurred_at": "<iso>",
+              "sid": "sidunder02",
+              "state": "pending",
+              "amount_cents": 200,
+              "amount_received_cents": 100,
+              "overpaid_cents": 0,
+              "currency": "EUR",
+              "target_address": "0xa11ce00000000000000000000000000000000001",
+              "monerium_order_id": "ord-02",
+              "forward_tx_hash": "0xfffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
+              "paid_at": null,
+              "sender_iban": "HR1210010051863000160",
+              "sender_name": "Ana Platiša",
+              "metadata": null,
+              "expected_cents": 200,
+              "received_cents": 100,
+              "delta_cents": 100,
+              "funds_location": "recipient"
+            }
+          }
+        ],
+        "merchant_posts": [
+          "rcv_ord-02",
+          "undp_sidunder02"
+        ],
+        "tenant_audit_log": [],
+        "forwardViaSafe": [
+          {
+            "safe": "0x449abcef4e29a7dd8d98db451af2c463561baf2e",
+            "target": "0xa11ce00000000000000000000000000000000001",
+            "amountWei": "1000000000000000000",
+            "sessionId": "sidunder02",
+            "kind": null
+          }
+        ],
+        "alerts": []
+      },
+      "creditMatch": [
+        {
+          "provider_ref": "ord-02:booked",
+          "matched_sid": "sidunder02",
+          "matched_by": "sid",
+          "match_note": null
+        }
+      ]
+    },
+    "03_sid_expired_late": {
+      "compared": {
+        "responses": [
+          {
+            "status": 200,
+            "body": {
+              "ok": true
+            }
+          }
+        ],
+        "payment_intents": [
+          {
+            "sid": "sidlate003",
+            "state": "expired",
+            "monerium_order_id": "ord-03",
+            "amount_received_cents": 100,
+            "forward_tx_hash": "0xfffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
+            "forward_id_set": 1,
+            "paid_set": 1
+          }
+        ],
+        "intent_settlements": [
+          {
+            "sid": "sidlate003",
+            "provider": "monerium",
+            "settlement_ref": "ord-03",
+            "has_credit_event": 1
+          }
+        ],
+        "monerium_forwards": [
+          {
+            "order_id": "ord-03",
+            "sid": "sidlate003",
+            "status": "confirmed",
+            "error": null,
+            "memo_prefix": "mpt",
+            "target_address": "0xa11ce00000000000000000000000000000000001",
+            "amount_cents": 100,
+            "amount_wei": "1000000000000000000",
+            "tx_hash": "0xfffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
+            "attempts": 1,
+            "tenant_id": "italk"
+          }
+        ],
+        "monerium_orders": [
+          {
+            "id": "ord-03",
+            "state": "processed",
+            "tenant_id": "italk"
+          }
+        ],
+        "monerium_webhook_events": [
+          {
+            "order_id": "ord-03",
+            "event_type": "order.updated",
+            "signature_ok": 1,
+            "sid_extracted": "sidlate003",
+            "sid_resolved": null,
+            "processing_note": null,
+            "amount_cents": 100,
+            "tenant_id": "italk"
+          }
+        ],
+        "credit_events": [
+          {
+            "provider": "monerium",
+            "provider_ref": "ord-03:booked",
+            "tenant_id": "italk",
+            "receiving_account_id": null,
+            "receiving_iban": null,
+            "amount_cents": 100,
+            "currency": "EUR",
+            "remittance": "mpt:0xa11ce00000000000000000000000000000000001?sid=sidlate003",
+            "end_to_end_id": null,
+            "debtor_name": "Ana Platiša",
+            "debtor_account": "HR1210010051863000160",
+            "scheme": null,
+            "finality": "booked",
+            "occurred_at": 1795175980,
+            "settlement_ref": "ord-03"
+          }
+        ],
+        "webhook_outbox": [
+          {
+            "id": "late_sidlate003",
+            "type": "payment.late",
+            "tenant_id": "italk",
+            "status": "delivered",
+            "attempts": 1,
+            "payload": {
+              "type": "payment.late",
+              "event_id": "late_sidlate003",
+              "occurred_at": "<iso>",
+              "sid": "sidlate003",
+              "state": "expired",
+              "amount_cents": 100,
+              "amount_received_cents": 100,
+              "overpaid_cents": 0,
+              "currency": "EUR",
+              "target_address": "0xa11ce00000000000000000000000000000000001",
+              "monerium_order_id": "ord-03",
+              "forward_tx_hash": "0xfffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
+              "paid_at": "<t>",
+              "sender_iban": "HR1210010051863000160",
+              "sender_name": "Ana Platiša",
+              "metadata": null
+            }
+          },
+          {
+            "id": "rcv_ord-03",
+            "type": "payment.received",
+            "tenant_id": "italk",
+            "status": "delivered",
+            "attempts": 1,
+            "payload": {
+              "type": "payment.received",
+              "event_id": "rcv_ord-03",
+              "occurred_at": "<iso>",
+              "sid": "sidlate003",
+              "campaign_id": null,
+              "monerium_order_id": "ord-03",
+              "amount_received_cents": 100,
+              "currency": "eur",
+              "funds_location": "monerium",
+              "settlement": "pending",
+              "review_expected": true
+            }
+          }
+        ],
+        "merchant_posts": [
+          "late_sidlate003",
+          "rcv_ord-03"
+        ],
+        "tenant_audit_log": [],
+        "forwardViaSafe": [
+          {
+            "safe": "0x449abcef4e29a7dd8d98db451af2c463561baf2e",
+            "target": "0xa11ce00000000000000000000000000000000001",
+            "amountWei": "1000000000000000000",
+            "sessionId": "sidlate003",
+            "kind": null
+          }
+        ],
+        "alerts": []
+      },
+      "creditMatch": [
+        {
+          "provider_ref": "ord-03:booked",
+          "matched_sid": "sidlate003",
+          "matched_by": "sid",
+          "match_note": null
+        }
+      ]
+    },
+    "04a_short_ref_trusted": {
+      "compared": {
+        "responses": [
+          {
+            "status": 200,
+            "body": {
+              "ok": true
+            }
+          }
+        ],
+        "payment_intents": [
+          {
+            "sid": "coded00001",
+            "state": "paid",
+            "monerium_order_id": "ord-04a",
+            "amount_received_cents": 100,
+            "forward_tx_hash": "0xfffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
+            "forward_id_set": 1,
+            "paid_set": 1
+          },
+          {
+            "sid": "stray00001",
+            "state": "pending",
+            "monerium_order_id": null,
+            "amount_received_cents": null,
+            "forward_tx_hash": null,
+            "forward_id_set": 0,
+            "paid_set": 0
+          }
+        ],
+        "intent_settlements": [
+          {
+            "sid": "coded00001",
+            "provider": "monerium",
+            "settlement_ref": "ord-04a",
+            "has_credit_event": 1
+          }
+        ],
+        "monerium_forwards": [
+          {
+            "order_id": "ord-04a",
+            "sid": "coded00001",
+            "status": "confirmed",
+            "error": null,
+            "memo_prefix": "code",
+            "target_address": "0xa11ce00000000000000000000000000000000001",
+            "amount_cents": 100,
+            "amount_wei": "1000000000000000000",
+            "tx_hash": "0xfffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
+            "attempts": 1,
+            "tenant_id": "italk"
+          }
+        ],
+        "monerium_orders": [
+          {
+            "id": "ord-04a",
+            "state": "processed",
+            "tenant_id": "italk"
+          }
+        ],
+        "monerium_webhook_events": [
+          {
+            "order_id": "ord-04a",
+            "event_type": "order.updated",
+            "signature_ok": 1,
+            "sid_extracted": null,
+            "sid_resolved": "coded00001",
+            "processing_note": null,
+            "amount_cents": 100,
+            "tenant_id": "italk"
+          }
+        ],
+        "credit_events": [
+          {
+            "provider": "monerium",
+            "provider_ref": "ord-04a:booked",
+            "tenant_id": "italk",
+            "receiving_account_id": null,
+            "receiving_iban": null,
+            "amount_cents": 100,
+            "currency": "EUR",
+            "remittance": "0076",
+            "end_to_end_id": null,
+            "debtor_name": "Ana Platiša",
+            "debtor_account": "HR1210010051863000160",
+            "scheme": null,
+            "finality": "booked",
+            "occurred_at": 1795175980,
+            "settlement_ref": "ord-04a"
+          }
+        ],
+        "webhook_outbox": [
+          {
+            "id": "int_coded00001",
+            "type": "intent.paid",
+            "tenant_id": "italk",
+            "status": "delivered",
+            "attempts": 1,
+            "payload": {
+              "type": "intent.paid",
+              "event_id": "int_coded00001",
+              "occurred_at": "<iso>",
+              "sid": "coded00001",
+              "state": "paid",
+              "amount_cents": 100,
+              "amount_received_cents": 100,
+              "overpaid_cents": 0,
+              "currency": "EUR",
+              "target_address": "0xa11ce00000000000000000000000000000000001",
+              "monerium_order_id": "ord-04a",
+              "forward_tx_hash": "0xfffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
+              "paid_at": "<t>",
+              "sender_iban": "HR1210010051863000160",
+              "sender_name": "Ana Platiša",
+              "metadata": null
+            }
+          }
+        ],
+        "merchant_posts": [
+          "int_coded00001"
+        ],
+        "tenant_audit_log": [],
+        "forwardViaSafe": [
+          {
+            "safe": "0x449abcef4e29a7dd8d98db451af2c463561baf2e",
+            "target": "0xa11ce00000000000000000000000000000000001",
+            "amountWei": "1000000000000000000",
+            "sessionId": "coded00001",
+            "kind": null
+          }
+        ],
+        "alerts": [
+          "🔀 <b>Uplata bez reference povezana s intentom po kratkoj referenci</b>\norder: <code>ord-04a</code> · iznos: <b>1.00 EUR</b>\nintent: <code>coded00001</code> → <code>0xa11ce00000000000000000000000000000000001</code>\ntx: <code>0xfffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1</code>"
+        ]
+      },
+      "creditMatch": [
+        {
+          "provider_ref": "ord-04a:booked",
+          "matched_sid": null,
+          "matched_by": null,
+          "match_note": "stray_preview: coded00001"
+        }
+      ]
+    },
+    "04b_short_ref_untrusted_parked": {
+      "compared": {
+        "responses": [
+          {
+            "status": 200,
+            "body": {
+              "ok": true
+            }
+          }
+        ],
+        "payment_intents": [
+          {
+            "sid": "coded00002",
+            "state": "pending",
+            "monerium_order_id": null,
+            "amount_received_cents": null,
+            "forward_tx_hash": null,
+            "forward_id_set": 0,
+            "paid_set": 0
+          }
+        ],
+        "intent_settlements": [],
+        "monerium_forwards": [
+          {
+            "order_id": "ord-04b",
+            "sid": null,
+            "status": "failed",
+            "error": "no_routing_target",
+            "memo_prefix": null,
+            "target_address": "",
+            "amount_cents": 100,
+            "amount_wei": "0",
+            "tx_hash": null,
+            "attempts": 0,
+            "tenant_id": "italk"
+          }
+        ],
+        "monerium_orders": [
+          {
+            "id": "ord-04b",
+            "state": "processed",
+            "tenant_id": "italk"
+          }
+        ],
+        "monerium_webhook_events": [
+          {
+            "order_id": "ord-04b",
+            "event_type": "order.updated",
+            "signature_ok": 1,
+            "sid_extracted": null,
+            "sid_resolved": null,
+            "processing_note": null,
+            "amount_cents": 100,
+            "tenant_id": "italk"
+          }
+        ],
+        "credit_events": [
+          {
+            "provider": "monerium",
+            "provider_ref": "ord-04b:booked",
+            "tenant_id": "italk",
+            "receiving_account_id": null,
+            "receiving_iban": null,
+            "amount_cents": 100,
+            "currency": "EUR",
+            "remittance": "0076",
+            "end_to_end_id": null,
+            "debtor_name": "Ana Platiša",
+            "debtor_account": "HR1210010051863000160",
+            "scheme": null,
+            "finality": "booked",
+            "occurred_at": 1795175980,
+            "settlement_ref": "ord-04b"
+          }
+        ],
+        "webhook_outbox": [],
+        "merchant_posts": [],
+        "tenant_audit_log": [
+          {
+            "tenant_id": null,
+            "action": "forward.blocked",
+            "address": null,
+            "actor": "system",
+            "detail": {
+              "order_id": "ord-04b",
+              "reason": "no_routing_target",
+              "prefix": null,
+              "sid": null,
+              "campaign_id": null,
+              "amount_cents": 100
+            }
+          }
+        ],
+        "forwardViaSafe": [],
+        "alerts": [
+          "🛑 <b>MPT forward blokiran</b>\nrazlog: <code>no_routing_target</code> — memo bez adrese\norder: <code>ord-04b</code>\niznos: <b>1.00 EUR</b> (ostaje u Safe-u)\nadresa iz memo-a: <code>-</code>\ntenant: <code>-</code> · prefix: <code>-</code>\nnema pouzdanog kandidata; 1 intent(a) s tim iznosom vodi na wallet adresu koja nije na statičnoj whitelisti — ručno preusmjeriti ako je to prava uplata"
+        ]
+      },
+      "creditMatch": [
+        {
+          "provider_ref": "ord-04b:booked",
+          "matched_sid": null,
+          "matched_by": null,
+          "match_note": null
+        }
+      ]
+    },
+    "04c_short_ref_untrusted_falls_to_stray": {
+      "compared": {
+        "responses": [
+          {
+            "status": 200,
+            "body": {
+              "ok": true
+            }
+          }
+        ],
+        "payment_intents": [
+          {
+            "sid": "coded00003",
+            "state": "pending",
+            "monerium_order_id": null,
+            "amount_received_cents": null,
+            "forward_tx_hash": null,
+            "forward_id_set": 0,
+            "paid_set": 0
+          },
+          {
+            "sid": "trusted003",
+            "state": "paid",
+            "monerium_order_id": "ord-04c",
+            "amount_received_cents": 100,
+            "forward_tx_hash": "0xfffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
+            "forward_id_set": 1,
+            "paid_set": 1
+          }
+        ],
+        "intent_settlements": [
+          {
+            "sid": "trusted003",
+            "provider": "monerium",
+            "settlement_ref": "ord-04c",
+            "has_credit_event": 1
+          }
+        ],
+        "monerium_forwards": [
+          {
+            "order_id": "ord-04c",
+            "sid": "trusted003",
+            "status": "confirmed",
+            "error": null,
+            "memo_prefix": "auto",
+            "target_address": "0xa11ce00000000000000000000000000000000001",
+            "amount_cents": 100,
+            "amount_wei": "1000000000000000000",
+            "tx_hash": "0xfffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
+            "attempts": 1,
+            "tenant_id": "italk"
+          }
+        ],
+        "monerium_orders": [
+          {
+            "id": "ord-04c",
+            "state": "processed",
+            "tenant_id": "italk"
+          }
+        ],
+        "monerium_webhook_events": [
+          {
+            "order_id": "ord-04c",
+            "event_type": "order.updated",
+            "signature_ok": 1,
+            "sid_extracted": null,
+            "sid_resolved": "trusted003",
+            "processing_note": null,
+            "amount_cents": 100,
+            "tenant_id": "italk"
+          }
+        ],
+        "credit_events": [
+          {
+            "provider": "monerium",
+            "provider_ref": "ord-04c:booked",
+            "tenant_id": "italk",
+            "receiving_account_id": null,
+            "receiving_iban": null,
+            "amount_cents": 100,
+            "currency": "EUR",
+            "remittance": "0076",
+            "end_to_end_id": null,
+            "debtor_name": "Ana Platiša",
+            "debtor_account": "HR1210010051863000160",
+            "scheme": null,
+            "finality": "booked",
+            "occurred_at": 1795175980,
+            "settlement_ref": "ord-04c"
+          }
+        ],
+        "webhook_outbox": [
+          {
+            "id": "int_trusted003",
+            "type": "intent.paid",
+            "tenant_id": "italk",
+            "status": "delivered",
+            "attempts": 1,
+            "payload": {
+              "type": "intent.paid",
+              "event_id": "int_trusted003",
+              "occurred_at": "<iso>",
+              "sid": "trusted003",
+              "state": "paid",
+              "amount_cents": 100,
+              "amount_received_cents": 100,
+              "overpaid_cents": 0,
+              "currency": "EUR",
+              "target_address": "0xa11ce00000000000000000000000000000000001",
+              "monerium_order_id": "ord-04c",
+              "forward_tx_hash": "0xfffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
+              "paid_at": "<t>",
+              "sender_iban": "HR1210010051863000160",
+              "sender_name": "Ana Platiša",
+              "metadata": null
+            }
+          }
+        ],
+        "merchant_posts": [
+          "int_trusted003"
+        ],
+        "tenant_audit_log": [],
+        "forwardViaSafe": [
+          {
+            "safe": "0x449abcef4e29a7dd8d98db451af2c463561baf2e",
+            "target": "0xa11ce00000000000000000000000000000000001",
+            "amountWei": "1000000000000000000",
+            "sessionId": "trusted003",
+            "kind": null
+          }
+        ],
+        "alerts": [
+          "🔀 <b>Uplata bez reference povezana s intentom automatski po iznosu i vremenu</b>\norder: <code>ord-04c</code> · iznos: <b>1.00 EUR</b>\nintent: <code>trusted003</code> → <code>0xa11ce00000000000000000000000000000000001</code>\ntx: <code>0xfffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1</code>"
+        ]
+      },
+      "creditMatch": [
+        {
+          "provider_ref": "ord-04c:booked",
+          "matched_sid": null,
+          "matched_by": null,
+          "match_note": "stray_preview: trusted003"
+        }
+      ]
+    },
+    "05_stray_single_auto": {
+      "compared": {
+        "responses": [
+          {
+            "status": 200,
+            "body": {
+              "ok": true
+            }
+          }
+        ],
+        "payment_intents": [
+          {
+            "sid": "stray00005",
+            "state": "paid",
+            "monerium_order_id": "ord-05",
+            "amount_received_cents": 100,
+            "forward_tx_hash": "0xfffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
+            "forward_id_set": 1,
+            "paid_set": 1
+          }
+        ],
+        "intent_settlements": [
+          {
+            "sid": "stray00005",
+            "provider": "monerium",
+            "settlement_ref": "ord-05",
+            "has_credit_event": 1
+          }
+        ],
+        "monerium_forwards": [
+          {
+            "order_id": "ord-05",
+            "sid": "stray00005",
+            "status": "confirmed",
+            "error": null,
+            "memo_prefix": "auto",
+            "target_address": "0xa11ce00000000000000000000000000000000001",
+            "amount_cents": 100,
+            "amount_wei": "1000000000000000000",
+            "tx_hash": "0xfffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
+            "attempts": 1,
+            "tenant_id": "italk"
+          }
+        ],
+        "monerium_orders": [
+          {
+            "id": "ord-05",
+            "state": "processed",
+            "tenant_id": "italk"
+          }
+        ],
+        "monerium_webhook_events": [
+          {
+            "order_id": "ord-05",
+            "event_type": "order.updated",
+            "signature_ok": 1,
+            "sid_extracted": null,
+            "sid_resolved": "stray00005",
+            "processing_note": null,
+            "amount_cents": 100,
+            "tenant_id": "italk"
+          }
+        ],
+        "credit_events": [
+          {
+            "provider": "monerium",
+            "provider_ref": "ord-05:booked",
+            "tenant_id": "italk",
+            "receiving_account_id": null,
+            "receiving_iban": null,
+            "amount_cents": 100,
+            "currency": "EUR",
+            "remittance": "",
+            "end_to_end_id": null,
+            "debtor_name": "Ana Platiša",
+            "debtor_account": "HR1210010051863000160",
+            "scheme": null,
+            "finality": "booked",
+            "occurred_at": 1795175980,
+            "settlement_ref": "ord-05"
+          }
+        ],
+        "webhook_outbox": [
+          {
+            "id": "int_stray00005",
+            "type": "intent.paid",
+            "tenant_id": "italk",
+            "status": "delivered",
+            "attempts": 1,
+            "payload": {
+              "type": "intent.paid",
+              "event_id": "int_stray00005",
+              "occurred_at": "<iso>",
+              "sid": "stray00005",
+              "state": "paid",
+              "amount_cents": 100,
+              "amount_received_cents": 100,
+              "overpaid_cents": 0,
+              "currency": "EUR",
+              "target_address": "0xa11ce00000000000000000000000000000000001",
+              "monerium_order_id": "ord-05",
+              "forward_tx_hash": "0xfffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
+              "paid_at": "<t>",
+              "sender_iban": "HR1210010051863000160",
+              "sender_name": "Ana Platiša",
+              "metadata": null
+            }
+          }
+        ],
+        "merchant_posts": [
+          "int_stray00005"
+        ],
+        "tenant_audit_log": [],
+        "forwardViaSafe": [
+          {
+            "safe": "0x449abcef4e29a7dd8d98db451af2c463561baf2e",
+            "target": "0xa11ce00000000000000000000000000000000001",
+            "amountWei": "1000000000000000000",
+            "sessionId": "stray00005",
+            "kind": null
+          }
+        ],
+        "alerts": [
+          "🔀 <b>Uplata bez reference povezana s intentom automatski po iznosu i vremenu</b>\norder: <code>ord-05</code> · iznos: <b>1.00 EUR</b>\nintent: <code>stray00005</code> → <code>0xa11ce00000000000000000000000000000000001</code>\ntx: <code>0xfffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1</code>"
+        ]
+      },
+      "creditMatch": [
+        {
+          "provider_ref": "ord-05:booked",
+          "matched_sid": null,
+          "matched_by": null,
+          "match_note": "stray_preview: stray00005"
+        }
+      ]
+    },
+    "06_stray_ambiguous_same_target": {
+      "compared": {
+        "responses": [
+          {
+            "status": 200,
+            "body": {
+              "ok": true
+            }
+          },
+          {
+            "status": 200,
+            "body": {
+              "ok": true
+            }
+          }
+        ],
+        "payment_intents": [
+          {
+            "sid": "straynew06",
+            "state": "paid",
+            "monerium_order_id": "ord-06a",
+            "amount_received_cents": 100,
+            "forward_tx_hash": "0xfffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
+            "forward_id_set": 1,
+            "paid_set": 1
+          },
+          {
+            "sid": "strayold06",
+            "state": "paid",
+            "monerium_order_id": "ord-06b",
+            "amount_received_cents": 100,
+            "forward_tx_hash": "0xfffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff2",
+            "forward_id_set": 1,
+            "paid_set": 1
+          }
+        ],
+        "intent_settlements": [
+          {
+            "sid": "straynew06",
+            "provider": "monerium",
+            "settlement_ref": "ord-06a",
+            "has_credit_event": 1
+          },
+          {
+            "sid": "strayold06",
+            "provider": "monerium",
+            "settlement_ref": "ord-06b",
+            "has_credit_event": 1
+          }
+        ],
+        "monerium_forwards": [
+          {
+            "order_id": "ord-06a",
+            "sid": "straynew06",
+            "status": "confirmed",
+            "error": null,
+            "memo_prefix": "auto",
+            "target_address": "0xa11ce00000000000000000000000000000000001",
+            "amount_cents": 100,
+            "amount_wei": "1000000000000000000",
+            "tx_hash": "0xfffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
+            "attempts": 1,
+            "tenant_id": "italk"
+          },
+          {
+            "order_id": "ord-06b",
+            "sid": "strayold06",
+            "status": "confirmed",
+            "error": null,
+            "memo_prefix": "auto",
+            "target_address": "0xa11ce00000000000000000000000000000000001",
+            "amount_cents": 100,
+            "amount_wei": "1000000000000000000",
+            "tx_hash": "0xfffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff2",
+            "attempts": 1,
+            "tenant_id": "italk"
+          }
+        ],
+        "monerium_orders": [
+          {
+            "id": "ord-06a",
+            "state": "processed",
+            "tenant_id": "italk"
+          },
+          {
+            "id": "ord-06b",
+            "state": "processed",
+            "tenant_id": "italk"
+          }
+        ],
+        "monerium_webhook_events": [
+          {
+            "order_id": "ord-06a",
+            "event_type": "order.updated",
+            "signature_ok": 1,
+            "sid_extracted": null,
+            "sid_resolved": "straynew06",
+            "processing_note": null,
+            "amount_cents": 100,
+            "tenant_id": "italk"
+          },
+          {
+            "order_id": "ord-06b",
+            "event_type": "order.updated",
+            "signature_ok": 1,
+            "sid_extracted": null,
+            "sid_resolved": "strayold06",
+            "processing_note": null,
+            "amount_cents": 100,
+            "tenant_id": "italk"
+          }
+        ],
+        "credit_events": [
+          {
+            "provider": "monerium",
+            "provider_ref": "ord-06a:booked",
+            "tenant_id": "italk",
+            "receiving_account_id": null,
+            "receiving_iban": null,
+            "amount_cents": 100,
+            "currency": "EUR",
+            "remittance": "",
+            "end_to_end_id": null,
+            "debtor_name": "Ana Platiša",
+            "debtor_account": "HR1210010051863000160",
+            "scheme": null,
+            "finality": "booked",
+            "occurred_at": 1795175980,
+            "settlement_ref": "ord-06a"
+          },
+          {
+            "provider": "monerium",
+            "provider_ref": "ord-06b:booked",
+            "tenant_id": "italk",
+            "receiving_account_id": null,
+            "receiving_iban": null,
+            "amount_cents": 100,
+            "currency": "EUR",
+            "remittance": "",
+            "end_to_end_id": null,
+            "debtor_name": "Ana Platiša",
+            "debtor_account": "HR1210010051863000160",
+            "scheme": null,
+            "finality": "booked",
+            "occurred_at": 1795175980,
+            "settlement_ref": "ord-06b"
+          }
+        ],
+        "webhook_outbox": [
+          {
+            "id": "int_straynew06",
+            "type": "intent.paid",
+            "tenant_id": "italk",
+            "status": "delivered",
+            "attempts": 1,
+            "payload": {
+              "type": "intent.paid",
+              "event_id": "int_straynew06",
+              "occurred_at": "<iso>",
+              "sid": "straynew06",
+              "state": "paid",
+              "amount_cents": 100,
+              "amount_received_cents": 100,
+              "overpaid_cents": 0,
+              "currency": "EUR",
+              "target_address": "0xa11ce00000000000000000000000000000000001",
+              "monerium_order_id": "ord-06a",
+              "forward_tx_hash": "0xfffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
+              "paid_at": "<t>",
+              "sender_iban": "HR1210010051863000160",
+              "sender_name": "Ana Platiša",
+              "metadata": null
+            }
+          },
+          {
+            "id": "int_strayold06",
+            "type": "intent.paid",
+            "tenant_id": "italk",
+            "status": "delivered",
+            "attempts": 1,
+            "payload": {
+              "type": "intent.paid",
+              "event_id": "int_strayold06",
+              "occurred_at": "<iso>",
+              "sid": "strayold06",
+              "state": "paid",
+              "amount_cents": 100,
+              "amount_received_cents": 100,
+              "overpaid_cents": 0,
+              "currency": "EUR",
+              "target_address": "0xa11ce00000000000000000000000000000000001",
+              "monerium_order_id": "ord-06b",
+              "forward_tx_hash": "0xfffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff2",
+              "paid_at": "<t>",
+              "sender_iban": "HR1210010051863000160",
+              "sender_name": "Ana Platiša",
+              "metadata": null
+            }
+          }
+        ],
+        "merchant_posts": [
+          "int_straynew06",
+          "int_strayold06"
+        ],
+        "tenant_audit_log": [],
+        "forwardViaSafe": [
+          {
+            "safe": "0x449abcef4e29a7dd8d98db451af2c463561baf2e",
+            "target": "0xa11ce00000000000000000000000000000000001",
+            "amountWei": "1000000000000000000",
+            "sessionId": "straynew06",
+            "kind": null
+          },
+          {
+            "safe": "0x449abcef4e29a7dd8d98db451af2c463561baf2e",
+            "target": "0xa11ce00000000000000000000000000000000001",
+            "amountWei": "1000000000000000000",
+            "sessionId": "strayold06",
+            "kind": null
+          }
+        ],
+        "alerts": [
+          "🔀 <b>Uplata bez reference povezana s intentom automatski po iznosu i vremenu</b>\norder: <code>ord-06a</code> · iznos: <b>1.00 EUR</b>\nintent: <code>straynew06</code> → <code>0xa11ce00000000000000000000000000000000001</code>\ntx: <code>0xfffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1</code>\n⚠️ više intenata s istim iznosom i istom adresom — novac je na pravom mjestu, pripisivanje intentu je procjena",
+          "🔀 <b>Uplata bez reference povezana s intentom automatski po iznosu i vremenu</b>\norder: <code>ord-06b</code> · iznos: <b>1.00 EUR</b>\nintent: <code>strayold06</code> → <code>0xa11ce00000000000000000000000000000000001</code>\ntx: <code>0xfffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff2</code>"
+        ]
+      },
+      "creditMatch": [
+        {
+          "provider_ref": "ord-06a:booked",
+          "matched_sid": null,
+          "matched_by": null,
+          "match_note": "stray_preview: straynew06"
+        },
+        {
+          "provider_ref": "ord-06b:booked",
+          "matched_sid": null,
+          "matched_by": null,
+          "match_note": "stray_preview: strayold06"
+        }
+      ]
+    },
+    "07_stray_conflict_parked": {
+      "compared": {
+        "responses": [
+          {
+            "status": 200,
+            "body": {
+              "ok": true
+            }
+          }
+        ],
+        "payment_intents": [
+          {
+            "sid": "conflictA7",
+            "state": "pending",
+            "monerium_order_id": null,
+            "amount_received_cents": null,
+            "forward_tx_hash": null,
+            "forward_id_set": 0,
+            "paid_set": 0
+          },
+          {
+            "sid": "conflictB7",
+            "state": "pending",
+            "monerium_order_id": null,
+            "amount_received_cents": null,
+            "forward_tx_hash": null,
+            "forward_id_set": 0,
+            "paid_set": 0
+          }
+        ],
+        "intent_settlements": [],
+        "monerium_forwards": [
+          {
+            "order_id": "ord-07",
+            "sid": null,
+            "status": "failed",
+            "error": "no_routing_target",
+            "memo_prefix": null,
+            "target_address": "",
+            "amount_cents": 100,
+            "amount_wei": "0",
+            "tx_hash": null,
+            "attempts": 0,
+            "tenant_id": "italk"
+          }
+        ],
+        "monerium_orders": [
+          {
+            "id": "ord-07",
+            "state": "processed",
+            "tenant_id": "italk"
+          }
+        ],
+        "monerium_webhook_events": [
+          {
+            "order_id": "ord-07",
+            "event_type": "order.updated",
+            "signature_ok": 1,
+            "sid_extracted": null,
+            "sid_resolved": null,
+            "processing_note": null,
+            "amount_cents": 100,
+            "tenant_id": "italk"
+          }
+        ],
+        "credit_events": [
+          {
+            "provider": "monerium",
+            "provider_ref": "ord-07:booked",
+            "tenant_id": "italk",
+            "receiving_account_id": null,
+            "receiving_iban": null,
+            "amount_cents": 100,
+            "currency": "EUR",
+            "remittance": "",
+            "end_to_end_id": null,
+            "debtor_name": "Ana Platiša",
+            "debtor_account": "HR1210010051863000160",
+            "scheme": null,
+            "finality": "booked",
+            "occurred_at": 1795175980,
+            "settlement_ref": "ord-07"
+          }
+        ],
+        "webhook_outbox": [],
+        "merchant_posts": [],
+        "tenant_audit_log": [
+          {
+            "tenant_id": null,
+            "action": "forward.blocked",
+            "address": null,
+            "actor": "system",
+            "detail": {
+              "order_id": "ord-07",
+              "reason": "no_routing_target",
+              "prefix": null,
+              "sid": null,
+              "campaign_id": null,
+              "amount_cents": 100
+            }
+          }
+        ],
+        "forwardViaSafe": [],
+        "alerts": [
+          "🛑 <b>MPT forward blokiran</b>\nrazlog: <code>no_routing_target</code> — memo bez adrese\norder: <code>ord-07</code>\niznos: <b>1.00 EUR</b> (ostaje u Safe-u)\nadresa iz memo-a: <code>-</code>\ntenant: <code>-</code> · prefix: <code>-</code>\nkandidati s istim iznosom vode na RAZLIČITE adrese — ručno odabrati:\n• <code>conflictB7</code> → <code>0xb0b0000000000000000000000000000000000002</code> (pending)\n• <code>conflictA7</code> → <code>0xa11ce00000000000000000000000000000000001</code> (pending)"
+        ]
+      },
+      "creditMatch": [
+        {
+          "provider_ref": "ord-07:booked",
+          "matched_sid": null,
+          "matched_by": null,
+          "match_note": null
+        }
+      ]
+    },
+    "08a_stray_none_parked": {
+      "compared": {
+        "responses": [
+          {
+            "status": 200,
+            "body": {
+              "ok": true
+            }
+          }
+        ],
+        "payment_intents": [
+          {
+            "sid": "otheramt08",
+            "state": "pending",
+            "monerium_order_id": null,
+            "amount_received_cents": null,
+            "forward_tx_hash": null,
+            "forward_id_set": 0,
+            "paid_set": 0
+          }
+        ],
+        "intent_settlements": [],
+        "monerium_forwards": [
+          {
+            "order_id": "ord-08a",
+            "sid": null,
+            "status": "failed",
+            "error": "no_routing_target",
+            "memo_prefix": null,
+            "target_address": "",
+            "amount_cents": 100,
+            "amount_wei": "0",
+            "tx_hash": null,
+            "attempts": 0,
+            "tenant_id": "italk"
+          }
+        ],
+        "monerium_orders": [
+          {
+            "id": "ord-08a",
+            "state": "processed",
+            "tenant_id": "italk"
+          }
+        ],
+        "monerium_webhook_events": [
+          {
+            "order_id": "ord-08a",
+            "event_type": "order.updated",
+            "signature_ok": 1,
+            "sid_extracted": null,
+            "sid_resolved": null,
+            "processing_note": null,
+            "amount_cents": 100,
+            "tenant_id": "italk"
+          }
+        ],
+        "credit_events": [
+          {
+            "provider": "monerium",
+            "provider_ref": "ord-08a:booked",
+            "tenant_id": "italk",
+            "receiving_account_id": null,
+            "receiving_iban": null,
+            "amount_cents": 100,
+            "currency": "EUR",
+            "remittance": "",
+            "end_to_end_id": null,
+            "debtor_name": "Ana Platiša",
+            "debtor_account": "HR1210010051863000160",
+            "scheme": null,
+            "finality": "booked",
+            "occurred_at": 1795175980,
+            "settlement_ref": "ord-08a"
+          }
+        ],
+        "webhook_outbox": [],
+        "merchant_posts": [],
+        "tenant_audit_log": [
+          {
+            "tenant_id": null,
+            "action": "forward.blocked",
+            "address": null,
+            "actor": "system",
+            "detail": {
+              "order_id": "ord-08a",
+              "reason": "no_routing_target",
+              "prefix": null,
+              "sid": null,
+              "campaign_id": null,
+              "amount_cents": 100
+            }
+          }
+        ],
+        "forwardViaSafe": [],
+        "alerts": [
+          "🛑 <b>MPT forward blokiran</b>\nrazlog: <code>no_routing_target</code> — memo bez adrese\norder: <code>ord-08a</code>\niznos: <b>1.00 EUR</b> (ostaje u Safe-u)\nadresa iz memo-a: <code>-</code>\ntenant: <code>-</code> · prefix: <code>-</code>\nnema otvorenog/nedavno isteklog intenta s tim iznosom (48 h)"
+        ]
+      },
+      "creditMatch": [
+        {
+          "provider_ref": "ord-08a:booked",
+          "matched_sid": null,
+          "matched_by": null,
+          "match_note": null
+        }
+      ]
+    },
+    "08b_stray_resolver_off_parked": {
+      "compared": {
+        "responses": [
+          {
+            "status": 200,
+            "body": {
+              "ok": true
+            }
+          }
+        ],
+        "payment_intents": [
+          {
+            "sid": "matching08",
+            "state": "pending",
+            "monerium_order_id": null,
+            "amount_received_cents": null,
+            "forward_tx_hash": null,
+            "forward_id_set": 0,
+            "paid_set": 0
+          }
+        ],
+        "intent_settlements": [],
+        "monerium_forwards": [
+          {
+            "order_id": "ord-08b",
+            "sid": null,
+            "status": "failed",
+            "error": "no_routing_target",
+            "memo_prefix": null,
+            "target_address": "",
+            "amount_cents": 100,
+            "amount_wei": "0",
+            "tx_hash": null,
+            "attempts": 0,
+            "tenant_id": "italk"
+          }
+        ],
+        "monerium_orders": [
+          {
+            "id": "ord-08b",
+            "state": "processed",
+            "tenant_id": "italk"
+          }
+        ],
+        "monerium_webhook_events": [
+          {
+            "order_id": "ord-08b",
+            "event_type": "order.updated",
+            "signature_ok": 1,
+            "sid_extracted": null,
+            "sid_resolved": null,
+            "processing_note": null,
+            "amount_cents": 100,
+            "tenant_id": "italk"
+          }
+        ],
+        "credit_events": [
+          {
+            "provider": "monerium",
+            "provider_ref": "ord-08b:booked",
+            "tenant_id": "italk",
+            "receiving_account_id": null,
+            "receiving_iban": null,
+            "amount_cents": 100,
+            "currency": "EUR",
+            "remittance": "",
+            "end_to_end_id": null,
+            "debtor_name": "Ana Platiša",
+            "debtor_account": "HR1210010051863000160",
+            "scheme": null,
+            "finality": "booked",
+            "occurred_at": 1795175980,
+            "settlement_ref": "ord-08b"
+          }
+        ],
+        "webhook_outbox": [],
+        "merchant_posts": [],
+        "tenant_audit_log": [
+          {
+            "tenant_id": null,
+            "action": "forward.blocked",
+            "address": null,
+            "actor": "system",
+            "detail": {
+              "order_id": "ord-08b",
+              "reason": "no_routing_target",
+              "prefix": null,
+              "sid": null,
+              "campaign_id": null,
+              "amount_cents": 100
+            }
+          }
+        ],
+        "forwardViaSafe": [],
+        "alerts": [
+          "🛑 <b>MPT forward blokiran</b>\nrazlog: <code>no_routing_target</code> — memo bez adrese\norder: <code>ord-08b</code>\niznos: <b>1.00 EUR</b> (ostaje u Safe-u)\nadresa iz memo-a: <code>-</code>\ntenant: <code>-</code> · prefix: <code>-</code>"
+        ]
+      },
+      "creditMatch": [
+        {
+          "provider_ref": "ord-08b:booked",
+          "matched_sid": null,
+          "matched_by": null,
+          "match_note": null
+        }
+      ]
+    },
+    "09_double_webhook": {
+      "compared": {
+        "responses": [
+          {
+            "status": 200,
+            "body": {
+              "ok": true
+            }
+          },
+          {
+            "status": 200,
+            "body": {
+              "ok": true,
+              "dedup": true
+            }
+          },
+          {
+            "status": 200,
+            "body": {
+              "ok": true
+            }
+          }
+        ],
+        "payment_intents": [
+          {
+            "sid": "sidtwice09",
+            "state": "paid",
+            "monerium_order_id": "ord-09",
+            "amount_received_cents": 100,
+            "forward_tx_hash": "0xfffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
+            "forward_id_set": 1,
+            "paid_set": 1
+          }
+        ],
+        "intent_settlements": [
+          {
+            "sid": "sidtwice09",
+            "provider": "monerium",
+            "settlement_ref": "ord-09",
+            "has_credit_event": 1
+          }
+        ],
+        "monerium_forwards": [
+          {
+            "order_id": "ord-09",
+            "sid": "sidtwice09",
+            "status": "confirmed",
+            "error": null,
+            "memo_prefix": "mpt",
+            "target_address": "0xa11ce00000000000000000000000000000000001",
+            "amount_cents": 100,
+            "amount_wei": "1000000000000000000",
+            "tx_hash": "0xfffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
+            "attempts": 1,
+            "tenant_id": "italk"
+          }
+        ],
+        "monerium_orders": [
+          {
+            "id": "ord-09",
+            "state": "processed",
+            "tenant_id": "italk"
+          }
+        ],
+        "monerium_webhook_events": [
+          {
+            "order_id": "ord-09",
+            "event_type": "order.updated",
+            "signature_ok": 1,
+            "sid_extracted": "sidtwice09",
+            "sid_resolved": null,
+            "processing_note": null,
+            "amount_cents": 100,
+            "tenant_id": "italk"
+          },
+          {
+            "order_id": "ord-09",
+            "event_type": "order.updated",
+            "signature_ok": 1,
+            "sid_extracted": "sidtwice09",
+            "sid_resolved": null,
+            "processing_note": null,
+            "amount_cents": 100,
+            "tenant_id": "italk"
+          },
+          {
+            "order_id": "ord-09",
+            "event_type": "order.updated",
+            "signature_ok": 1,
+            "sid_extracted": "sidtwice09",
+            "sid_resolved": null,
+            "processing_note": null,
+            "amount_cents": 100,
+            "tenant_id": "italk"
+          }
+        ],
+        "credit_events": [
+          {
+            "provider": "monerium",
+            "provider_ref": "ord-09:booked",
+            "tenant_id": "italk",
+            "receiving_account_id": null,
+            "receiving_iban": null,
+            "amount_cents": 100,
+            "currency": "EUR",
+            "remittance": "mpt:0xa11ce00000000000000000000000000000000001?sid=sidtwice09",
+            "end_to_end_id": null,
+            "debtor_name": "Ana Platiša",
+            "debtor_account": "HR1210010051863000160",
+            "scheme": null,
+            "finality": "booked",
+            "occurred_at": 1795175980,
+            "settlement_ref": "ord-09"
+          }
+        ],
+        "webhook_outbox": [
+          {
+            "id": "int_sidtwice09",
+            "type": "intent.paid",
+            "tenant_id": "italk",
+            "status": "delivered",
+            "attempts": 1,
+            "payload": {
+              "type": "intent.paid",
+              "event_id": "int_sidtwice09",
+              "occurred_at": "<iso>",
+              "sid": "sidtwice09",
+              "state": "paid",
+              "amount_cents": 100,
+              "amount_received_cents": 100,
+              "overpaid_cents": 0,
+              "currency": "EUR",
+              "target_address": "0xa11ce00000000000000000000000000000000001",
+              "monerium_order_id": "ord-09",
+              "forward_tx_hash": "0xfffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
+              "paid_at": "<t>",
+              "sender_iban": "HR1210010051863000160",
+              "sender_name": "Ana Platiša",
+              "metadata": null
+            }
+          },
+          {
+            "id": "rcv_ord-09",
+            "type": "payment.received",
+            "tenant_id": "italk",
+            "status": "delivered",
+            "attempts": 1,
+            "payload": {
+              "type": "payment.received",
+              "event_id": "rcv_ord-09",
+              "occurred_at": "<iso>",
+              "sid": "sidtwice09",
+              "campaign_id": null,
+              "monerium_order_id": "ord-09",
+              "amount_received_cents": 100,
+              "currency": "eur",
+              "funds_location": "monerium",
+              "settlement": "pending",
+              "review_expected": true
+            }
+          }
+        ],
+        "merchant_posts": [
+          "int_sidtwice09",
+          "rcv_ord-09"
+        ],
+        "tenant_audit_log": [],
+        "forwardViaSafe": [
+          {
+            "safe": "0x449abcef4e29a7dd8d98db451af2c463561baf2e",
+            "target": "0xa11ce00000000000000000000000000000000001",
+            "amountWei": "1000000000000000000",
+            "sessionId": "sidtwice09",
+            "kind": null
+          }
+        ],
+        "alerts": []
+      },
+      "creditMatch": [
+        {
+          "provider_ref": "ord-09:booked",
+          "matched_sid": "sidtwice09",
+          "matched_by": "sid",
+          "match_note": null
+        }
+      ]
+    },
+    "09b_double_webhook_stray": {
+      "compared": {
+        "responses": [
+          {
+            "status": 200,
+            "body": {
+              "ok": true
+            }
+          },
+          {
+            "status": 200,
+            "body": {
+              "ok": true,
+              "dedup": true
+            }
+          },
+          {
+            "status": 200,
+            "body": {
+              "ok": true
+            }
+          }
+        ],
+        "payment_intents": [
+          {
+            "sid": "straytw09a",
+            "state": "pending",
+            "monerium_order_id": null,
+            "amount_received_cents": null,
+            "forward_tx_hash": null,
+            "forward_id_set": 0,
+            "paid_set": 0
+          },
+          {
+            "sid": "straytw09b",
+            "state": "paid",
+            "monerium_order_id": "ord-09b",
+            "amount_received_cents": 100,
+            "forward_tx_hash": "0xfffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
+            "forward_id_set": 1,
+            "paid_set": 1
+          }
+        ],
+        "intent_settlements": [
+          {
+            "sid": "straytw09b",
+            "provider": "monerium",
+            "settlement_ref": "ord-09b",
+            "has_credit_event": 1
+          }
+        ],
+        "monerium_forwards": [
+          {
+            "order_id": "ord-09b",
+            "sid": "straytw09b",
+            "status": "confirmed",
+            "error": null,
+            "memo_prefix": "auto",
+            "target_address": "0xa11ce00000000000000000000000000000000001",
+            "amount_cents": 100,
+            "amount_wei": "1000000000000000000",
+            "tx_hash": "0xfffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
+            "attempts": 1,
+            "tenant_id": "italk"
+          }
+        ],
+        "monerium_orders": [
+          {
+            "id": "ord-09b",
+            "state": "processed",
+            "tenant_id": "italk"
+          }
+        ],
+        "monerium_webhook_events": [
+          {
+            "order_id": "ord-09b",
+            "event_type": "order.updated",
+            "signature_ok": 1,
+            "sid_extracted": null,
+            "sid_resolved": "straytw09b",
+            "processing_note": null,
+            "amount_cents": 100,
+            "tenant_id": "italk"
+          },
+          {
+            "order_id": "ord-09b",
+            "event_type": "order.updated",
+            "signature_ok": 1,
+            "sid_extracted": null,
+            "sid_resolved": "straytw09a",
+            "processing_note": null,
+            "amount_cents": 100,
+            "tenant_id": "italk"
+          },
+          {
+            "order_id": "ord-09b",
+            "event_type": "order.updated",
+            "signature_ok": 1,
+            "sid_extracted": null,
+            "sid_resolved": "straytw09a",
+            "processing_note": null,
+            "amount_cents": 100,
+            "tenant_id": "italk"
+          }
+        ],
+        "credit_events": [
+          {
+            "provider": "monerium",
+            "provider_ref": "ord-09b:booked",
+            "tenant_id": "italk",
+            "receiving_account_id": null,
+            "receiving_iban": null,
+            "amount_cents": 100,
+            "currency": "EUR",
+            "remittance": "",
+            "end_to_end_id": null,
+            "debtor_name": "Ana Platiša",
+            "debtor_account": "HR1210010051863000160",
+            "scheme": null,
+            "finality": "booked",
+            "occurred_at": 1795175980,
+            "settlement_ref": "ord-09b"
+          }
+        ],
+        "webhook_outbox": [
+          {
+            "id": "int_straytw09b",
+            "type": "intent.paid",
+            "tenant_id": "italk",
+            "status": "delivered",
+            "attempts": 1,
+            "payload": {
+              "type": "intent.paid",
+              "event_id": "int_straytw09b",
+              "occurred_at": "<iso>",
+              "sid": "straytw09b",
+              "state": "paid",
+              "amount_cents": 100,
+              "amount_received_cents": 100,
+              "overpaid_cents": 0,
+              "currency": "EUR",
+              "target_address": "0xa11ce00000000000000000000000000000000001",
+              "monerium_order_id": "ord-09b",
+              "forward_tx_hash": "0xfffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
+              "paid_at": "<t>",
+              "sender_iban": "HR1210010051863000160",
+              "sender_name": "Ana Platiša",
+              "metadata": null
+            }
+          }
+        ],
+        "merchant_posts": [
+          "int_straytw09b"
+        ],
+        "tenant_audit_log": [],
+        "forwardViaSafe": [
+          {
+            "safe": "0x449abcef4e29a7dd8d98db451af2c463561baf2e",
+            "target": "0xa11ce00000000000000000000000000000000001",
+            "amountWei": "1000000000000000000",
+            "sessionId": "straytw09b",
+            "kind": null
+          }
+        ],
+        "alerts": [
+          "🔀 <b>Uplata bez reference povezana s intentom automatski po iznosu i vremenu</b>\norder: <code>ord-09b</code> · iznos: <b>1.00 EUR</b>\nintent: <code>straytw09b</code> → <code>0xa11ce00000000000000000000000000000000001</code>\ntx: <code>0xfffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1</code>\n⚠️ više intenata s istim iznosom i istom adresom — novac je na pravom mjestu, pripisivanje intentu je procjena"
+        ]
+      },
+      "creditMatch": [
+        {
+          "provider_ref": "ord-09b:booked",
+          "matched_sid": null,
+          "matched_by": null,
+          "match_note": "stray_preview: straytw09b"
+        }
+      ]
+    },
+    "10_created_then_processed": {
+      "compared": {
+        "responses": [
+          {
+            "status": 200,
+            "body": {
+              "ok": true
+            }
+          },
+          {
+            "status": 200,
+            "body": {
+              "ok": true
+            }
+          },
+          {
+            "status": 200,
+            "body": {
+              "ok": true
+            }
+          },
+          {
+            "status": 200,
+            "body": {
+              "ok": true
+            }
+          }
+        ],
+        "payment_intents": [
+          {
+            "sid": "sidcreat10",
+            "state": "paid",
+            "monerium_order_id": "ord-10m",
+            "amount_received_cents": 250,
+            "forward_tx_hash": "0xfffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff2",
+            "forward_id_set": 1,
+            "paid_set": 1
+          },
+          {
+            "sid": "stray00010",
+            "state": "paid",
+            "monerium_order_id": "ord-10s",
+            "amount_received_cents": 100,
+            "forward_tx_hash": "0xfffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
+            "forward_id_set": 1,
+            "paid_set": 1
+          }
+        ],
+        "intent_settlements": [
+          {
+            "sid": "sidcreat10",
+            "provider": "monerium",
+            "settlement_ref": "ord-10m",
+            "has_credit_event": 1
+          },
+          {
+            "sid": "stray00010",
+            "provider": "monerium",
+            "settlement_ref": "ord-10s",
+            "has_credit_event": 1
+          }
+        ],
+        "monerium_forwards": [
+          {
+            "order_id": "ord-10m",
+            "sid": "sidcreat10",
+            "status": "confirmed",
+            "error": null,
+            "memo_prefix": "mpt",
+            "target_address": "0xa11ce00000000000000000000000000000000001",
+            "amount_cents": 250,
+            "amount_wei": "2500000000000000000",
+            "tx_hash": "0xfffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff2",
+            "attempts": 1,
+            "tenant_id": "italk"
+          },
+          {
+            "order_id": "ord-10s",
+            "sid": "stray00010",
+            "status": "confirmed",
+            "error": null,
+            "memo_prefix": "auto",
+            "target_address": "0xa11ce00000000000000000000000000000000001",
+            "amount_cents": 100,
+            "amount_wei": "1000000000000000000",
+            "tx_hash": "0xfffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
+            "attempts": 1,
+            "tenant_id": "italk"
+          }
+        ],
+        "monerium_orders": [
+          {
+            "id": "ord-10m",
+            "state": "processed",
+            "tenant_id": "italk"
+          },
+          {
+            "id": "ord-10s",
+            "state": "processed",
+            "tenant_id": "italk"
+          }
+        ],
+        "monerium_webhook_events": [
+          {
+            "order_id": "ord-10s",
+            "event_type": "order.created",
+            "signature_ok": 1,
+            "sid_extracted": null,
+            "sid_resolved": "stray00010",
+            "processing_note": null,
+            "amount_cents": 100,
+            "tenant_id": "italk"
+          },
+          {
+            "order_id": "ord-10s",
+            "event_type": "order.updated",
+            "signature_ok": 1,
+            "sid_extracted": null,
+            "sid_resolved": "stray00010",
+            "processing_note": null,
+            "amount_cents": 100,
+            "tenant_id": "italk"
+          },
+          {
+            "order_id": "ord-10m",
+            "event_type": "order.created",
+            "signature_ok": 1,
+            "sid_extracted": "sidcreat10",
+            "sid_resolved": null,
+            "processing_note": null,
+            "amount_cents": 250,
+            "tenant_id": "italk"
+          },
+          {
+            "order_id": "ord-10m",
+            "event_type": "order.updated",
+            "signature_ok": 1,
+            "sid_extracted": "sidcreat10",
+            "sid_resolved": null,
+            "processing_note": null,
+            "amount_cents": 250,
+            "tenant_id": "italk"
+          }
+        ],
+        "credit_events": [
+          {
+            "provider": "monerium",
+            "provider_ref": "ord-10m:booked",
+            "tenant_id": "italk",
+            "receiving_account_id": null,
+            "receiving_iban": null,
+            "amount_cents": 250,
+            "currency": "EUR",
+            "remittance": "mpt:0xa11ce00000000000000000000000000000000001?sid=sidcreat10",
+            "end_to_end_id": null,
+            "debtor_name": "Ana Platiša",
+            "debtor_account": "HR1210010051863000160",
+            "scheme": null,
+            "finality": "booked",
+            "occurred_at": 1795175980,
+            "settlement_ref": "ord-10m"
+          },
+          {
+            "provider": "monerium",
+            "provider_ref": "ord-10m:notified",
+            "tenant_id": "italk",
+            "receiving_account_id": null,
+            "receiving_iban": null,
+            "amount_cents": 250,
+            "currency": "EUR",
+            "remittance": "mpt:0xa11ce00000000000000000000000000000000001?sid=sidcreat10",
+            "end_to_end_id": null,
+            "debtor_name": "Ana Platiša",
+            "debtor_account": "HR1210010051863000160",
+            "scheme": null,
+            "finality": "notified",
+            "occurred_at": 1795175970,
+            "settlement_ref": "ord-10m"
+          },
+          {
+            "provider": "monerium",
+            "provider_ref": "ord-10s:booked",
+            "tenant_id": "italk",
+            "receiving_account_id": null,
+            "receiving_iban": null,
+            "amount_cents": 100,
+            "currency": "EUR",
+            "remittance": "",
+            "end_to_end_id": null,
+            "debtor_name": "Ana Platiša",
+            "debtor_account": "HR1210010051863000160",
+            "scheme": null,
+            "finality": "booked",
+            "occurred_at": 1795175980,
+            "settlement_ref": "ord-10s"
+          },
+          {
+            "provider": "monerium",
+            "provider_ref": "ord-10s:notified",
+            "tenant_id": "italk",
+            "receiving_account_id": null,
+            "receiving_iban": null,
+            "amount_cents": 100,
+            "currency": "EUR",
+            "remittance": "",
+            "end_to_end_id": null,
+            "debtor_name": "Ana Platiša",
+            "debtor_account": "HR1210010051863000160",
+            "scheme": null,
+            "finality": "notified",
+            "occurred_at": 1795175970,
+            "settlement_ref": "ord-10s"
+          }
+        ],
+        "webhook_outbox": [
+          {
+            "id": "int_sidcreat10",
+            "type": "intent.paid",
+            "tenant_id": "italk",
+            "status": "delivered",
+            "attempts": 1,
+            "payload": {
+              "type": "intent.paid",
+              "event_id": "int_sidcreat10",
+              "occurred_at": "<iso>",
+              "sid": "sidcreat10",
+              "state": "paid",
+              "amount_cents": 250,
+              "amount_received_cents": 250,
+              "overpaid_cents": 0,
+              "currency": "EUR",
+              "target_address": "0xa11ce00000000000000000000000000000000001",
+              "monerium_order_id": "ord-10m",
+              "forward_tx_hash": "0xfffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff2",
+              "paid_at": "<t>",
+              "sender_iban": "HR1210010051863000160",
+              "sender_name": "Ana Platiša",
+              "metadata": null
+            }
+          },
+          {
+            "id": "int_stray00010",
+            "type": "intent.paid",
+            "tenant_id": "italk",
+            "status": "delivered",
+            "attempts": 1,
+            "payload": {
+              "type": "intent.paid",
+              "event_id": "int_stray00010",
+              "occurred_at": "<iso>",
+              "sid": "stray00010",
+              "state": "paid",
+              "amount_cents": 100,
+              "amount_received_cents": 100,
+              "overpaid_cents": 0,
+              "currency": "EUR",
+              "target_address": "0xa11ce00000000000000000000000000000000001",
+              "monerium_order_id": "ord-10s",
+              "forward_tx_hash": "0xfffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
+              "paid_at": "<t>",
+              "sender_iban": "HR1210010051863000160",
+              "sender_name": "Ana Platiša",
+              "metadata": null
+            }
+          },
+          {
+            "id": "rcv_ord-10m",
+            "type": "payment.received",
+            "tenant_id": "italk",
+            "status": "delivered",
+            "attempts": 1,
+            "payload": {
+              "type": "payment.received",
+              "event_id": "rcv_ord-10m",
+              "occurred_at": "<iso>",
+              "sid": "sidcreat10",
+              "campaign_id": null,
+              "monerium_order_id": "ord-10m",
+              "amount_received_cents": 250,
+              "currency": "eur",
+              "funds_location": "monerium",
+              "settlement": "pending",
+              "review_expected": false
+            }
+          }
+        ],
+        "merchant_posts": [
+          "int_sidcreat10",
+          "int_stray00010",
+          "rcv_ord-10m"
+        ],
+        "tenant_audit_log": [],
+        "forwardViaSafe": [
+          {
+            "safe": "0x449abcef4e29a7dd8d98db451af2c463561baf2e",
+            "target": "0xa11ce00000000000000000000000000000000001",
+            "amountWei": "1000000000000000000",
+            "sessionId": "stray00010",
+            "kind": null
+          },
+          {
+            "safe": "0x449abcef4e29a7dd8d98db451af2c463561baf2e",
+            "target": "0xa11ce00000000000000000000000000000000001",
+            "amountWei": "2500000000000000000",
+            "sessionId": "sidcreat10",
+            "kind": null
+          }
+        ],
+        "alerts": [
+          "🔀 <b>Uplata bez reference povezana s intentom automatski po iznosu i vremenu</b>\norder: <code>ord-10s</code> · iznos: <b>1.00 EUR</b>\nintent: <code>stray00010</code> → <code>0xa11ce00000000000000000000000000000000001</code>\ntx: <code>0xfffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1</code>"
+        ]
+      },
+      "creditMatch": [
+        {
+          "provider_ref": "ord-10m:booked",
+          "matched_sid": "sidcreat10",
+          "matched_by": "sid",
+          "match_note": null
+        },
+        {
+          "provider_ref": "ord-10m:notified",
+          "matched_sid": "sidcreat10",
+          "matched_by": "sid",
+          "match_note": null
+        },
+        {
+          "provider_ref": "ord-10s:booked",
+          "matched_sid": null,
+          "matched_by": null,
+          "match_note": "stray_preview: stray00010"
+        },
+        {
+          "provider_ref": "ord-10s:notified",
+          "matched_sid": null,
+          "matched_by": null,
+          "match_note": "stray_preview: stray00010"
+        }
+      ]
+    },
+    "10b_stale_created_after_processed": {
+      "compared": {
+        "responses": [
+          {
+            "status": 200,
+            "body": {
+              "ok": true
+            }
+          },
+          {
+            "status": 200,
+            "body": {
+              "ok": true,
+              "stale": true
+            }
+          }
+        ],
+        "payment_intents": [
+          {
+            "sid": "sidstale10",
+            "state": "paid",
+            "monerium_order_id": "ord-10b",
+            "amount_received_cents": 100,
+            "forward_tx_hash": "0xfffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
+            "forward_id_set": 1,
+            "paid_set": 1
+          }
+        ],
+        "intent_settlements": [
+          {
+            "sid": "sidstale10",
+            "provider": "monerium",
+            "settlement_ref": "ord-10b",
+            "has_credit_event": 1
+          }
+        ],
+        "monerium_forwards": [
+          {
+            "order_id": "ord-10b",
+            "sid": "sidstale10",
+            "status": "confirmed",
+            "error": null,
+            "memo_prefix": "mpt",
+            "target_address": "0xa11ce00000000000000000000000000000000001",
+            "amount_cents": 100,
+            "amount_wei": "1000000000000000000",
+            "tx_hash": "0xfffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
+            "attempts": 1,
+            "tenant_id": "italk"
+          }
+        ],
+        "monerium_orders": [
+          {
+            "id": "ord-10b",
+            "state": "processed",
+            "tenant_id": "italk"
+          }
+        ],
+        "monerium_webhook_events": [
+          {
+            "order_id": "ord-10b",
+            "event_type": "order.updated",
+            "signature_ok": 1,
+            "sid_extracted": "sidstale10",
+            "sid_resolved": null,
+            "processing_note": null,
+            "amount_cents": 100,
+            "tenant_id": "italk"
+          },
+          {
+            "order_id": "ord-10b",
+            "event_type": "order.created",
+            "signature_ok": 1,
+            "sid_extracted": "sidstale10",
+            "sid_resolved": null,
+            "processing_note": null,
+            "amount_cents": 100,
+            "tenant_id": "italk"
+          }
+        ],
+        "credit_events": [
+          {
+            "provider": "monerium",
+            "provider_ref": "ord-10b:booked",
+            "tenant_id": "italk",
+            "receiving_account_id": null,
+            "receiving_iban": null,
+            "amount_cents": 100,
+            "currency": "EUR",
+            "remittance": "mpt:0xa11ce00000000000000000000000000000000001?sid=sidstale10",
+            "end_to_end_id": null,
+            "debtor_name": "Ana Platiša",
+            "debtor_account": "HR1210010051863000160",
+            "scheme": null,
+            "finality": "booked",
+            "occurred_at": 1795175980,
+            "settlement_ref": "ord-10b"
+          }
+        ],
+        "webhook_outbox": [
+          {
+            "id": "int_sidstale10",
+            "type": "intent.paid",
+            "tenant_id": "italk",
+            "status": "delivered",
+            "attempts": 1,
+            "payload": {
+              "type": "intent.paid",
+              "event_id": "int_sidstale10",
+              "occurred_at": "<iso>",
+              "sid": "sidstale10",
+              "state": "paid",
+              "amount_cents": 100,
+              "amount_received_cents": 100,
+              "overpaid_cents": 0,
+              "currency": "EUR",
+              "target_address": "0xa11ce00000000000000000000000000000000001",
+              "monerium_order_id": "ord-10b",
+              "forward_tx_hash": "0xfffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
+              "paid_at": "<t>",
+              "sender_iban": "HR1210010051863000160",
+              "sender_name": "Ana Platiša",
+              "metadata": null
+            }
+          },
+          {
+            "id": "rcv_ord-10b",
+            "type": "payment.received",
+            "tenant_id": "italk",
+            "status": "delivered",
+            "attempts": 1,
+            "payload": {
+              "type": "payment.received",
+              "event_id": "rcv_ord-10b",
+              "occurred_at": "<iso>",
+              "sid": "sidstale10",
+              "campaign_id": null,
+              "monerium_order_id": "ord-10b",
+              "amount_received_cents": 100,
+              "currency": "eur",
+              "funds_location": "monerium",
+              "settlement": "pending",
+              "review_expected": true
+            }
+          }
+        ],
+        "merchant_posts": [
+          "int_sidstale10",
+          "rcv_ord-10b"
+        ],
+        "tenant_audit_log": [],
+        "forwardViaSafe": [
+          {
+            "safe": "0x449abcef4e29a7dd8d98db451af2c463561baf2e",
+            "target": "0xa11ce00000000000000000000000000000000001",
+            "amountWei": "1000000000000000000",
+            "sessionId": "sidstale10",
+            "kind": null
+          }
+        ],
+        "alerts": []
+      },
+      "creditMatch": [
+        {
+          "provider_ref": "ord-10b:booked",
+          "matched_sid": "sidstale10",
+          "matched_by": "sid",
+          "match_note": null
+        }
+      ]
+    },
+    "11_mint_address_mismatch": {
+      "compared": {
+        "responses": [
+          {
+            "status": 200,
+            "body": {
+              "ok": true
+            }
+          },
+          {
+            "status": 200,
+            "body": {
+              "ok": true
+            }
+          }
+        ],
+        "payment_intents": [
+          {
+            "sid": "sidmint011",
+            "state": "pending",
+            "monerium_order_id": null,
+            "amount_received_cents": null,
+            "forward_tx_hash": null,
+            "forward_id_set": 0,
+            "paid_set": 0
+          },
+          {
+            "sid": "straymnt11",
+            "state": "pending",
+            "monerium_order_id": null,
+            "amount_received_cents": null,
+            "forward_tx_hash": null,
+            "forward_id_set": 0,
+            "paid_set": 0
+          }
+        ],
+        "intent_settlements": [],
+        "monerium_forwards": [
+          {
+            "order_id": "ord-11",
+            "sid": "sidmint011",
+            "status": "blocked",
+            "error": "not_whitelisted:mint_address_mismatch",
+            "memo_prefix": "mpt",
+            "target_address": "0xa11ce00000000000000000000000000000000001",
+            "amount_cents": 100,
+            "amount_wei": "0",
+            "tx_hash": null,
+            "attempts": 0,
+            "tenant_id": "italk"
+          },
+          {
+            "order_id": "ord-11s",
+            "sid": null,
+            "status": "blocked",
+            "error": "not_whitelisted:mint_address_mismatch",
+            "memo_prefix": null,
+            "target_address": "",
+            "amount_cents": 300,
+            "amount_wei": "0",
+            "tx_hash": null,
+            "attempts": 0,
+            "tenant_id": "italk"
+          }
+        ],
+        "monerium_orders": [
+          {
+            "id": "ord-11",
+            "state": "processed",
+            "tenant_id": "italk"
+          },
+          {
+            "id": "ord-11s",
+            "state": "processed",
+            "tenant_id": "italk"
+          }
+        ],
+        "monerium_webhook_events": [
+          {
+            "order_id": "ord-11",
+            "event_type": "order.updated",
+            "signature_ok": 1,
+            "sid_extracted": "sidmint011",
+            "sid_resolved": null,
+            "processing_note": null,
+            "amount_cents": 100,
+            "tenant_id": "italk"
+          },
+          {
+            "order_id": "ord-11s",
+            "event_type": "order.updated",
+            "signature_ok": 1,
+            "sid_extracted": null,
+            "sid_resolved": "straymnt11",
+            "processing_note": null,
+            "amount_cents": 300,
+            "tenant_id": "italk"
+          }
+        ],
+        "credit_events": [
+          {
+            "provider": "monerium",
+            "provider_ref": "ord-11:booked",
+            "tenant_id": "italk",
+            "receiving_account_id": null,
+            "receiving_iban": null,
+            "amount_cents": 100,
+            "currency": "EUR",
+            "remittance": "mpt:0xa11ce00000000000000000000000000000000001?sid=sidmint011",
+            "end_to_end_id": null,
+            "debtor_name": "Ana Platiša",
+            "debtor_account": "HR1210010051863000160",
+            "scheme": null,
+            "finality": "booked",
+            "occurred_at": 1795175980,
+            "settlement_ref": "ord-11"
+          },
+          {
+            "provider": "monerium",
+            "provider_ref": "ord-11s:booked",
+            "tenant_id": "italk",
+            "receiving_account_id": null,
+            "receiving_iban": null,
+            "amount_cents": 300,
+            "currency": "EUR",
+            "remittance": "",
+            "end_to_end_id": null,
+            "debtor_name": "Ana Platiša",
+            "debtor_account": "HR1210010051863000160",
+            "scheme": null,
+            "finality": "booked",
+            "occurred_at": 1795175980,
+            "settlement_ref": "ord-11s"
+          }
+        ],
+        "webhook_outbox": [
+          {
+            "id": "blk_ord-11",
+            "type": "forward.blocked",
+            "tenant_id": "italk",
+            "status": "delivered",
+            "attempts": 1,
+            "payload": {
+              "type": "forward.blocked",
+              "event_id": "blk_ord-11",
+              "occurred_at": "<iso>",
+              "reason": "mint_address_mismatch",
+              "monerium_order_id": "ord-11",
+              "sid": "sidmint011",
+              "campaign_id": null,
+              "target_address": "0xa11ce00000000000000000000000000000000001",
+              "amount_cents": 100,
+              "tenant_id": "italk",
+              "funds_location": "mpt_safe"
+            }
+          },
+          {
+            "id": "rcv_ord-11",
+            "type": "payment.received",
+            "tenant_id": "italk",
+            "status": "delivered",
+            "attempts": 1,
+            "payload": {
+              "type": "payment.received",
+              "event_id": "rcv_ord-11",
+              "occurred_at": "<iso>",
+              "sid": "sidmint011",
+              "campaign_id": null,
+              "monerium_order_id": "ord-11",
+              "amount_received_cents": 100,
+              "currency": "eur",
+              "funds_location": "monerium",
+              "settlement": "pending",
+              "review_expected": true
+            }
+          }
+        ],
+        "merchant_posts": [
+          "blk_ord-11",
+          "rcv_ord-11"
+        ],
+        "tenant_audit_log": [
+          {
+            "tenant_id": "italk",
+            "action": "forward.blocked",
+            "address": "0xa11ce00000000000000000000000000000000001",
+            "actor": "system",
+            "detail": {
+              "order_id": "ord-11",
+              "reason": "mint_address_mismatch",
+              "prefix": "mpt",
+              "sid": "sidmint011",
+              "campaign_id": null,
+              "amount_cents": 100
+            }
+          },
+          {
+            "tenant_id": "italk",
+            "action": "forward.blocked",
+            "address": null,
+            "actor": "system",
+            "detail": {
+              "order_id": "ord-11s",
+              "reason": "mint_address_mismatch",
+              "prefix": null,
+              "sid": null,
+              "campaign_id": null,
+              "amount_cents": 300
+            }
+          }
+        ],
+        "forwardViaSafe": [],
+        "alerts": [
+          "🛑 <b>MPT forward blokiran</b>\nrazlog: <code>mint_address_mismatch</code> — Monerium nije mintao na prihvatni Safe tenanta\norder: <code>ord-11</code>\niznos: <b>1.00 EUR</b> (ostaje u Safe-u)\nadresa iz memo-a: <code>0xa11ce00000000000000000000000000000000001</code>\ntenant: <code>italk</code> · prefix: <code>mpt</code>",
+          "🛑 <b>MPT forward blokiran</b>\nrazlog: <code>mint_address_mismatch</code> — Monerium nije mintao na prihvatni Safe tenanta\norder: <code>ord-11s</code>\niznos: <b>3.00 EUR</b> (ostaje u Safe-u)\nadresa iz memo-a: <code>-</code>\ntenant: <code>italk</code> · prefix: <code>-</code>\npovezano s intentom <code>straymnt11</code> (auto) → <code>0xa11ce00000000000000000000000000000000001</code>, ali gate odbio"
+        ]
+      },
+      "creditMatch": [
+        {
+          "provider_ref": "ord-11:booked",
+          "matched_sid": "sidmint011",
+          "matched_by": "sid",
+          "match_note": null
+        },
+        {
+          "provider_ref": "ord-11s:booked",
+          "matched_sid": null,
+          "matched_by": null,
+          "match_note": "stray_preview: straymnt11"
+        }
+      ]
+    },
+    "12_resolved_offrail_redelivery": {
+      "compared": {
+        "responses": [
+          {
+            "status": 200,
+            "body": {
+              "ok": true
+            }
+          },
+          {
+            "status": 200,
+            "body": {
+              "ok": true
+            }
+          }
+        ],
+        "payment_intents": [
+          {
+            "sid": "sidoffr012",
+            "state": "pending",
+            "monerium_order_id": null,
+            "amount_received_cents": null,
+            "forward_tx_hash": null,
+            "forward_id_set": 0,
+            "paid_set": 0
+          }
+        ],
+        "intent_settlements": [],
+        "monerium_forwards": [
+          {
+            "order_id": "ord-12",
+            "sid": "sidoffr012",
+            "status": "blocked",
+            "error": "not_whitelisted:mint_address_mismatch",
+            "memo_prefix": "mpt",
+            "target_address": "0xa11ce00000000000000000000000000000000001",
+            "amount_cents": 100,
+            "amount_wei": "0",
+            "tx_hash": null,
+            "attempts": 0,
+            "tenant_id": "italk"
+          },
+          {
+            "order_id": "ord-12",
+            "sid": "sidoffr012",
+            "status": "resolved_offrail",
+            "error": null,
+            "memo_prefix": "offrail",
+            "target_address": "0xa11ce00000000000000000000000000000000001",
+            "amount_cents": 100,
+            "amount_wei": "1000000000000000000",
+            "tx_hash": "0xabababababababababababababababababababababababababababababababab",
+            "attempts": 1,
+            "tenant_id": "italk"
+          }
+        ],
+        "monerium_orders": [
+          {
+            "id": "ord-12",
+            "state": "processed",
+            "tenant_id": "italk"
+          }
+        ],
+        "monerium_webhook_events": [
+          {
+            "order_id": "ord-12",
+            "event_type": "order.updated",
+            "signature_ok": 1,
+            "sid_extracted": "sidoffr012",
+            "sid_resolved": null,
+            "processing_note": null,
+            "amount_cents": 100,
+            "tenant_id": "italk"
+          },
+          {
+            "order_id": "ord-12",
+            "event_type": "order.updated",
+            "signature_ok": 1,
+            "sid_extracted": "sidoffr012",
+            "sid_resolved": null,
+            "processing_note": null,
+            "amount_cents": 100,
+            "tenant_id": "italk"
+          }
+        ],
+        "credit_events": [
+          {
+            "provider": "monerium",
+            "provider_ref": "ord-12:booked",
+            "tenant_id": "italk",
+            "receiving_account_id": null,
+            "receiving_iban": null,
+            "amount_cents": 100,
+            "currency": "EUR",
+            "remittance": "mpt:0xa11ce00000000000000000000000000000000001?sid=sidoffr012",
+            "end_to_end_id": null,
+            "debtor_name": "Ana Platiša",
+            "debtor_account": "HR1210010051863000160",
+            "scheme": null,
+            "finality": "booked",
+            "occurred_at": 1795175980,
+            "settlement_ref": "ord-12"
+          }
+        ],
+        "webhook_outbox": [
+          {
+            "id": "blk_ord-12",
+            "type": "forward.blocked",
+            "tenant_id": "italk",
+            "status": "delivered",
+            "attempts": 1,
+            "payload": {
+              "type": "forward.blocked",
+              "event_id": "blk_ord-12",
+              "occurred_at": "<iso>",
+              "reason": "mint_address_mismatch",
+              "monerium_order_id": "ord-12",
+              "sid": "sidoffr012",
+              "campaign_id": null,
+              "target_address": "0xa11ce00000000000000000000000000000000001",
+              "amount_cents": 100,
+              "tenant_id": "italk",
+              "funds_location": "mpt_safe"
+            }
+          },
+          {
+            "id": "rcv_ord-12",
+            "type": "payment.received",
+            "tenant_id": "italk",
+            "status": "delivered",
+            "attempts": 1,
+            "payload": {
+              "type": "payment.received",
+              "event_id": "rcv_ord-12",
+              "occurred_at": "<iso>",
+              "sid": "sidoffr012",
+              "campaign_id": null,
+              "monerium_order_id": "ord-12",
+              "amount_received_cents": 100,
+              "currency": "eur",
+              "funds_location": "monerium",
+              "settlement": "pending",
+              "review_expected": true
+            }
+          }
+        ],
+        "merchant_posts": [
+          "blk_ord-12",
+          "rcv_ord-12"
+        ],
+        "tenant_audit_log": [
+          {
+            "tenant_id": "italk",
+            "action": "forward.blocked",
+            "address": "0xa11ce00000000000000000000000000000000001",
+            "actor": "system",
+            "detail": {
+              "order_id": "ord-12",
+              "reason": "mint_address_mismatch",
+              "prefix": "mpt",
+              "sid": "sidoffr012",
+              "campaign_id": null,
+              "amount_cents": 100
+            }
+          },
+          {
+            "tenant_id": "italk",
+            "action": "forward.resolved_offrail",
+            "address": "0xa11ce00000000000000000000000000000000001",
+            "actor": "ops@test",
+            "detail": {
+              "order_id": "ord-12",
+              "tx_hash": "0xabababababababababababababababababababababababababababababababab",
+              "log_index": 3,
+              "to": "0xa11ce00000000000000000000000000000000001",
+              "value_wei": "1000000000000000000",
+              "order_amount_cents": 100,
+              "force": false,
+              "reason": null,
+              "actor": "ops@test"
+            }
+          }
+        ],
+        "forwardViaSafe": [],
+        "alerts": [
+          "✅ <b>Parkirana uplata označena kao riješena izvan raila</b>\norder: <code>ord-12</code> · iznos: <b>1.00 EUR</b>\nručni tx: <code>0xabababababababababababababababababababababababababababababababab</code> → <code>0xa11ce00000000000000000000000000000000001</code>\noznačio: <code>ops@test</code>",
+          "🛑 <b>MPT forward blokiran</b>\nrazlog: <code>mint_address_mismatch</code> — Monerium nije mintao na prihvatni Safe tenanta\norder: <code>ord-12</code>\niznos: <b>1.00 EUR</b> (ostaje u Safe-u)\nadresa iz memo-a: <code>0xa11ce00000000000000000000000000000000001</code>\ntenant: <code>italk</code> · prefix: <code>mpt</code>"
+        ]
+      },
+      "creditMatch": [
+        {
+          "provider_ref": "ord-12:booked",
+          "matched_sid": "sidoffr012",
+          "matched_by": "sid",
+          "match_note": null
+        }
+      ]
+    },
+    "13_bare_0x_and_gnosis_parked": {
+      "compared": {
+        "responses": [
+          {
+            "status": 200,
+            "body": {
+              "ok": true
+            }
+          },
+          {
+            "status": 200,
+            "body": {
+              "ok": true
+            }
+          },
+          {
+            "status": 200,
+            "body": {
+              "ok": true
+            }
+          }
+        ],
+        "payment_intents": [
+          {
+            "sid": "strayber13",
+            "state": "pending",
+            "monerium_order_id": null,
+            "amount_received_cents": null,
+            "forward_tx_hash": null,
+            "forward_id_set": 0,
+            "paid_set": 0
+          }
+        ],
+        "intent_settlements": [],
+        "monerium_forwards": [
+          {
+            "order_id": "ord-13a",
+            "sid": null,
+            "status": "blocked",
+            "error": "not_whitelisted:unroutable_prefix",
+            "memo_prefix": null,
+            "target_address": "0xa11ce00000000000000000000000000000000001",
+            "amount_cents": 100,
+            "amount_wei": "0",
+            "tx_hash": null,
+            "attempts": 0,
+            "tenant_id": "italk"
+          },
+          {
+            "order_id": "ord-13b",
+            "sid": null,
+            "status": "blocked",
+            "error": "not_whitelisted:unroutable_prefix",
+            "memo_prefix": "gnosis",
+            "target_address": "0xa11ce00000000000000000000000000000000001",
+            "amount_cents": 100,
+            "amount_wei": "0",
+            "tx_hash": null,
+            "attempts": 0,
+            "tenant_id": "italk"
+          },
+          {
+            "order_id": "ord-13c",
+            "sid": "strayber13",
+            "status": "blocked",
+            "error": "not_whitelisted:unroutable_prefix",
+            "memo_prefix": "gnosis",
+            "target_address": "0xa11ce00000000000000000000000000000000001",
+            "amount_cents": 100,
+            "amount_wei": "0",
+            "tx_hash": null,
+            "attempts": 0,
+            "tenant_id": "italk"
+          }
+        ],
+        "monerium_orders": [
+          {
+            "id": "ord-13a",
+            "state": "processed",
+            "tenant_id": "italk"
+          },
+          {
+            "id": "ord-13b",
+            "state": "processed",
+            "tenant_id": "italk"
+          },
+          {
+            "id": "ord-13c",
+            "state": "processed",
+            "tenant_id": "italk"
+          }
+        ],
+        "monerium_webhook_events": [
+          {
+            "order_id": "ord-13a",
+            "event_type": "order.updated",
+            "signature_ok": 1,
+            "sid_extracted": null,
+            "sid_resolved": null,
+            "processing_note": null,
+            "amount_cents": 100,
+            "tenant_id": "italk"
+          },
+          {
+            "order_id": "ord-13b",
+            "event_type": "order.updated",
+            "signature_ok": 1,
+            "sid_extracted": null,
+            "sid_resolved": null,
+            "processing_note": null,
+            "amount_cents": 100,
+            "tenant_id": "italk"
+          },
+          {
+            "order_id": "ord-13c",
+            "event_type": "order.updated",
+            "signature_ok": 1,
+            "sid_extracted": "strayber13",
+            "sid_resolved": null,
+            "processing_note": null,
+            "amount_cents": 100,
+            "tenant_id": "italk"
+          }
+        ],
+        "credit_events": [
+          {
+            "provider": "monerium",
+            "provider_ref": "ord-13a:booked",
+            "tenant_id": "italk",
+            "receiving_account_id": null,
+            "receiving_iban": null,
+            "amount_cents": 100,
+            "currency": "EUR",
+            "remittance": "0xa11ce00000000000000000000000000000000001",
+            "end_to_end_id": null,
+            "debtor_name": "Ana Platiša",
+            "debtor_account": "HR1210010051863000160",
+            "scheme": null,
+            "finality": "booked",
+            "occurred_at": 1795175980,
+            "settlement_ref": "ord-13a"
+          },
+          {
+            "provider": "monerium",
+            "provider_ref": "ord-13b:booked",
+            "tenant_id": "italk",
+            "receiving_account_id": null,
+            "receiving_iban": null,
+            "amount_cents": 100,
+            "currency": "EUR",
+            "remittance": "gnosis:0xa11ce00000000000000000000000000000000001",
+            "end_to_end_id": null,
+            "debtor_name": "Ana Platiša",
+            "debtor_account": "HR1210010051863000160",
+            "scheme": null,
+            "finality": "booked",
+            "occurred_at": 1795175980,
+            "settlement_ref": "ord-13b"
+          },
+          {
+            "provider": "monerium",
+            "provider_ref": "ord-13c:booked",
+            "tenant_id": "italk",
+            "receiving_account_id": null,
+            "receiving_iban": null,
+            "amount_cents": 100,
+            "currency": "EUR",
+            "remittance": "gnosis:0xa11ce00000000000000000000000000000000001?sid=strayber13",
+            "end_to_end_id": null,
+            "debtor_name": "Ana Platiša",
+            "debtor_account": "HR1210010051863000160",
+            "scheme": null,
+            "finality": "booked",
+            "occurred_at": 1795175980,
+            "settlement_ref": "ord-13c"
+          }
+        ],
+        "webhook_outbox": [
+          {
+            "id": "blk_ord-13c",
+            "type": "forward.blocked",
+            "tenant_id": null,
+            "status": "delivered",
+            "attempts": 1,
+            "payload": {
+              "type": "forward.blocked",
+              "event_id": "blk_ord-13c",
+              "occurred_at": "<iso>",
+              "reason": "unroutable_prefix",
+              "monerium_order_id": "ord-13c",
+              "sid": "strayber13",
+              "campaign_id": null,
+              "target_address": "0xa11ce00000000000000000000000000000000001",
+              "amount_cents": 100,
+              "tenant_id": null,
+              "funds_location": "mpt_safe"
+            }
+          },
+          {
+            "id": "rcv_ord-13c",
+            "type": "payment.received",
+            "tenant_id": "italk",
+            "status": "delivered",
+            "attempts": 1,
+            "payload": {
+              "type": "payment.received",
+              "event_id": "rcv_ord-13c",
+              "occurred_at": "<iso>",
+              "sid": "strayber13",
+              "campaign_id": null,
+              "monerium_order_id": "ord-13c",
+              "amount_received_cents": 100,
+              "currency": "eur",
+              "funds_location": "monerium",
+              "settlement": "pending",
+              "review_expected": false
+            }
+          }
+        ],
+        "merchant_posts": [
+          "blk_ord-13c",
+          "rcv_ord-13c"
+        ],
+        "tenant_audit_log": [
+          {
+            "tenant_id": null,
+            "action": "forward.blocked",
+            "address": "0xa11ce00000000000000000000000000000000001",
+            "actor": "system",
+            "detail": {
+              "order_id": "ord-13a",
+              "reason": "unroutable_prefix",
+              "prefix": null,
+              "sid": null,
+              "campaign_id": null,
+              "amount_cents": 100
+            }
+          },
+          {
+            "tenant_id": null,
+            "action": "forward.blocked",
+            "address": "0xa11ce00000000000000000000000000000000001",
+            "actor": "system",
+            "detail": {
+              "order_id": "ord-13b",
+              "reason": "unroutable_prefix",
+              "prefix": "gnosis",
+              "sid": null,
+              "campaign_id": null,
+              "amount_cents": 100
+            }
+          },
+          {
+            "tenant_id": null,
+            "action": "forward.blocked",
+            "address": "0xa11ce00000000000000000000000000000000001",
+            "actor": "system",
+            "detail": {
+              "order_id": "ord-13c",
+              "reason": "unroutable_prefix",
+              "prefix": "gnosis",
+              "sid": "strayber13",
+              "campaign_id": null,
+              "amount_cents": 100
+            }
+          }
+        ],
+        "forwardViaSafe": [],
+        "alerts": [
+          "🛑 <b>MPT forward blokiran</b>\nrazlog: <code>unroutable_prefix</code> — memo bez mpt:/cmp: prefiksa (goli 0x ili gnosis:)\norder: <code>ord-13a</code>\niznos: <b>1.00 EUR</b> (ostaje u Safe-u)\nadresa iz memo-a: <code>0xa11ce00000000000000000000000000000000001</code>\ntenant: <code>-</code> · prefix: <code>-</code>",
+          "🛑 <b>MPT forward blokiran</b>\nrazlog: <code>unroutable_prefix</code> — memo bez mpt:/cmp: prefiksa (goli 0x ili gnosis:)\norder: <code>ord-13b</code>\niznos: <b>1.00 EUR</b> (ostaje u Safe-u)\nadresa iz memo-a: <code>0xa11ce00000000000000000000000000000000001</code>\ntenant: <code>-</code> · prefix: <code>gnosis</code>",
+          "🛑 <b>MPT forward blokiran</b>\nrazlog: <code>unroutable_prefix</code> — memo bez mpt:/cmp: prefiksa (goli 0x ili gnosis:)\norder: <code>ord-13c</code>\niznos: <b>1.00 EUR</b> (ostaje u Safe-u)\nadresa iz memo-a: <code>0xa11ce00000000000000000000000000000000001</code>\ntenant: <code>-</code> · prefix: <code>gnosis</code>"
+        ]
+      },
+      "creditMatch": [
+        {
+          "provider_ref": "ord-13a:booked",
+          "matched_sid": null,
+          "matched_by": null,
+          "match_note": null
+        },
+        {
+          "provider_ref": "ord-13b:booked",
+          "matched_sid": null,
+          "matched_by": null,
+          "match_note": null
+        },
+        {
+          "provider_ref": "ord-13c:booked",
+          "matched_sid": "strayber13",
+          "matched_by": "sid",
+          "match_note": null
+        }
+      ]
+    },
+    "14a_direct_stray_owed": {
+      "compared": {
+        "responses": [
+          {
+            "status": 200,
+            "body": {
+              "ok": true
+            }
+          }
+        ],
+        "payment_intents": [
+          {
+            "sid": "directow14",
+            "state": "pending",
+            "monerium_order_id": null,
+            "amount_received_cents": null,
+            "forward_tx_hash": null,
+            "forward_id_set": 0,
+            "paid_set": 0
+          }
+        ],
+        "intent_settlements": [],
+        "monerium_forwards": [
+          {
+            "order_id": "ord-14a",
+            "sid": "directow14",
+            "status": "pending",
+            "error": "direct_owed",
+            "memo_prefix": "auto",
+            "target_address": "0x9e0c000000000000000000000000000000000004",
+            "amount_cents": 100,
+            "amount_wei": "1000000000000000000",
+            "tx_hash": null,
+            "attempts": 0,
+            "tenant_id": "italk"
+          }
+        ],
+        "monerium_orders": [
+          {
+            "id": "ord-14a",
+            "state": "processed",
+            "tenant_id": "italk"
+          }
+        ],
+        "monerium_webhook_events": [
+          {
+            "order_id": "ord-14a",
+            "event_type": "order.updated",
+            "signature_ok": 1,
+            "sid_extracted": null,
+            "sid_resolved": "directow14",
+            "processing_note": null,
+            "amount_cents": 100,
+            "tenant_id": "italk"
+          }
+        ],
+        "credit_events": [
+          {
+            "provider": "monerium",
+            "provider_ref": "ord-14a:booked",
+            "tenant_id": "italk",
+            "receiving_account_id": null,
+            "receiving_iban": null,
+            "amount_cents": 100,
+            "currency": "EUR",
+            "remittance": "",
+            "end_to_end_id": null,
+            "debtor_name": "Ana Platiša",
+            "debtor_account": "HR1210010051863000160",
+            "scheme": null,
+            "finality": "booked",
+            "occurred_at": 1795175980,
+            "settlement_ref": "ord-14a"
+          }
+        ],
+        "webhook_outbox": [],
+        "merchant_posts": [],
+        "tenant_audit_log": [],
+        "forwardViaSafe": [],
+        "alerts": [
+          "🧾 <b>Uplata povezana s projektom — treba ručni prijenos</b>\norder: <code>ord-14a</code> · iznos: <b>1.00 EUR</b>\nintent: <code>directow14</code> (automatski po iznosu i vremenu)\nnovac je na glavnom Safeu <code>0x449abcef4e29a7dd8d98db451af2c463561baf2e</code>\n2/3 vlasnika: prebaciti <b>točno 1.00 EURe</b> → <code>0x9e0c000000000000000000000000000000000004</code>.\nRail prepoznaje taj prijenos sam i zatvara intent."
+        ]
+      },
+      "creditMatch": [
+        {
+          "provider_ref": "ord-14a:booked",
+          "matched_sid": null,
+          "matched_by": null,
+          "match_note": "stray_preview: directow14"
+        }
+      ]
+    },
+    "14b_direct_settle_memo": {
+      "compared": {
+        "responses": [
+          {
+            "status": 200,
+            "body": {
+              "ok": true
+            }
+          }
+        ],
+        "payment_intents": [
+          {
+            "sid": "directst14",
+            "state": "paid",
+            "monerium_order_id": "ord-14b",
+            "amount_received_cents": 100,
+            "forward_tx_hash": null,
+            "forward_id_set": 1,
+            "paid_set": 1
+          }
+        ],
+        "intent_settlements": [
+          {
+            "sid": "directst14",
+            "provider": "monerium",
+            "settlement_ref": "ord-14b",
+            "has_credit_event": 1
+          }
+        ],
+        "monerium_forwards": [
+          {
+            "order_id": "ord-14b",
+            "sid": "directst14",
+            "status": "confirmed",
+            "error": "direct_mint",
+            "memo_prefix": "gnosis",
+            "target_address": "0x9e0c000000000000000000000000000000000004",
+            "amount_cents": 100,
+            "amount_wei": "0",
+            "tx_hash": null,
+            "attempts": 0,
+            "tenant_id": "italk"
+          }
+        ],
+        "monerium_orders": [
+          {
+            "id": "ord-14b",
+            "state": "processed",
+            "tenant_id": "italk"
+          }
+        ],
+        "monerium_webhook_events": [
+          {
+            "order_id": "ord-14b",
+            "event_type": "order.updated",
+            "signature_ok": 1,
+            "sid_extracted": "directst14",
+            "sid_resolved": null,
+            "processing_note": null,
+            "amount_cents": 100,
+            "tenant_id": "italk"
+          }
+        ],
+        "credit_events": [
+          {
+            "provider": "monerium",
+            "provider_ref": "ord-14b:booked",
+            "tenant_id": "italk",
+            "receiving_account_id": null,
+            "receiving_iban": null,
+            "amount_cents": 100,
+            "currency": "EUR",
+            "remittance": "gnosis:0x9e0c000000000000000000000000000000000004 sid:directst14",
+            "end_to_end_id": null,
+            "debtor_name": "Ana Platiša",
+            "debtor_account": "HR1210010051863000160",
+            "scheme": null,
+            "finality": "booked",
+            "occurred_at": 1795175980,
+            "settlement_ref": "ord-14b"
+          }
+        ],
+        "webhook_outbox": [
+          {
+            "id": "int_directst14",
+            "type": "intent.paid",
+            "tenant_id": "italk",
+            "status": "delivered",
+            "attempts": 1,
+            "payload": {
+              "type": "intent.paid",
+              "event_id": "int_directst14",
+              "occurred_at": "<iso>",
+              "sid": "directst14",
+              "state": "paid",
+              "amount_cents": 100,
+              "amount_received_cents": 100,
+              "overpaid_cents": 0,
+              "currency": "EUR",
+              "target_address": "0x9e0c000000000000000000000000000000000004",
+              "monerium_order_id": "ord-14b",
+              "forward_tx_hash": null,
+              "paid_at": "<t>",
+              "sender_iban": "HR1210010051863000160",
+              "sender_name": "Ana Platiša",
+              "metadata": null
+            }
+          },
+          {
+            "id": "rcv_ord-14b",
+            "type": "payment.received",
+            "tenant_id": "italk",
+            "status": "delivered",
+            "attempts": 1,
+            "payload": {
+              "type": "payment.received",
+              "event_id": "rcv_ord-14b",
+              "occurred_at": "<iso>",
+              "sid": "directst14",
+              "campaign_id": null,
+              "monerium_order_id": "ord-14b",
+              "amount_received_cents": 100,
+              "currency": "eur",
+              "funds_location": "monerium",
+              "settlement": "pending",
+              "review_expected": true
+            }
+          }
+        ],
+        "merchant_posts": [
+          "int_directst14",
+          "rcv_ord-14b"
+        ],
+        "tenant_audit_log": [],
+        "forwardViaSafe": [],
+        "alerts": []
+      },
+      "creditMatch": [
+        {
+          "provider_ref": "ord-14b:booked",
+          "matched_sid": "directst14",
+          "matched_by": "sid",
+          "match_note": null
+        }
+      ]
+    },
+    "14c_direct_sid_owed": {
+      "compared": {
+        "responses": [
+          {
+            "status": 200,
+            "body": {
+              "ok": true
+            }
+          }
+        ],
+        "payment_intents": [
+          {
+            "sid": "directmm14",
+            "state": "pending",
+            "monerium_order_id": null,
+            "amount_received_cents": null,
+            "forward_tx_hash": null,
+            "forward_id_set": 0,
+            "paid_set": 0
+          }
+        ],
+        "intent_settlements": [],
+        "monerium_forwards": [
+          {
+            "order_id": "ord-14c",
+            "sid": "directmm14",
+            "status": "pending",
+            "error": "direct_owed",
+            "memo_prefix": null,
+            "target_address": "0x9e0c000000000000000000000000000000000004",
+            "amount_cents": 100,
+            "amount_wei": "1000000000000000000",
+            "tx_hash": null,
+            "attempts": 0,
+            "tenant_id": "italk"
+          }
+        ],
+        "monerium_orders": [
+          {
+            "id": "ord-14c",
+            "state": "processed",
+            "tenant_id": "italk"
+          }
+        ],
+        "monerium_webhook_events": [
+          {
+            "order_id": "ord-14c",
+            "event_type": "order.updated",
+            "signature_ok": 1,
+            "sid_extracted": "directmm14",
+            "sid_resolved": null,
+            "processing_note": null,
+            "amount_cents": 100,
+            "tenant_id": "italk"
+          }
+        ],
+        "credit_events": [
+          {
+            "provider": "monerium",
+            "provider_ref": "ord-14c:booked",
+            "tenant_id": "italk",
+            "receiving_account_id": null,
+            "receiving_iban": null,
+            "amount_cents": 100,
+            "currency": "EUR",
+            "remittance": "sid:directmm14",
+            "end_to_end_id": null,
+            "debtor_name": "Ana Platiša",
+            "debtor_account": "HR1210010051863000160",
+            "scheme": null,
+            "finality": "booked",
+            "occurred_at": 1795175980,
+            "settlement_ref": "ord-14c"
+          }
+        ],
+        "webhook_outbox": [
+          {
+            "id": "rcv_ord-14c",
+            "type": "payment.received",
+            "tenant_id": "italk",
+            "status": "delivered",
+            "attempts": 1,
+            "payload": {
+              "type": "payment.received",
+              "event_id": "rcv_ord-14c",
+              "occurred_at": "<iso>",
+              "sid": "directmm14",
+              "campaign_id": null,
+              "monerium_order_id": "ord-14c",
+              "amount_received_cents": 100,
+              "currency": "eur",
+              "funds_location": "monerium",
+              "settlement": "pending",
+              "review_expected": true
+            }
+          }
+        ],
+        "merchant_posts": [
+          "rcv_ord-14c"
+        ],
+        "tenant_audit_log": [],
+        "forwardViaSafe": [],
+        "alerts": [
+          "🧾 <b>Uplata povezana s projektom — treba ručni prijenos</b>\norder: <code>ord-14c</code> · iznos: <b>1.00 EUR</b>\nintent: <code>directmm14</code>\nnovac je na glavnom Safeu <code>0x449abcef4e29a7dd8d98db451af2c463561baf2e</code>\n2/3 vlasnika: prebaciti <b>točno 1.00 EURe</b> → <code>0x9e0c000000000000000000000000000000000004</code>.\nRail prepoznaje taj prijenos sam i zatvara intent."
+        ]
+      },
+      "creditMatch": [
+        {
+          "provider_ref": "ord-14c:booked",
+          "matched_sid": "directmm14",
+          "matched_by": "sid",
+          "match_note": null
+        }
+      ]
+    },
+    "15_operator_reroute": {
+      "compared": {
+        "responses": [
+          {
+            "status": 200,
+            "body": {
+              "ok": true
+            }
+          },
+          {
+            "status": 0,
+            "body": {
+              "reroute": "ok"
+            }
+          },
+          {
+            "status": 0,
+            "body": {
+              "reroute": "already_forwarded"
+            }
+          }
+        ],
+        "payment_intents": [
+          {
+            "sid": "rerouteA15",
+            "state": "paid",
+            "monerium_order_id": "ord-15",
+            "amount_received_cents": 100,
+            "forward_tx_hash": "0xfffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
+            "forward_id_set": 1,
+            "paid_set": 1
+          },
+          {
+            "sid": "rerouteB15",
+            "state": "pending",
+            "monerium_order_id": null,
+            "amount_received_cents": null,
+            "forward_tx_hash": null,
+            "forward_id_set": 0,
+            "paid_set": 0
+          }
+        ],
+        "intent_settlements": [
+          {
+            "sid": "rerouteA15",
+            "provider": "monerium",
+            "settlement_ref": "ord-15",
+            "has_credit_event": 1
+          }
+        ],
+        "monerium_forwards": [
+          {
+            "order_id": "ord-15",
+            "sid": "rerouteA15",
+            "status": "confirmed",
+            "error": null,
+            "memo_prefix": "manual",
+            "target_address": "0xa11ce00000000000000000000000000000000001",
+            "amount_cents": 100,
+            "amount_wei": "1000000000000000000",
+            "tx_hash": "0xfffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
+            "attempts": 1,
+            "tenant_id": "italk"
+          },
+          {
+            "order_id": "ord-15",
+            "sid": null,
+            "status": "failed",
+            "error": "no_routing_target",
+            "memo_prefix": null,
+            "target_address": "",
+            "amount_cents": 100,
+            "amount_wei": "0",
+            "tx_hash": null,
+            "attempts": 0,
+            "tenant_id": "italk"
+          }
+        ],
+        "monerium_orders": [
+          {
+            "id": "ord-15",
+            "state": "processed",
+            "tenant_id": "italk"
+          }
+        ],
+        "monerium_webhook_events": [
+          {
+            "order_id": "ord-15",
+            "event_type": "order.updated",
+            "signature_ok": 1,
+            "sid_extracted": null,
+            "sid_resolved": null,
+            "processing_note": null,
+            "amount_cents": 100,
+            "tenant_id": "italk"
+          }
+        ],
+        "credit_events": [
+          {
+            "provider": "monerium",
+            "provider_ref": "ord-15:booked",
+            "tenant_id": "italk",
+            "receiving_account_id": null,
+            "receiving_iban": null,
+            "amount_cents": 100,
+            "currency": "EUR",
+            "remittance": "",
+            "end_to_end_id": null,
+            "debtor_name": "Ana Platiša",
+            "debtor_account": "HR1210010051863000160",
+            "scheme": null,
+            "finality": "booked",
+            "occurred_at": 1795175980,
+            "settlement_ref": "ord-15"
+          }
+        ],
+        "webhook_outbox": [
+          {
+            "id": "int_rerouteA15",
+            "type": "intent.paid",
+            "tenant_id": "italk",
+            "status": "delivered",
+            "attempts": 1,
+            "payload": {
+              "type": "intent.paid",
+              "event_id": "int_rerouteA15",
+              "occurred_at": "<iso>",
+              "sid": "rerouteA15",
+              "state": "paid",
+              "amount_cents": 100,
+              "amount_received_cents": 100,
+              "overpaid_cents": 0,
+              "currency": "EUR",
+              "target_address": "0xa11ce00000000000000000000000000000000001",
+              "monerium_order_id": "ord-15",
+              "forward_tx_hash": "0xfffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1",
+              "paid_at": "<t>",
+              "sender_iban": "HR1210010051863000160",
+              "sender_name": "Ana Platiša",
+              "metadata": null
+            }
+          }
+        ],
+        "merchant_posts": [
+          "int_rerouteA15"
+        ],
+        "tenant_audit_log": [
+          {
+            "tenant_id": null,
+            "action": "forward.blocked",
+            "address": null,
+            "actor": "system",
+            "detail": {
+              "order_id": "ord-15",
+              "reason": "no_routing_target",
+              "prefix": null,
+              "sid": null,
+              "campaign_id": null,
+              "amount_cents": 100
+            }
+          }
+        ],
+        "forwardViaSafe": [
+          {
+            "safe": "0x449abcef4e29a7dd8d98db451af2c463561baf2e",
+            "target": "0xa11ce00000000000000000000000000000000001",
+            "amountWei": "1000000000000000000",
+            "sessionId": "rerouteA15",
+            "kind": null
+          }
+        ],
+        "alerts": [
+          "🔀 <b>Uplata bez reference povezana s intentom ručno</b>\norder: <code>ord-15</code> · iznos: <b>1.00 EUR</b>\nintent: <code>rerouteA15</code> → <code>0xa11ce00000000000000000000000000000000001</code>\ntx: <code>0xfffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1</code>",
+          "🛑 <b>MPT forward blokiran</b>\nrazlog: <code>no_routing_target</code> — memo bez adrese\norder: <code>ord-15</code>\niznos: <b>1.00 EUR</b> (ostaje u Safe-u)\nadresa iz memo-a: <code>-</code>\ntenant: <code>-</code> · prefix: <code>-</code>\nkandidati s istim iznosom vode na RAZLIČITE adrese — ručno odabrati:\n• <code>rerouteB15</code> → <code>0xb0b0000000000000000000000000000000000002</code> (pending)\n• <code>rerouteA15</code> → <code>0xa11ce00000000000000000000000000000000001</code> (pending)"
+        ]
+      },
+      "creditMatch": [
+        {
+          "provider_ref": "ord-15:booked",
+          "matched_sid": null,
+          "matched_by": null,
+          "match_note": null
+        }
+      ]
+    }
+  }
+}
