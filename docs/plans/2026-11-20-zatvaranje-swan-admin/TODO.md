@@ -10,11 +10,11 @@ Legenda: `[x]` gotovo · `[ ]` otvoreno · `[~]` u radu · `(!)` traži Matiju �
 
 ## F0: guardovi i mjerenje inboxa (bez promjene ponašanja)
 
-- [ ] Produkcija: Monerium uplate nakon 18. 11. 14:30 imaju red u `credit_events` (`provider='monerium'`), a booked događaj je vezan (`intent_settlements.credit_event_id` nije NULL); brojke zapisane u `research/` → S1
-- [ ] `backend/src/intents/db.ts` claimovi (`markIntentPaid/Underpaid/Late`, ~r. 231, 270): `monerium_order_id IS NULL` → `NOT EXISTS (SELECT 1 FROM intent_settlements …)` → S1
-- [ ] `intents/db.ts` `findStrayCandidates` (~r. 367, 406) i `intents/shortRef.ts` (~r. 166) na `intent_settlements` → S1
-- [ ] `intents/list.ts` bucketi late/underpaid (~r. 106–108) i `payers/api.ts` (~r. 90) na `intent_settlements` → S1
-- [ ] Test usklađenosti: za svaki put namire `monerium_order_id IS NOT NULL` ⇔ red u `intent_settlements` (paid, underpaid, late, sandbox, swan) → S1
+- [x] Produkcija: Monerium uplate nakon 18. 11. 14:30 imaju red u `credit_events` (`provider='monerium'`), a booked događaj je vezan (`intent_settlements.credit_event_id` nije NULL); brojke zapisane u `research/` → S1
+- [x] `backend/src/intents/db.ts` claimovi (`markIntentPaid/Underpaid/Late`, ~r. 231, 270): `monerium_order_id IS NULL` → `NOT EXISTS (SELECT 1 FROM intent_settlements …)` → S1
+- [x] `intents/db.ts` `findStrayCandidates` (~r. 367, 406) i `intents/shortRef.ts` (~r. 166) na `intent_settlements` → S1
+- [x] `intents/list.ts` bucketi late/underpaid (~r. 106–108) i `payers/api.ts` (~r. 90) na `intent_settlements` → S1 (payers ostaje, odluka 102)
+- [x] Test usklađenosti: za svaki put namire `monerium_order_id IS NOT NULL` ⇔ red u `intent_settlements` (paid, underpaid, late, sandbox, swan) → S1 (`test/settlementGuards.test.ts`)
 - [ ] compat-check zelen bez oznake `behavior-change`, PR mergan, deploy → S1
 
 ## F1: fiat bez sintetskog Monerium ordera
