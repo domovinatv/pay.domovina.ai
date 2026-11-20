@@ -33,6 +33,38 @@ export interface MoneriumOrderRow {
   updated_at: number;
 }
 
+/// Column values `upsertMoneriumOrder` stores for an order snapshot. Shared
+/// with readers that rebuild a row from another source (inflow/settleFiat.ts)
+/// so both can never drift apart.
+export function moneriumOrderRow(
+  order: MoneriumOrder,
+  tenantId: string | null,
+  updatedAt: number,
+): MoneriumOrderRow {
+  const ident = order.counterpart?.identifier;
+  return {
+    id: order.id,
+    tenant_id: tenantId,
+    profile_id: order.profile ?? null,
+    account_id: order.accountId ?? null,
+    kind: order.kind ?? 'unknown',
+    state: order.state ?? order.meta?.state ?? 'placed',
+    amount: order.amount ?? '0',
+    currency: order.currency ?? 'eur',
+    address: order.address ?? null,
+    chain: order.chain ?? null,
+    counterpart_iban: ident && ident.standard === 'iban' ? ident.iban : null,
+    counterpart_name: order.counterpart?.details?.name ?? null,
+    memo: order.memo ?? null,
+    reference_number: order.referenceNumber ?? null,
+    tx_hashes: order.meta?.txHashes ? JSON.stringify(order.meta.txHashes) : null,
+    placed_at: order.meta?.placedAt ?? null,
+    processed_at: order.meta?.processedAt ?? null,
+    raw_json: JSON.stringify(order),
+    updated_at: updatedAt,
+  };
+}
+
 /// Upsert the latest snapshot of a Monerium order. Monotonic: a snapshot whose
 /// state ranks BELOW the stored one (e.g. a retried `order.created` arriving
 /// after `order.updated processed`) is ignored. Returns false in that case so
@@ -45,9 +77,7 @@ export async function upsertMoneriumOrder(
   order: MoneriumOrder,
   tenantId: string | null = null,
 ): Promise<boolean> {
-  const ident = order.counterpart?.identifier;
-  const counterpartIban =
-    ident && ident.standard === 'iban' ? ident.iban : null;
+  const r = moneriumOrderRow(order, tenantId, Math.floor(Date.now() / 1000));
   const res = await env.DB.prepare(
     `INSERT INTO monerium_orders
        (id, profile_id, account_id, kind, state, amount, currency,
@@ -73,25 +103,10 @@ export async function upsertMoneriumOrder(
      WHERE ${orderStateRankSql('excluded.state')} >= ${orderStateRankSql('monerium_orders.state')}`,
   )
     .bind(
-      order.id,
-      order.profile ?? null,
-      order.accountId ?? null,
-      order.kind ?? 'unknown',
-      order.state ?? order.meta?.state ?? 'placed',
-      order.amount ?? '0',
-      order.currency ?? 'eur',
-      order.address ?? null,
-      order.chain ?? null,
-      counterpartIban,
-      order.counterpart?.details?.name ?? null,
-      order.memo ?? null,
-      order.referenceNumber ?? null,
-      order.meta?.txHashes ? JSON.stringify(order.meta.txHashes) : null,
-      order.meta?.placedAt ?? null,
-      order.meta?.processedAt ?? null,
-      JSON.stringify(order),
-      Math.floor(Date.now() / 1000),
-      tenantId,
+      r.id, r.profile_id, r.account_id, r.kind, r.state, r.amount, r.currency,
+      r.address, r.chain, r.counterpart_iban, r.counterpart_name, r.memo,
+      r.reference_number, r.tx_hashes, r.placed_at, r.processed_at,
+      r.raw_json, r.updated_at, r.tenant_id,
     )
     .run();
   return (res.meta?.changes ?? 0) > 0;

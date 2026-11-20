@@ -6,6 +6,7 @@ import { makeConfirmDeps, settleConfirmedForward } from './confirm';
 import { defaultTenantId } from '../tenants/whitelist';
 import type { Hex } from 'viem';
 import { intentProvider, isFiatProvider, type IntentProvider } from '../inflow/provider';
+import { fiatSettlementOrder } from '../inflow/settleFiat';
 
 /// Canonical per-stage payment status — "gdje su moji novci".
 ///
@@ -398,6 +399,11 @@ export async function loadStageContext(
   forward: MoneriumForwardRow | null;
   knownPayer: boolean | null;
 }> {
+  // Fiat (Swan): the payment is the settlement + its booked credit event
+  // (ADR 0032 §4). computeFiatStage never looks at a forward or the payer
+  // history. Without a settlement, read as before.
+  const fiat = await fiatSettlementOrder(env, intent);
+  if (fiat) return { order: fiat, forward: null, knownPayer: null };
   let order: MoneriumOrderRow | null = null;
   let viaEvent = false;
   if (intent.monerium_order_id) {

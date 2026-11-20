@@ -19,8 +19,8 @@ Legenda: `[x]` gotovo · `[ ]` otvoreno · `[~]` u radu · `(!)` traži Matiju �
 
 ## F1: fiat bez sintetskog Monerium ordera
 
-- [ ] Čitatelji (`intents/stage.ts`, `receipts/*`, `intents/outbox.ts`, `admin/v2/data.ts`, `payers/api.ts`, `monerium/reconcile.ts`) za fiat intente čitaju `intent_settlements` + `credit_events`, a sintetski red ostaje (dvostruko čitanje, isti izlaz) → S2
-- [ ] Test: fiat intent (Swan i sandbox) daje identičan status, outbox i admin prikaz sa i bez sintetskog reda → S2
+- [x] Čitatelji (`intents/stage.ts`, `receipts/*`, `intents/outbox.ts`, `admin/v2/data.ts`, `payers/api.ts`, `monerium/reconcile.ts`) za fiat intente čitaju `intent_settlements` + `credit_events`, a sintetski red ostaje (dvostruko čitanje, isti izlaz) → S2 (mijenjani samo `stage.ts` i `admin/v2/data.ts`, ostali ne ovise; odluke 201–204)
+- [x] Test: fiat intent (Swan i sandbox) daje identičan status, outbox i admin prikaz sa i bez sintetskog reda → S2 (`test/fiatSettlementReaders.test.ts`)
 - [ ] (!) `inflow/settleFiat.ts` prestaje pisati `monerium_orders` i lažni `monerium_forwards` red; odluka o postojećim `swan_*`/sandbox redovima → S3
 - [ ] Živa provjera nakon deploya: Swan sandbox uplata → `paid`, nijedan novi `monerium_orders` red → S3
 

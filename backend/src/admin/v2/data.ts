@@ -7,6 +7,7 @@ import { getMoneriumOrder, type MoneriumOrderRow } from '../../monerium/db';
 import { listRerouteCandidates } from '../../intents/db';
 import { STRAY_LOOKBACK_SECONDS } from '../../monerium/strayResolver';
 import { tenantProviders, type TenantProviders } from '../../inflow/provider';
+import { fiatSettlementOrder } from '../../inflow/settleFiat';
 
 const now = () => Math.floor(Date.now() / 1000);
 
@@ -135,9 +136,14 @@ export async function getPaymentBundle(env: Env, sid: string): Promise<PaymentBu
     `SELECT provider, settlement_ref, credit_event_id, created_at FROM intent_settlements WHERE sid = ?`,
   ).bind(sid).first<NonNullable<PaymentBundle['settlement']>>();
   const orderId = intent.monerium_order_id ?? settlement?.settlement_ref ?? null;
-  const order = orderId
-    ? await env.DB.prepare(`SELECT * FROM monerium_orders WHERE id = ?`).bind(orderId).first<NonNullable<PaymentBundle['order']>>()
-    : null;
+  // Fiat (Swan): the payment comes from the settlement + credit event, the
+  // same view the status timeline uses; otherwise the Monerium order row.
+  const fiatOrder = await fiatSettlementOrder(env, intent as unknown as { sid: string; provider: string | null; target_address: string });
+  const order = fiatOrder
+    ? (fiatOrder as unknown as NonNullable<PaymentBundle['order']>)
+    : orderId
+      ? await env.DB.prepare(`SELECT * FROM monerium_orders WHERE id = ?`).bind(orderId).first<NonNullable<PaymentBundle['order']>>()
+      : null;
   const events = await env.DB.prepare(
     `SELECT id, event_type, signature_ok, received_at, processing_note, order_id
        FROM monerium_webhook_events
