@@ -24,7 +24,7 @@ export const SIM_PAYER_NAME = 'Sandbox Payer';
 export const SIM_ORDER_PREFIX = 'sim_';
 export const SIM_FORWARD_ERROR = 'simulated';
 /// Simulations per sandbox tenant per 24 h.
-export const SIM_PER_TENANT_PER_DAY = 100;
+export const SIM_PER_TENANT_PER_DAY = 200;
 
 export type SimResult =
   | { ok: true; outcome: SimOutcome; orderId: string; intent: PaymentIntentRow }

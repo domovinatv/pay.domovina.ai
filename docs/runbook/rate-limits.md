@@ -31,5 +31,5 @@ uključivanja da Monerium nikad ne dođe blizu.
 | Nepoznati tenant na `/t/:id` | prvih 1024 znakova | `src/index.ts` |
 | Sandbox tenanti po IP-u | 5 / 24 h (HMAC IP-a u D1) | `SANDBOX_PER_IP_PER_DAY`, `src/sandbox/db.ts` |
 | Aktivni sandbox tenanti | 500 → `503 sandbox_full` | `SANDBOX_MAX_TENANTS` |
-| Simulacije po sandbox tenantu | 100 / 24 h | `SIM_PER_TENANT_PER_DAY`, `src/sandbox/simulate.ts` |
+| Simulacije po sandbox tenantu | 200 / 24 h (do 25. 11. 2026. 100) | `SIM_PER_TENANT_PER_DAY`, `src/sandbox/simulate.ts` |
 | SSE streamovi po sidu | 8 → 429 (checkout pada na polling) | `MAX_SINKS_PER_SID`, `intents/stream.ts` |
