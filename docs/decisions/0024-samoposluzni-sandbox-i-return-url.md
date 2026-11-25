@@ -103,7 +103,7 @@ spam u D1, odlazni webhookovi prema tuđim URL-ovima i checkout stranice na naš
 |---|---|
 | Masovno kreiranje | KV brojač po IP-u (sha256 s pepperom): 5 tenanata / 24 h; globalni strop aktivnih sandbox tenanata (`SANDBOX_MAX_TENANTS`, default 500) → `503 sandbox_full`; WAF pravilo u `docs/runbook/rate-limits.md` |
 | Boti | Turnstile, env-gated kao u relayeru (`SANDBOX_TURNSTILE_SECRET`; bez njega fail-open) |
-| Odlazni webhook kao „pojačalo“ | Webhook ide samo na događaj koji je developer sam izazvao simulacijom; isti outbox i retry kao danas; https only; strop simulacija po tenantu (100 / 24 h) |
+| Odlazni webhook kao „pojačalo“ | Webhook ide samo na događaj koji je developer sam izazvao simulacijom; isti outbox i retry kao danas; https only; strop simulacija po tenantu (100 / 24 h; 25. 11. 2026. dignut na 200, `docs/runbook/rate-limits.md`) |
 | Phishing preko checkouta | Sandbox checkout nosi crvenu traku „SANDBOX — test, nema stvarne uplate“, nema IBAN-a ni QR-a (D5), `return_url` samo uz `sk_` (D6) |
 | Pretvaranje u produkciju | Ne postoji put: `activate`/`resume` u adminu odbija tenanta sa `sandbox = 1`, a sandbox endpointi odbijaju produkcijskog. Produkcija = novi tenant kroz admin, nakon KYB-a kod Moneriuma (ToS §16) |
 | Gomilanje | `expires_at` = 90 dana od zadnje aktivnosti; cron briše istekle tenante, ključeve i intente |
